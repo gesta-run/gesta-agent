@@ -13,7 +13,7 @@ keeps a local JSONL queue while offline.
 go run ./cmd run --control-url http://localhost:8080 --apikey sk-dev-local --interval 1m --usage-window 10m
 go run ./cmd run --control-url http://localhost:8080 --apikey sk-dev-local -- kubectl delete pod api
 ./scripts/install.sh --control-url http://localhost:8080 --apikey sk-dev-local
-cd "${HOME:-/tmp}" && curl -fsSL https://gesta-run.github.io/gesta-agent/install-agent.sh | bash -s -- --control-url http://localhost:8080 --apikey sk-dev-local
+cd "${HOME:-/tmp}" && curl -fsSL https://gesta-run.github.io/onboard/install-agent.sh | bash -s -- --control-url http://localhost:8080 --apikey sk-dev-local
 ```
 
 The daemon does not require a separate enrollment step. `--apikey` is used
@@ -47,7 +47,7 @@ GitHub Pages:
 
 ```bash
 ./scripts/install.sh --control-url http://localhost:8080 --apikey sk-dev-local
-cd "${HOME:-/tmp}" && curl -fsSL https://gesta-run.github.io/gesta-agent/install-agent.sh | bash -s -- --control-url http://localhost:8080 --apikey sk-dev-local
+cd "${HOME:-/tmp}" && curl -fsSL https://gesta-run.github.io/onboard/install-agent.sh | bash -s -- --control-url http://localhost:8080 --apikey sk-dev-local
 ```
 
 The installer requires both `--control-url` and `--apikey`. It saves daemon state under

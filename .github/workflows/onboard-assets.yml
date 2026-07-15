@@ -1,0 +1,78 @@
+name: Publish Onboard Assets
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: onboard-assets
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22.x"
+          cache: true
+
+      - name: Check onboard token
+        id: onboard-token
+        env:
+          ONBOARD_REPO_TOKEN: ${{ secrets.ONBOARD_REPO_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "$ONBOARD_REPO_TOKEN" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "ONBOARD_REPO_TOKEN is not configured; skipping onboard publish."
+            exit 0
+          fi
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
+      - name: Check out onboard repository
+        if: steps.onboard-token.outputs.skip != 'true'
+        env:
+          ONBOARD_REPO_TOKEN: ${{ secrets.ONBOARD_REPO_TOKEN }}
+        run: |
+          set -euo pipefail
+          git clone "https://x-access-token:${ONBOARD_REPO_TOKEN}@github.com/gesta-run/onboard.git" /tmp/gesta-onboard
+
+      - name: Build onboard assets
+        if: steps.onboard-token.outputs.skip != 'true'
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/gesta-onboard/docs/agent
+          mkdir -p /tmp/gesta-onboard/docs/agent/bin
+          cp scripts/install.sh /tmp/gesta-onboard/docs/install-agent.sh
+          cp scripts/install.sh /tmp/gesta-onboard/docs/agent/install.sh
+          scripts/build-agent-binaries.sh /tmp/gesta-onboard/docs/agent/bin
+          (
+            cd /tmp/gesta-onboard/docs/agent
+            sha256sum install.sh bin/gesta-agent-* > SHA256SUMS
+          )
+          chmod 755 /tmp/gesta-onboard/docs/install-agent.sh /tmp/gesta-onboard/docs/agent/install.sh
+
+      - name: Publish onboard assets
+        if: steps.onboard-token.outputs.skip != 'true'
+        run: |
+          set -euo pipefail
+          cd /tmp/gesta-onboard
+          git config user.name "Gesta Bot"
+          git config user.email "bot@cloudpilot.ai"
+          git add docs/install-agent.sh docs/agent/install.sh docs/agent/bin docs/agent/SHA256SUMS
+          if git diff --cached --quiet; then
+            echo "No onboard asset changes to publish."
+            exit 0
+          fi
+          git commit -s -m "Update Gesta agent assets"
+          git push origin main
