@@ -1,0 +1,238 @@
+package app
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync/atomic"
+	"testing"
+
+	"github.com/gesta-run/gesta-agent/pkg/daemon"
+	"github.com/gesta-run/gesta-agent/pkg/model"
+)
+
+func TestClaudeHookBlocksBashCommandFromPolicy(t *testing.T) {
+	tmp := t.TempDir()
+	home := filepath.Join(tmp, "home")
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		t.Fatalf("mkdir home: %v", err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("GESTA_USER_NAME", "claude-hook@example.com")
+
+	var eventRequests int32
+	var uploaded model.EventBatch
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/events":
+			atomic.AddInt32(&eventRequests, 1)
+			if err := json.NewDecoder(r.Body).Decode(&uploaded); err != nil {
+				t.Fatalf("decode events: %v", err)
+			}
+			_, _ = w.Write([]byte(`{"status":"ok"}`))
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	cfg := daemon.NewDirectRuntimeConfig(server.URL, "dtok_claude_hook")
+	if err := daemon.SaveConfig("", cfg); err != nil {
+		t.Fatalf("SaveConfig: %v", err)
+	}
+	if err := daemon.SavePolicyCache(cfg.DataDir, []model.PolicyRule{
+		{
+			RuleID:      "rule_hook_block_ls",
+			Name:        "Block ls",
+			Description: "block any ls command",
+			Status:      "active",
+			AgentType:   "claude_code",
+			MatchType:   "command_regex",
+			MatchValue:  ".*ls.*",
+			Action:      "block",
+			RiskLevel:   "medium",
+		},
+	}, cfgTime()); err != nil {
+		t.Fatalf("SavePolicyCache: %v", err)
+	}
+
+	input := []byte(`{
+		"hook_event_name": "PreToolUse",
+		"tool_name": "Bash",
+		"tool_input": {"command": "ls -al"}
+	}`)
+	response := processAgentHook(context.Background(), input, "claude_code", "claude_code")
+	data, err := json.Marshal(response)
+	if err != nil {
+		t.Fatalf("marshal response: %v", err)
+	}
+	text := string(data)
+	if !strings.Contains(text, `"permissionDecision":"deny"`) {
+		t.Fatalf("expected deny hook response, got %s", text)
+	}
+	if !strings.Contains(text, gestaHighRiskCommandDeniedMessage) {
+		t.Fatalf("expected fixed user-facing reason in response, got %s", text)
+	}
+	if strings.Contains(text, "block any ls command") {
+		t.Fatalf("response leaked policy description: %s", text)
+	}
+	if got := atomic.LoadInt32(&eventRequests); got != 1 {
+		t.Fatalf("event flush requests = %d, want 1", got)
+	}
+	if len(uploaded.Events) != 1 {
+		t.Fatalf("uploaded events = %d, want 1: %#v", len(uploaded.Events), uploaded.Events)
+	}
+	event := uploaded.Events[0]
+	if event.AgentType != "claude_code" {
+		t.Fatalf("policy.decision agent_type = %q, want claude_code", event.AgentType)
+	}
+}
+
+func TestClaudeHookBlocksUserPromptSubmitSecret(t *testing.T) {
+	tmp := t.TempDir()
+	home := filepath.Join(tmp, "home")
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		t.Fatalf("mkdir home: %v", err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("GESTA_USER_NAME", "claude-hook-sensitive@example.com")
+
+	var eventRequests int32
+	var uploaded model.EventBatch
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/sensitive-rules":
+			if err := json.NewEncoder(w).Encode(model.SensitiveRulesResponse{Rules: []model.SensitiveRule{openAIKeySensitiveRule()}}); err != nil {
+				t.Fatalf("encode sensitive rules: %v", err)
+			}
+		case "/api/v1/events":
+			atomic.AddInt32(&eventRequests, 1)
+			if err := json.NewDecoder(r.Body).Decode(&uploaded); err != nil {
+				t.Fatalf("decode events: %v", err)
+			}
+			_, _ = w.Write([]byte(`{"status":"ok"}`))
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	cfg := daemon.NewDirectRuntimeConfig(server.URL, "dtok_claude_hook_sensitive")
+	if err := daemon.SaveConfig("", cfg); err != nil {
+		t.Fatalf("SaveConfig: %v", err)
+	}
+
+	secret := "sk-" + strings.Repeat("a", 32)
+	input := []byte(`{
+		"hook_event_name": "UserPromptSubmit",
+		"prompt": "please use ` + secret + ` for the test"
+	}`)
+	response := processAgentHook(context.Background(), input, "claude_code", "claude_code")
+	data, err := json.Marshal(response)
+	if err != nil {
+		t.Fatalf("marshal response: %v", err)
+	}
+	text := string(data)
+	if !strings.Contains(text, `"decision":"block"`) {
+		t.Fatalf("expected block response, got %s", text)
+	}
+	if !strings.Contains(text, gestaSensitivePromptDeniedMessage) {
+		t.Fatalf("expected sensitive prompt message, got %s", text)
+	}
+	if strings.Contains(text, secret) {
+		t.Fatalf("response leaked secret: %s", text)
+	}
+	if got := atomic.LoadInt32(&eventRequests); got != 1 {
+		t.Fatalf("event flush requests = %d, want 1", got)
+	}
+	if len(uploaded.Events) != 1 {
+		t.Fatalf("uploaded events = %d, want 1: %#v", len(uploaded.Events), uploaded.Events)
+	}
+	event := uploaded.Events[0]
+	if event.EventType != "sensitive.finding" || event.Source != "claude_code" || event.AgentType != "claude_code" {
+		t.Fatalf("unexpected event envelope: %#v", event)
+	}
+	payload := event.Payload
+	if payload["source"] != "user_prompt" || payload["action"] != "block" {
+		t.Fatalf("unexpected finding payload source/action: %#v", payload)
+	}
+	if payload["category"] != "openai_api_key" {
+		t.Fatalf("unexpected finding category: %#v", payload)
+	}
+}
+
+func TestClaudeHookRecordsNonBlockingSensitiveRule(t *testing.T) {
+	tmp := t.TempDir()
+	home := filepath.Join(tmp, "home")
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		t.Fatalf("mkdir home: %v", err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("GESTA_USER_NAME", "claude-hook-record@example.com")
+
+	var eventRequests int32
+	var uploaded model.EventBatch
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/sensitive-rules":
+			if err := json.NewEncoder(w).Encode(model.SensitiveRulesResponse{Rules: []model.SensitiveRule{
+				{
+					RuleID:       "srule_record_customer_secret",
+					Name:         "Customer secrets",
+					Status:       "active",
+					Source:       "user_prompt",
+					DetectorType: "regex",
+					Pattern:      `customer_secret_[0-9]+`,
+					Category:     "customer_secret",
+					Severity:     "medium",
+					Action:       "record",
+					SampleMode:   "fingerprint_only",
+					Confidence:   0.77,
+					Priority:     1,
+				},
+			}}); err != nil {
+				t.Fatalf("encode sensitive rules: %v", err)
+			}
+		case "/api/v1/events":
+			atomic.AddInt32(&eventRequests, 1)
+			if err := json.NewDecoder(r.Body).Decode(&uploaded); err != nil {
+				t.Fatalf("decode events: %v", err)
+			}
+			_, _ = w.Write([]byte(`{"status":"ok"}`))
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	cfg := daemon.NewDirectRuntimeConfig(server.URL, "dtok_claude_hook_record")
+	if err := daemon.SaveConfig("", cfg); err != nil {
+		t.Fatalf("SaveConfig: %v", err)
+	}
+
+	input := []byte(`{
+		"hook_event_name": "UserPromptSubmit",
+		"prompt": "customer_secret_123 should be observed"
+	}`)
+	response := processAgentHook(context.Background(), input, "claude_code", "claude_code")
+	if len(response) != 0 {
+		t.Fatalf("record-only finding should allow prompt, got %#v", response)
+	}
+	if got := atomic.LoadInt32(&eventRequests); got != 1 {
+		t.Fatalf("event flush requests = %d, want 1", got)
+	}
+	if len(uploaded.Events) != 1 {
+		t.Fatalf("uploaded events = %d, want 1: %#v", len(uploaded.Events), uploaded.Events)
+	}
+	event := uploaded.Events[0]
+	if event.Source != "claude_code" || event.AgentType != "claude_code" {
+		t.Fatalf("unexpected event envelope: %#v", event)
+	}
+	if event.Payload["action"] != "record" {
+		t.Fatalf("unexpected record-only payload: %#v", event.Payload)
+	}
+}

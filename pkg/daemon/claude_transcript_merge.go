@@ -1,0 +1,226 @@
+package daemon
+
+import (
+	"sort"
+	"strings"
+
+	"github.com/gesta-run/gesta-agent/pkg/privacy"
+)
+
+// mergeClaudeSessionsByID groups per-file parse results into one logical session
+// per SessionID. Claude Code splits a single session across multiple transcript
+// files (e.g. on resume), so usage must be summed across every file before
+// building payloads — otherwise same-key buckets collide on the MAX-keeping
+// baseline and tokens are silently undercounted, and the session index thrashes
+// between conflicting per-file event counts / transcript hashes.
+//
+// Within a merged session: ByModelDay / Total / AssistantEvents are summed,
+// FirstEventAt is the min and LastEventAt the max across files, and Models is the
+// union. Scalar identity fields (CWD, GitBranch, Title) take the first non-empty
+// value, preferring the file whose first event is earliest so the title reflects
+// the session's opening prompt. The returned slice is sorted by SessionID for
+// deterministic downstream ordering.
+func mergeClaudeSessionsByID(sessions []claudeSessionUsage) []claudeSessionUsage {
+	if len(sessions) == 0 {
+		return nil
+	}
+	merged := make(map[string]*claudeSessionUsage)
+	order := make([]string, 0, len(sessions))
+	// Process files in FirstEventAt order so the earliest file seeds the title /
+	// cwd / branch for each session, regardless of filesystem walk order.
+	ordered := make([]claudeSessionUsage, len(sessions))
+	copy(ordered, sessions)
+	sort.SliceStable(ordered, func(i, j int) bool {
+		if !ordered[i].FirstEventAt.Equal(ordered[j].FirstEventAt) {
+			return ordered[i].FirstEventAt.Before(ordered[j].FirstEventAt)
+		}
+		return ordered[i].SessionID < ordered[j].SessionID
+	})
+
+	for i := range ordered {
+		file := ordered[i]
+		existing, ok := merged[file.SessionID]
+		if !ok {
+			combined := claudeSessionUsage{
+				SessionID:           file.SessionID,
+				CWD:                 file.CWD,
+				GitBranch:           file.GitBranch,
+				Title:               file.Title,
+				FirstEventAt:        file.FirstEventAt,
+				LastEventAt:         file.LastEventAt,
+				AssistantEvents:     file.AssistantEvents,
+				Total:               file.Total,
+				Messages:            cloneClaudeTranscriptMessages(file.Messages),
+				TranscriptTruncated: file.TranscriptTruncated,
+				ByModelDay:          map[claudeModelDayKey]claudeAssistantUsage{},
+			}
+			for key, usage := range file.ByModelDay {
+				combined.ByModelDay[key] = usage
+			}
+			modelsSeen := map[string]struct{}{}
+			for _, name := range file.Models {
+				if _, dup := modelsSeen[name]; dup {
+					continue
+				}
+				modelsSeen[name] = struct{}{}
+				combined.Models = append(combined.Models, name)
+			}
+			sort.Strings(combined.Models)
+			merged[file.SessionID] = &combined
+			order = append(order, file.SessionID)
+			continue
+		}
+
+		if existing.CWD == "" {
+			existing.CWD = file.CWD
+		}
+		if existing.GitBranch == "" {
+			existing.GitBranch = file.GitBranch
+		}
+		if existing.Title == "" {
+			existing.Title = file.Title
+		}
+		if !file.FirstEventAt.IsZero() && (existing.FirstEventAt.IsZero() || file.FirstEventAt.Before(existing.FirstEventAt)) {
+			existing.FirstEventAt = file.FirstEventAt
+		}
+		if file.LastEventAt.After(existing.LastEventAt) {
+			existing.LastEventAt = file.LastEventAt
+		}
+		existing.AssistantEvents += file.AssistantEvents
+		existing.Total = existing.Total.add(file.Total)
+		existing.Messages, existing.TranscriptTruncated = mergeClaudeTranscriptMessages(existing.Messages, file.Messages, existing.TranscriptTruncated || file.TranscriptTruncated)
+		for key, usage := range file.ByModelDay {
+			existing.ByModelDay[key] = existing.ByModelDay[key].add(usage)
+		}
+		modelsSeen := map[string]struct{}{}
+		for _, name := range existing.Models {
+			modelsSeen[name] = struct{}{}
+		}
+		for _, name := range file.Models {
+			if _, dup := modelsSeen[name]; dup {
+				continue
+			}
+			modelsSeen[name] = struct{}{}
+			existing.Models = append(existing.Models, name)
+		}
+		sort.Strings(existing.Models)
+	}
+
+	result := make([]claudeSessionUsage, 0, len(order))
+	for _, id := range order {
+		result = append(result, *merged[id])
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].SessionID < result[j].SessionID })
+	return result
+}
+
+func addClaudeTranscriptCandidate(candidates *[]claudeTranscriptCandidate, indexes map[string]int, role, text, timestamp, modelName, messageID string) {
+	role = strings.ToLower(strings.TrimSpace(role))
+	text = strings.TrimSpace(text)
+	if (role != "user" && role != "assistant") || text == "" || isCodexNonChatText(text) {
+		return
+	}
+	candidate := claudeTranscriptCandidate{
+		Role:      role,
+		Text:      text,
+		Timestamp: strings.TrimSpace(timestamp),
+		Model:     strings.TrimSpace(modelName),
+		MessageID: strings.TrimSpace(messageID),
+	}
+	if candidate.MessageID != "" {
+		key := candidate.Role + "\x00" + candidate.MessageID
+		if index, ok := indexes[key]; ok {
+			if len(candidate.Text) > len((*candidates)[index].Text) {
+				(*candidates)[index] = candidate
+			}
+			return
+		}
+		indexes[key] = len(*candidates)
+	}
+	*candidates = append(*candidates, candidate)
+}
+
+func claudeTranscriptMessagesFromCandidates(candidates []claudeTranscriptCandidate) ([]map[string]interface{}, bool) {
+	var messages []map[string]interface{}
+	totalBytes := 0
+	truncated := false
+	for _, candidate := range candidates {
+		text := privacy.RedactAndTruncate(candidate.Text, codexMaxTranscriptMessageBytes)
+		text = strings.TrimSpace(text)
+		if text == "" || isCodexNonChatText(text) {
+			continue
+		}
+		message := map[string]interface{}{
+			"role": candidate.Role,
+			"text": text,
+		}
+		if candidate.Timestamp != "" {
+			message["timestamp"] = candidate.Timestamp
+		}
+		if candidate.Role == "assistant" && candidate.Model != "" {
+			message["model"] = candidate.Model
+		}
+		messages = append(messages, message)
+		totalBytes += len(text)
+		for len(messages) > codexMaxTranscriptMessages || totalBytes > codexMaxTranscriptTotalBytes {
+			oldest := messages[0]
+			if oldText := firstString(oldest, "text"); oldText != "" {
+				totalBytes -= len(oldText)
+			}
+			messages = messages[1:]
+			truncated = true
+		}
+	}
+	return messages, truncated
+}
+
+func cloneClaudeTranscriptMessages(messages []map[string]interface{}) []map[string]interface{} {
+	if len(messages) == 0 {
+		return nil
+	}
+	out := make([]map[string]interface{}, 0, len(messages))
+	for _, message := range messages {
+		clone := make(map[string]interface{}, len(message))
+		for key, value := range message {
+			clone[key] = value
+		}
+		out = append(out, clone)
+	}
+	return out
+}
+
+func mergeClaudeTranscriptMessages(existing, next []map[string]interface{}, alreadyTruncated bool) ([]map[string]interface{}, bool) {
+	combined := append(cloneClaudeTranscriptMessages(existing), cloneClaudeTranscriptMessages(next)...)
+	sort.SliceStable(combined, func(i, j int) bool {
+		left, leftOK := parseClaudeTimestamp(firstString(combined[i], "timestamp"))
+		right, rightOK := parseClaudeTimestamp(firstString(combined[j], "timestamp"))
+		if leftOK && rightOK && !left.Equal(right) {
+			return left.Before(right)
+		}
+		if leftOK != rightOK {
+			return leftOK
+		}
+		return i < j
+	})
+	seen := map[string]struct{}{}
+	var candidates []claudeTranscriptCandidate
+	for _, message := range combined {
+		role := firstString(message, "role")
+		text := firstString(message, "text")
+		timestamp := firstString(message, "timestamp")
+		modelName := firstString(message, "model")
+		key := strings.Join([]string{role, timestamp, text}, "\x00")
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		candidates = append(candidates, claudeTranscriptCandidate{
+			Role:      role,
+			Text:      text,
+			Timestamp: timestamp,
+			Model:     modelName,
+		})
+	}
+	messages, truncated := claudeTranscriptMessagesFromCandidates(candidates)
+	return messages, alreadyTruncated || truncated
+}

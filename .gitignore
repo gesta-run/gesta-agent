@@ -1,0 +1,9 @@
+dist
+bin/
+coverage
+var
+_site/
+gesta-agent
+gesta-daemon
+*.log
+.DS_Store
