@@ -4,5 +4,4 @@ package model
 
 const (
 	DefaultPolicyVersion = "bootstrap-v0"
-	DaemonVersion        = "0.0.1-rc47"
 )

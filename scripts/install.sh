@@ -108,7 +108,7 @@ data_dir=${GESTA_DAEMON_DATA_DIR:-${GESTA_DATA_DIR:-"$HOME/.gesta"}}
 install_dir=${GESTA_AGENT_INSTALL_DIR:-"$data_dir/bin"}
 agent_root=${local_agent_root:-"$data_dir/agent"}
 agent_bin=${GESTA_AGENT_BIN:-"$install_dir/gesta-agent"}
-install_base_url=${GESTA_AGENT_INSTALL_BASE_URL:-https://gesta-run.github.io/onboard/agent}
+install_base_url=${GESTA_AGENT_INSTALL_BASE_URL:-https://gesta-run.github.io/onboard/agent/rc}
 if [ -n "${GESTA_AGENT_BIN:-}" ]; then
   external_agent_bin=1
 fi
