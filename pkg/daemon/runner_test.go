@@ -14,6 +14,10 @@ import (
 )
 
 func TestFlushWithHeartbeatAppliesUpgradeBeforeFlush(t *testing.T) {
+	previousVersion := model.DaemonVersion
+	model.DaemonVersion = "0.0.1-rc1"
+	t.Cleanup(func() { model.DaemonVersion = previousVersion })
+
 	dir := t.TempDir()
 	q := NewQueue(dir)
 	if err := q.Append([]model.EventEnvelope{{EventID: "evt_1", EventType: "test", CreatedAt: time.Now()}}); err != nil {
