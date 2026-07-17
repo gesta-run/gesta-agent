@@ -90,10 +90,6 @@ if [ "$run_uid" = "0" ] && [ -n "${SUDO_USER:-}" ] && [ "${SUDO_USER:-}" != "roo
   USER=$target_user
   LOGNAME=$target_user
   export USER LOGNAME
-  if [ -z "${GESTA_USER_NAME:-}" ]; then
-    GESTA_USER_NAME=$target_user
-    export GESTA_USER_NAME
-  fi
 fi
 
 external_agent_bin=0

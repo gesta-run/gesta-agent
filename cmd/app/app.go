@@ -219,8 +219,8 @@ func status(args []string) error {
 	if err != nil {
 		return fmt.Errorf("load daemon state: %w\nnote: run install first or pass --apikey when starting the daemon", err)
 	}
-	fmt.Printf("version=%s\nstate_path=%s\ndaemon_id=%s\ncustomer_id=%s\ndeployment_id=%s\nuser_name=%s\nuser_id=%s\napi_key=%s\nserver_url=%s\nenrollment_key_id=%s\npolicy_version=%s\ndata_dir=%s\n",
-		model.DaemonVersion, daemon.DefaultStatePath(), cfg.DaemonID, cfg.CustomerID, cfg.DeploymentID, cfg.EffectiveUserName(), cfg.UserID, cfg.APIKey, cfg.EffectiveServerURL(), cfg.EnrollmentKeyID, cfg.PolicyVersion, cfg.DataDir)
+	fmt.Printf("version=%s\nstate_path=%s\ndaemon_id=%s\ncustomer_id=%s\ndeployment_id=%s\napi_key=%s\nserver_url=%s\nenrollment_key_id=%s\npolicy_version=%s\ndata_dir=%s\n",
+		model.DaemonVersion, daemon.DefaultStatePath(), cfg.DaemonID, cfg.CustomerID, cfg.DeploymentID, cfg.APIKey, cfg.EffectiveServerURL(), cfg.EnrollmentKeyID, cfg.PolicyVersion, cfg.DataDir)
 	return nil
 }
 
@@ -280,6 +280,5 @@ Internal commands:
 Environment:
   GESTA_CONTROL_URL  control plane URL used by run/install
   GESTA_API_KEY      API key used by install
-  GESTA_USER_NAME    optional console user email for local development
 `)
 }

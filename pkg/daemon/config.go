@@ -23,8 +23,6 @@ type Config struct {
 	APIKey          string `json:"api_key,omitempty"`
 	Token           string `json:"token,omitempty"`
 	DeviceID        string `json:"device_id"`
-	UserName        string `json:"user_name,omitempty"`
-	UserID          string `json:"user_id"`
 	TeamID          string `json:"team_id,omitempty"`
 	EnrollmentKeyID string `json:"enrollment_key_id,omitempty"`
 	HostType        string `json:"host_type"`
@@ -118,12 +116,6 @@ func normalizeConfig(cfg *Config, path string) {
 	if cfg.ControlURL == "" {
 		cfg.ControlURL = cfg.ServerURL
 	}
-	if cfg.UserName == "" {
-		cfg.UserName = cfg.UserID
-	}
-	if cfg.UserID == "" {
-		cfg.UserID = cfg.UserName
-	}
 	if cfg.DeploymentID == "" {
 		cfg.DeploymentID = "single-node"
 	}
@@ -149,13 +141,6 @@ func (c Config) EffectiveServerURL() string {
 		return c.ServerURL
 	}
 	return c.ControlURL
-}
-
-func (c Config) EffectiveUserName() string {
-	if c.UserName != "" {
-		return c.UserName
-	}
-	return c.UserID
 }
 
 func (c Config) EffectiveUsageWindow() time.Duration {
@@ -198,54 +183,7 @@ func NewDirectRuntimeConfig(serverURL, apiKey string) Config {
 	cfg.DaemonID = "daemon_" + util.ShortHash(identity)
 	cfg.APIKey = apiKey
 	cfg.Token = apiKey
-	if configuredUser := strings.TrimSpace(os.Getenv("GESTA_USER_NAME")); configuredUser != "" {
-		cfg.UserName = configuredUser
-		cfg.UserID = configuredUser
-	} else if localUser != "" {
-		cfg.UserName = localUser
-		cfg.UserID = localUser
-	}
 	return cfg
-}
-
-func NewInstallConfig(serverURL, userName, customerID, deploymentID, teamID, hostType string) Config {
-	if customerID == "" {
-		customerID = fallbackCustomerID(userName)
-	}
-	cfg := NewEnrollmentConfig(serverURL, customerID, deploymentID, userName, teamID, hostType)
-	cfg.ServerURL = serverURL
-	cfg.UserName = userName
-	return cfg
-}
-
-func NewEnrollmentConfig(controlURL, customerID, deploymentID, userID, teamID, hostType string) Config {
-	if deploymentID == "" {
-		deploymentID = "single-node"
-	}
-	if hostType == "" {
-		hostType = "laptop"
-	}
-	return Config{
-		ServerURL:     controlURL,
-		ControlURL:    controlURL,
-		CustomerID:    customerID,
-		DeploymentID:  deploymentID,
-		DeviceID:      util.NewID("dev"),
-		UserName:      userID,
-		UserID:        userID,
-		TeamID:        teamID,
-		HostType:      hostType,
-		InstallMode:   "daemon",
-		PolicyVersion: model.DefaultPolicyVersion,
-		DataDir:       DefaultDataDir(),
-	}
-}
-
-func fallbackCustomerID(userName string) string {
-	if userName != "" {
-		return "user_" + util.ShortHash(userName)
-	}
-	return "local"
 }
 
 func localUsername() string {
@@ -262,7 +200,7 @@ func localUsername() string {
 }
 
 func (c Config) ValidateEnrolled() error {
-	if c.EffectiveServerURL() == "" || c.DaemonID == "" || c.Token == "" || c.DeviceID == "" || c.EffectiveUserName() == "" {
+	if c.EffectiveServerURL() == "" || c.DaemonID == "" || c.Token == "" || c.DeviceID == "" {
 		return errors.New("daemon runtime config is incomplete; run with --control-url and --apikey")
 	}
 	return nil

@@ -82,8 +82,6 @@ func baseEvent(cfg Config, eventType, source, agentType string, payload map[stri
 		DeploymentID: cfg.DeploymentID,
 		DaemonID:     cfg.DaemonID,
 		DeviceID:     cfg.DeviceID,
-		UserID:       cfg.UserID,
-		UserName:     cfg.EffectiveUserName(),
 		TeamID:       cfg.TeamID,
 		EventType:    eventType,
 		Source:       source,

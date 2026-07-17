@@ -9,11 +9,14 @@ keeps a local JSONL queue while offline.
 
 ## Run
 
+Create a connect token from the Gesta Console while signed in as the user who
+will run the agent, then pass that user-bound token to the daemon:
+
 ```bash
-go run ./cmd run --control-url http://localhost:8080 --apikey sk-dev-local --interval 1m --usage-window 10m
-go run ./cmd run --control-url http://localhost:8080 --apikey sk-dev-local -- kubectl delete pod api
-./scripts/install.sh --control-url http://localhost:8080 --apikey sk-dev-local
-cd "${HOME:-/tmp}" && curl -fsSL https://gesta-run.github.io/onboard/install-agent.sh | bash -s -- --control-url http://localhost:8080 --apikey sk-dev-local
+go run ./cmd run --control-url http://localhost:8080 --apikey sk-... --interval 1m --usage-window 10m
+go run ./cmd run --control-url http://localhost:8080 --apikey sk-... -- kubectl delete pod api
+./scripts/install.sh --control-url http://localhost:8080 --apikey sk-...
+cd "${HOME:-/tmp}" && curl -fsSL https://gesta-run.github.io/onboard/install-agent.sh | bash -s -- --control-url http://localhost:8080 --apikey sk-...
 ```
 
 The daemon does not require a separate enrollment step. `--apikey` is used
@@ -25,9 +28,9 @@ offline fallback.
 ## Commands
 
 ```bash
-go run ./cmd run --control-url http://localhost:8080 --apikey sk-dev-local --interval 1m --usage-window 10m
-go run ./cmd run --control-url http://localhost:8080 --apikey sk-dev-local -- kubectl delete pod api
-go run ./cmd install --control-url http://localhost:8080 --apikey sk-dev-local
+go run ./cmd run --control-url http://localhost:8080 --apikey sk-... --interval 1m --usage-window 10m
+go run ./cmd run --control-url http://localhost:8080 --apikey sk-... -- kubectl delete pod api
+go run ./cmd install --control-url http://localhost:8080 --apikey sk-...
 go run ./cmd status
 go run ./cmd guard --agent codex -- kubectl delete pod api
 ```
@@ -46,8 +49,8 @@ checkout when run locally, or downloads the published binary when run from
 GitHub Pages:
 
 ```bash
-./scripts/install.sh --control-url http://localhost:8080 --apikey sk-dev-local
-cd "${HOME:-/tmp}" && curl -fsSL https://gesta-run.github.io/onboard/install-agent.sh | bash -s -- --control-url http://localhost:8080 --apikey sk-dev-local
+./scripts/install.sh --control-url http://localhost:8080 --apikey sk-...
+cd "${HOME:-/tmp}" && curl -fsSL https://gesta-run.github.io/onboard/install-agent.sh | bash -s -- --control-url http://localhost:8080 --apikey sk-...
 ```
 
 The installer requires both `--control-url` and `--apikey`. It saves daemon state under

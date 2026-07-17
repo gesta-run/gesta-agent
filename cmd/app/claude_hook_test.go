@@ -22,7 +22,6 @@ func TestClaudeHookBlocksBashCommandFromPolicy(t *testing.T) {
 		t.Fatalf("mkdir home: %v", err)
 	}
 	t.Setenv("HOME", home)
-	t.Setenv("GESTA_USER_NAME", "claude-hook@example.com")
 
 	var eventRequests int32
 	var uploaded model.EventBatch
@@ -99,7 +98,6 @@ func TestClaudeHookBlocksUserPromptSubmitSecret(t *testing.T) {
 		t.Fatalf("mkdir home: %v", err)
 	}
 	t.Setenv("HOME", home)
-	t.Setenv("GESTA_USER_NAME", "claude-hook-sensitive@example.com")
 
 	var eventRequests int32
 	var uploaded model.EventBatch
@@ -172,7 +170,6 @@ func TestClaudeHookRecordsNonBlockingSensitiveRule(t *testing.T) {
 		t.Fatalf("mkdir home: %v", err)
 	}
 	t.Setenv("HOME", home)
-	t.Setenv("GESTA_USER_NAME", "claude-hook-record@example.com")
 
 	var eventRequests int32
 	var uploaded model.EventBatch

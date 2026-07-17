@@ -284,7 +284,7 @@ func TestGitCommitsAdapterScansMergedCommits(t *testing.T) {
 	run(clone, "config", "remote.origin.url", "git@example.com:team/demo.git")
 
 	registerCommitScanRepo(dataDir, clone)
-	cfg := Config{DataDir: dataDir, UserID: "jjk@cloudpilot.ai"}
+	cfg := Config{DataDir: dataDir}
 
 	collect := func() []map[string]interface{} {
 		t.Helper()

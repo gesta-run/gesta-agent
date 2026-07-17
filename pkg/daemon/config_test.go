@@ -9,7 +9,8 @@ import (
 
 func TestSaveLoadInstallConfigDoesNotPersistAPIKey(t *testing.T) {
 	apiKey := "enroll_secret_test_key"
-	cfg := NewInstallConfig("https://control.example", "alice", "", "hosted", "eng", "laptop")
+	cfg := NewRuntimeConfig("https://control.example")
+	cfg.CustomerID = "default"
 	cfg.DaemonID = "daemon_123"
 	cfg.Token = "dtok_123"
 
@@ -31,9 +32,6 @@ func TestSaveLoadInstallConfigDoesNotPersistAPIKey(t *testing.T) {
 	}
 	if loaded.EffectiveServerURL() != "https://control.example" {
 		t.Fatalf("server url mismatch: %q", loaded.EffectiveServerURL())
-	}
-	if loaded.EffectiveUserName() != "alice" {
-		t.Fatalf("user name mismatch: %q", loaded.EffectiveUserName())
 	}
 	if loaded.CustomerID == "" {
 		t.Fatal("expected fallback customer id for local/dev control planes")

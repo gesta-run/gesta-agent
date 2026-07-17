@@ -4,15 +4,15 @@
 // no daemon — and prints the commits it would report plus the per-author
 // totals the efficiency card would be built from.
 //
-// With --post it additionally registers a preview daemon identity via
-// heartbeat and ships the repo.commits events to a control plane, so a local
+// With --post it additionally registers a preview daemon via heartbeat and
+// ships the repo.commits events to a control plane, so a local
 // stack can be fed real data end to end.
 //
 // Usage:
 //
 //	go run ./cmd/scan-preview /path/to/repo [more repos...]
-//	go run ./cmd/scan-preview --post http://localhost:8080 --apikey sk-dev-local /path/to/repo
-//	go run ./cmd/scan-preview --post ... --apikey ... --heartbeat-only --user-email x@y.z --user-name X
+//	go run ./cmd/scan-preview --post http://localhost:8080 --apikey sk-... /path/to/repo
+//	go run ./cmd/scan-preview --post ... --apikey ... --heartbeat-only
 package main
 
 import (
@@ -23,6 +23,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/gesta-run/gesta-agent/pkg/daemon"
@@ -33,23 +34,26 @@ import (
 func main() {
 	post := flag.String("post", "", "control plane URL to ship the events to (default: print only)")
 	apiKey := flag.String("apikey", "", "daemon API key for --post")
-	daemonID := flag.String("daemon-id", "", "daemon id to report as (default: derived from user email)")
-	userEmail := flag.String("user-email", "", "identity the preview daemon reports as (required with --post)")
-	userName := flag.String("user-name", "", "display name the preview daemon reports as (required with --post)")
-	heartbeatOnly := flag.Bool("heartbeat-only", false, "only register the identity (membership); scan nothing")
+	daemonID := flag.String("daemon-id", "", "daemon id to report as (default: derived from the API key)")
+	heartbeatOnly := flag.Bool("heartbeat-only", false, "only register the preview daemon; scan nothing")
 	collectUsage := flag.Bool("collect-usage", false, "run ALL adapters (Claude/Codex usage + commits), not just the commit scanner")
 	flag.Parse()
 
+	identitySeed := strings.TrimSpace(*apiKey)
+	if identitySeed == "" {
+		identitySeed = "local-preview"
+	}
+	if hostname, err := os.Hostname(); err == nil {
+		identitySeed = strings.ToLower(strings.TrimSpace(hostname)) + "|" + identitySeed
+	}
 	if *daemonID == "" {
-		*daemonID = "d-preview-" + util.ShortHash(*userEmail)
+		*daemonID = "d-preview-" + util.ShortHash(identitySeed)
 	}
 	cfg := daemon.Config{
 		CustomerID:   "local-preview",
 		DeploymentID: "local-preview",
 		DaemonID:     *daemonID,
-		DeviceID:     "dev-" + util.ShortHash(*userEmail),
-		UserID:       *userEmail,
-		UserName:     *userName,
+		DeviceID:     "dev-" + util.ShortHash(identitySeed),
 	}
 
 	var client *daemon.Client
@@ -58,16 +62,10 @@ func main() {
 			fmt.Fprintln(os.Stderr, "--post requires --apikey")
 			os.Exit(2)
 		}
-		if *userEmail == "" || *userName == "" {
-			fmt.Fprintln(os.Stderr, "--post requires --user-email and --user-name (the identity the events register as)")
-			os.Exit(2)
-		}
 		client = daemon.NewClient(*post, *apiKey)
 		if _, err := client.Heartbeat(model.HeartbeatRequest{
 			DaemonID:      cfg.DaemonID,
 			DeviceID:      cfg.DeviceID,
-			UserID:        cfg.UserID,
-			UserName:      cfg.UserName,
 			Hostname:      "scan-preview",
 			DaemonVersion: model.DaemonVersion,
 			PolicyVersion: "bootstrap-v0",
@@ -76,7 +74,7 @@ func main() {
 			fmt.Fprintln(os.Stderr, "heartbeat:", err)
 			os.Exit(1)
 		}
-		fmt.Printf("registered %s (%s) at %s\n", cfg.UserID, cfg.DaemonID, *post)
+		fmt.Printf("registered %s at %s\n", cfg.DaemonID, *post)
 	}
 	if *heartbeatOnly {
 		return

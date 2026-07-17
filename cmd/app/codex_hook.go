@@ -235,8 +235,6 @@ func recordSensitiveFindingsWithConfig(cfg daemon.Config, shouldFlush bool, hook
 			DeploymentID: cfg.DeploymentID,
 			DaemonID:     cfg.DaemonID,
 			DeviceID:     cfg.DeviceID,
-			UserID:       cfg.UserID,
-			UserName:     cfg.EffectiveUserName(),
 			TeamID:       cfg.TeamID,
 			EventType:    "sensitive.finding",
 			Source:       source,
@@ -266,7 +264,6 @@ func sensitiveFingerprintKey(cfg daemon.Config) string {
 		cfg.APIKey,
 		cfg.DaemonID,
 		cfg.DeviceID,
-		cfg.UserID,
 		cfg.DataDir,
 	} {
 		if strings.TrimSpace(candidate) != "" {
@@ -290,8 +287,6 @@ func consumeApprovedPolicyGrant(ctx context.Context, cfg daemon.Config, evaluati
 		resp, err := client.ConsumePolicyApproval(model.ConsumePolicyApprovalRequest{
 			DaemonID:    cfg.DaemonID,
 			DeviceID:    cfg.DeviceID,
-			UserID:      cfg.UserID,
-			UserName:    cfg.EffectiveUserName(),
 			TeamID:      cfg.TeamID,
 			AgentType:   evaluation.AgentType,
 			CommandHash: evaluation.CommandHash,
@@ -325,8 +320,6 @@ func createPolicyApprovalRequest(ctx context.Context, cfg daemon.Config, evaluat
 		approval, err := client.CreatePolicyApproval(model.CreatePolicyApprovalRequest{
 			DaemonID:       cfg.DaemonID,
 			DeviceID:       cfg.DeviceID,
-			UserID:         cfg.UserID,
-			UserName:       cfg.EffectiveUserName(),
 			TeamID:         cfg.TeamID,
 			AgentType:      evaluation.AgentType,
 			CommandHash:    evaluation.CommandHash,
