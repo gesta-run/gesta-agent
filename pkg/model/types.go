@@ -4,11 +4,7 @@ import "time"
 
 type EnrollmentRequest struct {
 	APIKey        string   `json:"api_key"`
-	CustomerID    string   `json:"customer_id"`
-	DeploymentID  string   `json:"deployment_id"`
 	DeviceID      string   `json:"device_id"`
-	UserID        string   `json:"user_id"`
-	UserName      string   `json:"user_name"`
 	TeamID        string   `json:"team_id"`
 	Hostname      string   `json:"hostname"`
 	HostType      string   `json:"host_type"`
@@ -43,8 +39,6 @@ type AdapterStatus struct {
 type HeartbeatRequest struct {
 	DaemonID      string          `json:"daemon_id,omitempty"`
 	DeviceID      string          `json:"device_id,omitempty"`
-	UserID        string          `json:"user_id,omitempty"`
-	UserName      string          `json:"user_name,omitempty"`
 	TeamID        string          `json:"team_id,omitempty"`
 	Hostname      string          `json:"hostname,omitempty"`
 	InstallMode   string          `json:"install_mode,omitempty"`
@@ -79,8 +73,8 @@ type EventEnvelope struct {
 	DeploymentID string                 `json:"deployment_id"`
 	DaemonID     string                 `json:"daemon_id"`
 	DeviceID     string                 `json:"device_id"`
-	UserID       string                 `json:"user_id"`
-	UserName     string                 `json:"user_name"`
+	UserID       string                 `json:"user_id,omitempty"`
+	UserName     string                 `json:"user_name,omitempty"`
 	TeamID       string                 `json:"team_id"`
 	EventType    string                 `json:"event_type"`
 	Source       string                 `json:"source"`
@@ -173,8 +167,6 @@ type PolicyApproval struct {
 type CreatePolicyApprovalRequest struct {
 	DaemonID       string   `json:"daemon_id"`
 	DeviceID       string   `json:"device_id"`
-	UserID         string   `json:"user_id"`
-	UserName       string   `json:"user_name"`
 	TeamID         string   `json:"team_id"`
 	AgentType      string   `json:"agent_type"`
 	CommandHash    string   `json:"command_hash"`
@@ -186,8 +178,6 @@ type CreatePolicyApprovalRequest struct {
 type ConsumePolicyApprovalRequest struct {
 	DaemonID    string `json:"daemon_id"`
 	DeviceID    string `json:"device_id"`
-	UserID      string `json:"user_id"`
-	UserName    string `json:"user_name"`
 	TeamID      string `json:"team_id"`
 	AgentType   string `json:"agent_type"`
 	CommandHash string `json:"command_hash"`

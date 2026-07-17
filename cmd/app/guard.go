@@ -217,8 +217,6 @@ func recordGuardDecisionWithConfig(cfg daemon.Config, shouldFlush bool, evaluati
 		DeploymentID: cfg.DeploymentID,
 		DaemonID:     cfg.DaemonID,
 		DeviceID:     cfg.DeviceID,
-		UserID:       cfg.UserID,
-		UserName:     cfg.EffectiveUserName(),
 		TeamID:       cfg.TeamID,
 		EventType:    "policy.decision",
 		Source:       "guard",

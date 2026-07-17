@@ -58,6 +58,10 @@ func (c *Client) SendEvents(events []model.EventEnvelope) error {
 	if len(events) == 0 {
 		return nil
 	}
+	for i := range events {
+		events[i].UserID = ""
+		events[i].UserName = ""
+	}
 	var resp map[string]interface{}
 	return c.post("/api/v1/events", c.token, model.EventBatch{Events: events}, &resp)
 }

@@ -27,7 +27,6 @@ func TestCodexHookCapturesOutputBaselineForNonShellTool(t *testing.T) {
 		t.Fatalf("mkdir home: %v", err)
 	}
 	t.Setenv("HOME", home)
-	t.Setenv("GESTA_USER_NAME", "codex-hook-baseline@example.com")
 
 	repo := filepath.Join(tmp, "repo")
 	if err := os.MkdirAll(repo, 0o700); err != nil {
@@ -81,7 +80,6 @@ func TestCodexHookBlocksAnyBashCommandFromPolicy(t *testing.T) {
 		t.Fatalf("mkdir home: %v", err)
 	}
 	t.Setenv("HOME", home)
-	t.Setenv("GESTA_USER_NAME", "codex-hook@example.com")
 
 	var eventRequests int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -147,7 +145,6 @@ func TestCodexHookBlocksUserPromptSubmitSecret(t *testing.T) {
 		t.Fatalf("mkdir home: %v", err)
 	}
 	t.Setenv("HOME", home)
-	t.Setenv("GESTA_USER_NAME", "codex-hook-sensitive@example.com")
 
 	var eventRequests int32
 	var uploaded model.EventBatch
@@ -255,7 +252,6 @@ func TestCodexHookBlocksBuiltInSmartSecretRule(t *testing.T) {
 		t.Fatalf("mkdir home: %v", err)
 	}
 	t.Setenv("HOME", home)
-	t.Setenv("GESTA_USER_NAME", "codex-hook-built-in-sensitive@example.com")
 
 	var eventRequests int32
 	var uploaded model.EventBatch
@@ -342,7 +338,6 @@ func TestCodexHookRefreshesStaleEmptySensitiveRuleCache(t *testing.T) {
 		t.Fatalf("mkdir home: %v", err)
 	}
 	t.Setenv("HOME", home)
-	t.Setenv("GESTA_USER_NAME", "codex-hook-stale-sensitive-cache@example.com")
 
 	var sensitiveRuleRequests int32
 	var eventRequests int32
@@ -428,7 +423,6 @@ func TestCodexHookRecordsNonBlockingSensitiveRule(t *testing.T) {
 		t.Fatalf("mkdir home: %v", err)
 	}
 	t.Setenv("HOME", home)
-	t.Setenv("GESTA_USER_NAME", "codex-hook-record@example.com")
 
 	var eventRequests int32
 	var uploaded model.EventBatch
@@ -529,7 +523,6 @@ func TestCodexHookAllowsWarnPolicy(t *testing.T) {
 		t.Fatalf("mkdir home: %v", err)
 	}
 	t.Setenv("HOME", home)
-	t.Setenv("GESTA_USER_NAME", "codex-hook-warn@example.com")
 
 	cfg := daemon.NewDirectRuntimeConfig("http://127.0.0.1:1", "dtok_codex_hook_warn")
 	if err := daemon.SaveConfig("", cfg); err != nil {
@@ -569,7 +562,6 @@ func TestCodexHookTreatsExecCommandAsShellCommand(t *testing.T) {
 		t.Fatalf("mkdir home: %v", err)
 	}
 	t.Setenv("HOME", home)
-	t.Setenv("GESTA_USER_NAME", "codex-hook-exec@example.com")
 
 	cfg := daemon.NewDirectRuntimeConfig("http://127.0.0.1:1", "dtok_codex_hook_exec")
 	if err := daemon.SaveConfig("", cfg); err != nil {

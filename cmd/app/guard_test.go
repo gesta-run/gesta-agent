@@ -140,8 +140,6 @@ func TestRecordGuardDecisionKeepsMatchedAllowDecision(t *testing.T) {
 		DeploymentID: "local",
 		DaemonID:     "daemon_test",
 		DeviceID:     "device_test",
-		UserID:       "user_test",
-		UserName:     "user@example.com",
 	}
 	evaluation := policy.Evaluation{
 		AgentType:      "codex",
@@ -239,7 +237,6 @@ func TestGuardUsesCachedControlPlanePolicyWhenSyncFails(t *testing.T) {
 		t.Fatalf("mkdir home: %v", err)
 	}
 	t.Setenv("HOME", home)
-	t.Setenv("GESTA_USER_NAME", "cache-test@example.com")
 
 	var eventRequests int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -311,7 +308,6 @@ func TestRunCanExecuteGuardedCommand(t *testing.T) {
 		t.Fatalf("mkdir home: %v", err)
 	}
 	t.Setenv("HOME", home)
-	t.Setenv("GESTA_USER_NAME", "run-guard@example.com")
 
 	var eventRequests int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -376,7 +372,6 @@ func TestRunCommandLoadsSavedConfigWithoutAPIKey(t *testing.T) {
 		t.Fatalf("mkdir home: %v", err)
 	}
 	t.Setenv("HOME", home)
-	t.Setenv("GESTA_USER_NAME", "saved-config@example.com")
 
 	var eventRequests int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

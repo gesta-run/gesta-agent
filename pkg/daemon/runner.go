@@ -57,7 +57,6 @@ func (r *Runner) RunOnce(ctx context.Context) error {
 func (r *Runner) logCollectionStarted() {
 	r.logger.Info("agent collection started",
 		"daemon_id", r.cfg.DaemonID,
-		"user", r.cfg.EffectiveUserName(),
 		"control_url", r.cfg.EffectiveServerURL(),
 		"data_dir", r.cfg.DataDir,
 	)
@@ -197,8 +196,6 @@ func (r *Runner) sendHeartbeat(health string, adapters []model.AdapterStatus) (m
 	return r.client.Heartbeat(model.HeartbeatRequest{
 		DaemonID:      r.cfg.DaemonID,
 		DeviceID:      r.cfg.DeviceID,
-		UserID:        r.cfg.UserID,
-		UserName:      r.cfg.EffectiveUserName(),
 		TeamID:        r.cfg.TeamID,
 		Hostname:      hostname,
 		HostType:      r.cfg.HostType,

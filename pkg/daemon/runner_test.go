@@ -49,8 +49,6 @@ func TestFlushWithHeartbeatAppliesUpgradeBeforeFlush(t *testing.T) {
 		cfg: Config{
 			DaemonID:      "daemon_test",
 			DeviceID:      "dev_test",
-			UserID:        "user_test",
-			UserName:      "user_test",
 			PolicyVersion: model.DefaultPolicyVersion,
 			DataDir:       dir,
 		},

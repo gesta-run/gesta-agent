@@ -17,8 +17,6 @@ func TestBuildUsageDeltaEventsBaselinesThenEmitsDelta(t *testing.T) {
 		DeploymentID: "prod",
 		DaemonID:     "daemon_1",
 		DeviceID:     "device_1",
-		UserID:       "alice",
-		UserName:     "alice",
 		UsageWindow:  "10m",
 	}
 	firstObservedAt := time.Date(2026, 6, 10, 23, 58, 0, 0, time.UTC)
@@ -71,8 +69,6 @@ func TestBuildUsageDeltaEventsSkipsNegativeDelta(t *testing.T) {
 		DeploymentID: "prod",
 		DaemonID:     "daemon_1",
 		DeviceID:     "device_1",
-		UserID:       "alice",
-		UserName:     "alice",
 		UsageWindow:  "10m",
 	}
 	observedAt := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
@@ -210,8 +206,6 @@ func TestBuildUsageDeltaEventsComputesCacheTierDeltas(t *testing.T) {
 		DeploymentID: "prod",
 		DaemonID:     "daemon_1",
 		DeviceID:     "device_1",
-		UserID:       "alice",
-		UserName:     "alice",
 		UsageWindow:  "10m",
 	}
 	firstObservedAt := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
@@ -261,8 +255,6 @@ func usageSummaryEvent(total, input, output int64) model.EventEnvelope {
 		DeploymentID: "prod",
 		DaemonID:     "daemon_1",
 		DeviceID:     "device_1",
-		UserID:       "alice",
-		UserName:     "alice",
 		EventType:    "usage.summary",
 		Source:       "codex",
 		AgentType:    "codex",
@@ -285,8 +277,6 @@ func cursorEventWithCache(total, input, output, cacheRead, cacheWrite int64) mod
 		DeploymentID: "prod",
 		DaemonID:     "daemon_1",
 		DeviceID:     "device_1",
-		UserID:       "alice",
-		UserName:     "alice",
 		EventType:    "usage.summary",
 		Source:       "codex",
 		AgentType:    "codex",
@@ -316,8 +306,6 @@ func TestUsageDeltaDoesNotSpikeWhenUpgradingWithInFlightSession(t *testing.T) {
 		DeploymentID: "prod",
 		DaemonID:     "daemon_1",
 		DeviceID:     "device_1",
-		UserID:       "alice",
-		UserName:     "alice",
 		UsageWindow:  "10m",
 	}
 	t0 := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
@@ -469,8 +457,6 @@ func TestKeylessPollDoesNotArmACacheSpikeOnTheNextPoll(t *testing.T) {
 		DeploymentID: "prod",
 		DaemonID:     "daemon_1",
 		DeviceID:     "device_1",
-		UserID:       "alice",
-		UserName:     "alice",
 		UsageWindow:  "10m",
 	}
 	t0 := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)

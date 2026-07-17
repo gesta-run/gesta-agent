@@ -405,7 +405,7 @@ func TestCollectClaudeUsageEventsIdempotency(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	dataDir := t.TempDir()
-	cfg := Config{DataDir: dataDir, UserName: "tester"}
+	cfg := Config{DataDir: dataDir}
 	projectsDir := filepath.Join(home, ".claude", "projects")
 
 	writeClaudeTranscript(t, home, claudeSessionUUID, []string{
@@ -469,7 +469,7 @@ func TestCollectClaudeUsageEventsReemitsUserOnlyTranscriptChange(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	dataDir := t.TempDir()
-	cfg := Config{DataDir: dataDir, UserName: "tester"}
+	cfg := Config{DataDir: dataDir}
 	projectsDir := filepath.Join(home, ".claude", "projects")
 	observed := time.Date(2026, 6, 20, 12, 0, 0, 0, time.UTC)
 
@@ -516,7 +516,7 @@ func TestCollectClaudeUsageEventsEmitsZeroUsageTranscriptWithoutUsageSummary(t *
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	dataDir := t.TempDir()
-	cfg := Config{DataDir: dataDir, UserName: "tester"}
+	cfg := Config{DataDir: dataDir}
 	projectsDir := filepath.Join(home, ".claude", "projects")
 	observed := time.Date(2026, 6, 20, 12, 0, 0, 0, time.UTC)
 
@@ -551,7 +551,7 @@ func TestCollectClaudeUsageEventsDeltaPipeline(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	dataDir := t.TempDir()
-	cfg := Config{DataDir: dataDir, UserName: "tester", UsageWindow: "10m"}
+	cfg := Config{DataDir: dataDir, UsageWindow: "10m"}
 	projectsDir := filepath.Join(home, ".claude", "projects")
 
 	// Initialize baseline with an empty-ish state, then add a brand-new session
@@ -633,7 +633,7 @@ func TestCollectClaudeUsageEventsRecoversAfterCrashBetweenBaselineAndCursor(t *t
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	dataDir := t.TempDir()
-	cfg := Config{DataDir: dataDir, UserName: "tester", UsageWindow: "10m"}
+	cfg := Config{DataDir: dataDir, UsageWindow: "10m"}
 	projectsDir := filepath.Join(home, ".claude", "projects")
 
 	// Cycle 1: initialize the baseline over an existing session (nothing emitted).

@@ -21,15 +21,21 @@ func TestClientEnrollWithAPIKeySendsAuthAndPayload(t *testing.T) {
 		if got := r.Header.Get("X-API-Key"); got != apiKey {
 			t.Fatalf("unexpected x-api-key header: %q", got)
 		}
-		var req model.EnrollmentRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		var payload map[string]interface{}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 			t.Fatalf("decode request: %v", err)
 		}
-		if req.APIKey != "" {
+		if payload["api_key"] != "" {
 			t.Fatalf("connect token should not be duplicated in JSON payload")
 		}
-		if req.UserName != "alice" || req.UserID != "alice" || req.DeviceID != "dev_123" {
-			t.Fatalf("unexpected enrollment request: %#v", req)
+		if _, ok := payload["user_id"]; ok {
+			t.Fatalf("enrollment payload exposed user_id: %#v", payload)
+		}
+		if _, ok := payload["user_name"]; ok {
+			t.Fatalf("enrollment payload exposed user_name: %#v", payload)
+		}
+		if payload["device_id"] != "dev_123" {
+			t.Fatalf("unexpected enrollment request: %#v", payload)
 		}
 		_ = json.NewEncoder(w).Encode(model.EnrollmentResponse{
 			DaemonID:      "daemon_123",
@@ -40,12 +46,7 @@ func TestClientEnrollWithAPIKeySendsAuthAndPayload(t *testing.T) {
 	defer server.Close()
 
 	client := NewClient(server.URL, "")
-	resp, err := client.EnrollWithAPIKey(model.EnrollmentRequest{
-		CustomerID: "cust_123",
-		DeviceID:   "dev_123",
-		UserID:     "alice",
-		UserName:   "alice",
-	}, apiKey)
+	resp, err := client.EnrollWithAPIKey(model.EnrollmentRequest{DeviceID: "dev_123"}, apiKey)
 	if err != nil {
 		t.Fatalf("enroll: %v", err)
 	}
@@ -71,6 +72,12 @@ func TestClientHeartbeatSendsDaemonTokenAndHostType(t *testing.T) {
 		}
 		if payload["health_status"] != "ok" {
 			t.Fatalf("expected ok heartbeat, got %#v", payload["health_status"])
+		}
+		if _, ok := payload["user_id"]; ok {
+			t.Fatalf("heartbeat exposed user_id: %#v", payload)
+		}
+		if _, ok := payload["user_name"]; ok {
+			t.Fatalf("heartbeat exposed user_name: %#v", payload)
 		}
 		if _, ok := payload["offline_queue_size"]; ok {
 			t.Fatalf("heartbeat exposed offline_queue_size: %#v", payload)
@@ -108,15 +115,25 @@ func TestClientSendEventsDropsUnmatchedPolicyDecisions(t *testing.T) {
 		if r.URL.Path != "/api/v1/events" {
 			t.Fatalf("unexpected path: %s", r.URL.Path)
 		}
-		var batch model.EventBatch
+		var batch struct {
+			Events []map[string]interface{} `json:"events"`
+		}
 		if err := json.NewDecoder(r.Body).Decode(&batch); err != nil {
 			t.Fatalf("decode events: %v", err)
 		}
 		if len(batch.Events) != 2 {
 			t.Fatalf("events sent = %d, want 2: %#v", len(batch.Events), batch.Events)
 		}
-		if batch.Events[0].EventID != "evt_matched" || batch.Events[1].EventID != "evt_system" {
+		if batch.Events[0]["event_id"] != "evt_matched" || batch.Events[1]["event_id"] != "evt_system" {
 			t.Fatalf("unexpected events sent: %#v", batch.Events)
+		}
+		for _, event := range batch.Events {
+			if _, ok := event["user_id"]; ok {
+				t.Fatalf("event exposed user_id: %#v", event)
+			}
+			if _, ok := event["user_name"]; ok {
+				t.Fatalf("event exposed user_name: %#v", event)
+			}
 		}
 		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 	}))
@@ -134,6 +151,8 @@ func TestClientSendEventsDropsUnmatchedPolicyDecisions(t *testing.T) {
 		},
 		{
 			EventID:   "evt_matched",
+			UserID:    "spoofed-user",
+			UserName:  "Spoofed User",
 			EventType: "policy.decision",
 			Payload: map[string]interface{}{
 				"decision": "block",
@@ -142,6 +161,8 @@ func TestClientSendEventsDropsUnmatchedPolicyDecisions(t *testing.T) {
 		},
 		{
 			EventID:   "evt_system",
+			UserID:    "spoofed-user",
+			UserName:  "Spoofed User",
 			EventType: "daemon.system_snapshot",
 			Payload:   map[string]interface{}{"daemon_version": model.DaemonVersion},
 		},

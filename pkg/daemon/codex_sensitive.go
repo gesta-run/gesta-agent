@@ -115,7 +115,6 @@ func codexSensitiveFingerprintKey(cfg Config) string {
 		cfg.APIKey,
 		cfg.DaemonID,
 		cfg.DeviceID,
-		cfg.UserID,
 		cfg.DataDir,
 	} {
 		if strings.TrimSpace(candidate) != "" {
