@@ -33,6 +33,17 @@ type usageCursor struct {
 	CacheObserved bool `json:"cache_observed"`
 }
 
+type usageObservation struct {
+	sessionID       string
+	outputSessionID string
+	total           int64
+	input           int64
+	output          int64
+	cacheRead       int64
+	cacheWrite      int64
+	cacheObserved   bool
+}
+
 type usageDeltaCommit func() error
 
 func BuildUsageDeltaEvents(cfg Config, events []model.EventEnvelope, observedAt time.Time) ([]model.EventEnvelope, usageDeltaCommit, error) {
@@ -67,48 +78,19 @@ func BuildUsageDeltaEvents(cfg Config, events []model.EventEnvelope, observedAt 
 }
 
 func usageDeltaFromEvent(cfg Config, event model.EventEnvelope, store usageCursorStore, observedAt time.Time) (model.EventEnvelope, string, usageCursor, bool) {
-	if event.EventType != "usage.summary" && event.EventType != "session.summary" {
+	observation, ok := usageObservationFromEvent(event)
+	if !ok {
 		return model.EventEnvelope{}, "", usageCursor{}, false
 	}
-	if event.Payload == nil {
-		return model.EventEnvelope{}, "", usageCursor{}, false
-	}
-	sessionID := strings.TrimSpace(firstPayloadString(event.Payload, "session_id", "session_id_hash", "thread_id", "conversation_id"))
-	if sessionID == "" {
-		return model.EventEnvelope{}, "", usageCursor{}, false
-	}
-	// sessionID is the per-bucket cursor identity (Claude Code salts it with
-	// model+day so each bucket advances independently). The emitted delta, however,
-	// must carry the REAL session id so the control plane can reconcile
-	// agent_sessions.total_tokens by session_id. Adapters that bucket usage expose
-	// the real id via index_session_id; Codex omits it and keeps sessionID as-is.
-	outputSessionID := sessionID
-	if indexSessionID := firstPayloadString(event.Payload, "index_session_id"); indexSessionID != "" {
-		outputSessionID = indexSessionID
-	}
-	total := payloadInt(event.Payload, "total_tokens", "tokens_used")
-	if total <= 0 {
-		return model.EventEnvelope{}, "", usageCursor{}, false
-	}
-	input := payloadInt(event.Payload, "input_tokens", "prompt_tokens")
-	output := payloadInt(event.Payload, "output_tokens", "completion_tokens")
-	// Absence must stay distinguishable from zero here too. payloadInt would report a
-	// missing key as 0, and the cursor below would then record that as an OBSERVED
-	// zero — so a single poll whose payload carries no cache keys (the Codex reader
-	// only emits them when the rollout file parses) would rewrite the cursor, and the
-	// next keyed poll would diff the session's cumulative cache against it and emit
-	// the whole history as one window's delta. Permanently, once in ClickHouse.
-	cacheRead, cacheReadOK := payloadIntValue(event.Payload, "cache_read_tokens", "cached_input_tokens", "cache_read_input_tokens")
-	cacheWrite, cacheWriteOK := payloadIntValue(event.Payload, "cache_creation_tokens", "cache_write_tokens", "cache_creation_input_tokens")
-	key := usageCursorKey(event, sessionID, firstPayloadString(event.Payload, "token_accounting"))
+	key := usageCursorKey(event, observation.sessionID, firstPayloadString(event.Payload, "token_accounting"))
 	nextCursor := usageCursor{
-		TotalTokens:      total,
-		InputTokens:      input,
-		OutputTokens:     output,
-		CacheReadTokens:  cacheRead,
-		CacheWriteTokens: cacheWrite,
+		TotalTokens:      observation.total,
+		InputTokens:      observation.input,
+		OutputTokens:     observation.output,
+		CacheReadTokens:  observation.cacheRead,
+		CacheWriteTokens: observation.cacheWrite,
 		ObservedAt:       observedAt.UTC().Format(time.RFC3339Nano),
-		CacheObserved:    cacheReadOK || cacheWriteOK,
+		CacheObserved:    observation.cacheObserved,
 	}
 	previous, seen := store.Sessions[key]
 	if !seen {
@@ -135,27 +117,27 @@ func usageDeltaFromEvent(cfg Config, event model.EventEnvelope, store usageCurso
 	// poll, exactly as a newly-tracked session is seeded rather than back-filled.
 	// It costs one window of cache attribution, once, per in-flight session.
 	if !previous.CacheObserved {
-		previous.CacheReadTokens = cacheRead
-		previous.CacheWriteTokens = cacheWrite
+		previous.CacheReadTokens = observation.cacheRead
+		previous.CacheWriteTokens = observation.cacheWrite
 	}
 
-	deltaTokens := total - previous.TotalTokens
+	deltaTokens := observation.total - previous.TotalTokens
 	if deltaTokens <= 0 {
 		return model.EventEnvelope{}, key, nextCursor, true
 	}
-	deltaInput := input - previous.InputTokens
+	deltaInput := observation.input - previous.InputTokens
 	if deltaInput < 0 {
 		deltaInput = 0
 	}
-	deltaOutput := output - previous.OutputTokens
+	deltaOutput := observation.output - previous.OutputTokens
 	if deltaOutput < 0 {
 		deltaOutput = 0
 	}
-	deltaCacheRead := cacheRead - previous.CacheReadTokens
+	deltaCacheRead := observation.cacheRead - previous.CacheReadTokens
 	if deltaCacheRead < 0 {
 		deltaCacheRead = 0
 	}
-	deltaCacheWrite := cacheWrite - previous.CacheWriteTokens
+	deltaCacheWrite := observation.cacheWrite - previous.CacheWriteTokens
 	if deltaCacheWrite < 0 {
 		deltaCacheWrite = 0
 	}
@@ -180,8 +162,8 @@ func usageDeltaFromEvent(cfg Config, event model.EventEnvelope, store usageCurso
 	payload := map[string]interface{}{
 		"accounting":             "delta",
 		"source_event_id":        event.EventID,
-		"source_session_id":      sessionID,
-		"session_id":             outputSessionID,
+		"source_session_id":      observation.sessionID,
+		"session_id":             observation.outputSessionID,
 		"window_start":           windowStart.Format(time.RFC3339Nano),
 		"window_end":             windowEnd.Format(time.RFC3339Nano),
 		"configured_window_sec":  int64(cfg.EffectiveUsageWindow().Seconds()),
@@ -191,9 +173,9 @@ func usageDeltaFromEvent(cfg Config, event model.EventEnvelope, store usageCurso
 		"output_tokens":          deltaOutput,
 		"cache_read_tokens":      deltaCacheRead,
 		"cache_write_tokens":     deltaCacheWrite,
-		"session_total_tokens":   total,
-		"session_input_tokens":   input,
-		"session_output_tokens":  output,
+		"session_total_tokens":   observation.total,
+		"session_input_tokens":   observation.input,
+		"session_output_tokens":  observation.output,
 		"session_previous_total": previous.TotalTokens,
 	}
 	if !seen {
@@ -208,6 +190,32 @@ func usageDeltaFromEvent(cfg Config, event model.EventEnvelope, store usageCurso
 	delta := baseEvent(cfg, "usage.delta", event.Source, event.AgentType, payload)
 	delta.CreatedAt = windowEnd
 	return delta, key, nextCursor, true
+}
+
+func usageObservationFromEvent(event model.EventEnvelope) (usageObservation, bool) {
+	if (event.EventType != "usage.summary" && event.EventType != "session.summary") || event.Payload == nil {
+		return usageObservation{}, false
+	}
+	sessionID := strings.TrimSpace(firstPayloadString(event.Payload, "session_id", "session_id_hash", "thread_id", "conversation_id"))
+	if sessionID == "" {
+		return usageObservation{}, false
+	}
+	total := payloadInt(event.Payload, "total_tokens", "tokens_used")
+	if total <= 0 {
+		return usageObservation{}, false
+	}
+	cacheRead, cacheReadOK := payloadIntValue(event.Payload, "cache_read_tokens", "cached_input_tokens", "cache_read_input_tokens")
+	cacheWrite, cacheWriteOK := payloadIntValue(event.Payload, "cache_creation_tokens", "cache_write_tokens", "cache_creation_input_tokens")
+	return usageObservation{
+		sessionID:       sessionID,
+		outputSessionID: firstNonEmptyString(firstPayloadString(event.Payload, "index_session_id"), sessionID),
+		total:           total,
+		input:           payloadInt(event.Payload, "input_tokens", "prompt_tokens"),
+		output:          payloadInt(event.Payload, "output_tokens", "completion_tokens"),
+		cacheRead:       cacheRead,
+		cacheWrite:      cacheWrite,
+		cacheObserved:   cacheReadOK || cacheWriteOK,
+	}, true
 }
 
 func usageCursorKey(event model.EventEnvelope, sessionID, tokenAccounting string) string {
