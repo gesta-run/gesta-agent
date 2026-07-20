@@ -13,12 +13,10 @@ import (
 	"github.com/gesta-run/gesta-agent/pkg/daemon"
 	"github.com/gesta-run/gesta-agent/pkg/model"
 	"github.com/gesta-run/gesta-agent/pkg/policy"
-	"github.com/gesta-run/gesta-agent/pkg/privacy"
 	"github.com/gesta-run/gesta-agent/pkg/util"
 )
 
 const gestaSensitivePromptDeniedMessage = "Gesta blocked this prompt because it appears to contain secret material. Remove secrets or replace them with placeholders, then retry."
-const hookSensitiveRulesCacheMaxAge = time.Minute
 
 type agentHookEvent struct {
 	HookEventName  string                 `json:"hook_event_name"`
@@ -62,11 +60,6 @@ func claudeHook(ctx context.Context, args []string) error {
 	return json.NewEncoder(os.Stdout).Encode(response)
 }
 
-// processCodexHook is a thin wrapper kept for backward compatibility with tests.
-func processCodexHook(ctx context.Context, data []byte) map[string]interface{} {
-	return processAgentHook(ctx, data, "codex", "codex")
-}
-
 func processAgentHook(ctx context.Context, data []byte, agentType, source string) map[string]interface{} {
 	var event agentHookEvent
 	if err := json.Unmarshal(data, &event); err != nil {
@@ -91,24 +84,19 @@ func processUserPromptSubmit(ctx context.Context, event agentHookEvent, agentTyp
 		return map[string]interface{}{}
 	}
 
-	cfg, shouldFlush := guardConfig()
+	cfg, _ := guardConfig()
 	captureOutputBaselineBestEffort(ctx, cfg, event)
-	var findings []privacy.SensitiveFinding
-	if rules, ok := hookSensitiveRules(ctx, cfg, shouldFlush); ok {
-		findings = privacy.DetectSensitiveTextWithRules(event.Prompt, sensitiveFingerprintKey(cfg), rules)
+	findings := detectSensitivePrompt(cfg, event.Prompt)
+	if len(findings) > 0 {
+		recordSensitiveFindingsBestEffortWithConfig(cfg, event, findings, source, agentType)
+		if sensitiveFindingsShouldBlock(findings) {
+			return map[string]interface{}{
+				"decision": "block",
+				"reason":   gestaSensitivePromptDeniedMessage,
+			}
+		}
 	}
-	if len(findings) == 0 {
-		return map[string]interface{}{}
-	}
-
-	recordSensitiveFindingsBestEffortWithConfig(cfg, shouldFlush, event, findings, source, agentType)
-	if !sensitiveFindingsShouldBlock(findings) {
-		return map[string]interface{}{}
-	}
-	return map[string]interface{}{
-		"decision": "block",
-		"reason":   gestaSensitivePromptDeniedMessage,
-	}
+	return processOrganizationContext(cfg, event, agentType, source)
 }
 
 func processPreToolUse(ctx context.Context, event agentHookEvent, agentType, source string) map[string]interface{} {
@@ -173,104 +161,6 @@ func captureOutputBaselineBestEffort(ctx context.Context, cfg daemon.Config, eve
 	if err := daemon.CaptureOutputBaseline(ctx, cfg, cwd, util.ShortHash(sessionID)); err != nil {
 		fmt.Fprintf(os.Stderr, "gesta-agent hook: output baseline was not captured: %v\n", err)
 	}
-}
-
-func sensitiveFindingsShouldBlock(findings []privacy.SensitiveFinding) bool {
-	for _, finding := range findings {
-		if strings.EqualFold(strings.TrimSpace(finding.Action), "block") {
-			return true
-		}
-	}
-	return false
-}
-
-func recordSensitiveFindingsBestEffortWithConfig(cfg daemon.Config, shouldFlush bool, hookEvent agentHookEvent, findings []privacy.SensitiveFinding, source, agentType string) {
-	if err := recordSensitiveFindingsWithConfig(cfg, shouldFlush, hookEvent, findings, source, agentType); err != nil {
-		fmt.Fprintf(os.Stderr, "gesta-agent hook: sensitive finding was not recorded: %v\n", err)
-	}
-}
-
-func recordSensitiveFindingsWithConfig(cfg daemon.Config, shouldFlush bool, hookEvent agentHookEvent, findings []privacy.SensitiveFinding, source, agentType string) error {
-	if len(findings) == 0 {
-		return nil
-	}
-	events := make([]model.EventEnvelope, 0, len(findings))
-	for _, finding := range findings {
-		payload := map[string]interface{}{
-			"source":             "user_prompt",
-			"hook_event_name":    hookEvent.HookEventName,
-			"category":           finding.Category,
-			"severity":           finding.Severity,
-			"confidence":         finding.Confidence,
-			"fingerprint":        finding.Fingerprint,
-			"sample":             finding.Sample,
-			"sample_mode":        finding.SampleMode,
-			"action":             firstNonEmpty(finding.Action, "block"),
-			"metadata_only":      finding.Sample == "",
-			"raw_content_stored": finding.SampleMode == "original" && finding.Sample != "",
-		}
-		if finding.RuleID != "" {
-			payload["rule_id"] = finding.RuleID
-		}
-		if finding.RuleName != "" {
-			payload["rule_name"] = finding.RuleName
-		}
-		if sessionID := firstNonEmpty(hookEvent.SessionID, hookEvent.ConversationID); sessionID != "" {
-			payload["session_id_hash"] = util.ShortHash(sessionID)
-			payload["session_id_is_hashed"] = true
-		}
-		if hookEvent.TurnID != "" {
-			payload["turn_id_hash"] = util.ShortHash(hookEvent.TurnID)
-		}
-		if hookEvent.CWD != "" {
-			payload["cwd_hash"] = util.ShortHash(hookEvent.CWD)
-		}
-		if hookEvent.Model != "" {
-			payload["model"] = privacy.RedactAndTruncate(hookEvent.Model, 128)
-		}
-
-		events = append(events, model.EventEnvelope{
-			EventID:      util.NewID("evt"),
-			CustomerID:   cfg.CustomerID,
-			DeploymentID: cfg.DeploymentID,
-			DaemonID:     cfg.DaemonID,
-			DeviceID:     cfg.DeviceID,
-			TeamID:       cfg.TeamID,
-			EventType:    "sensitive.finding",
-			Source:       source,
-			AgentType:    agentType,
-			CreatedAt:    time.Now().UTC(),
-			Payload:      payload,
-		})
-	}
-	queue := daemon.NewQueue(cfg.DataDir)
-	if err := queue.Append(events); err != nil {
-		return fmt.Errorf("queue sensitive finding: %w", err)
-	}
-	if !shouldFlush {
-		return nil
-	}
-	client := daemon.NewClient(cfg.EffectiveServerURL(), cfg.Token)
-	if err := queue.Drain(client.SendEvents); err != nil {
-		fmt.Fprintf(os.Stderr, "gesta-agent hook: queued sensitive finding locally; flush failed: %v\n", err)
-		return nil
-	}
-	return nil
-}
-
-func sensitiveFingerprintKey(cfg daemon.Config) string {
-	for _, candidate := range []string{
-		cfg.Token,
-		cfg.APIKey,
-		cfg.DaemonID,
-		cfg.DeviceID,
-		cfg.DataDir,
-	} {
-		if strings.TrimSpace(candidate) != "" {
-			return candidate
-		}
-	}
-	return "gesta-local-sensitive-finding"
 }
 
 func consumeApprovedPolicyGrant(ctx context.Context, cfg daemon.Config, evaluation policy.Evaluation) (model.PolicyApproval, bool) {
@@ -367,69 +257,6 @@ func hookPolicyRules(ctx context.Context, cfg daemon.Config, shouldFetch bool) (
 	ch := make(chan result, 1)
 	go func() {
 		rules, err := client.PolicyRules()
-		ch <- result{rules: rules, err: err}
-	}()
-	select {
-	case <-ctx.Done():
-		return nil, false
-	case <-time.After(3 * time.Second):
-		return nil, false
-	case res := <-ch:
-		if res.err != nil {
-			return nil, false
-		}
-		return res.rules, true
-	}
-}
-
-func hookSensitiveRules(ctx context.Context, cfg daemon.Config, shouldFetch bool) ([]model.SensitiveRule, bool) {
-	var cachedRules []model.SensitiveRule
-	hasCachedRules := false
-	if cached, err := daemon.LoadSensitiveRuleCache(cfg.DataDir); err == nil {
-		cachedRules = cached.Rules
-		hasCachedRules = true
-		if !shouldFetch || !sensitiveRuleCacheExpired(cached, time.Now()) {
-			return cached.Rules, true
-		}
-	}
-	if !shouldFetch {
-		return nil, false
-	}
-	rules, ok := fetchHookSensitiveRules(ctx, cfg)
-	if !ok {
-		if hasCachedRules {
-			return cachedRules, true
-		}
-		return nil, false
-	}
-	if err := daemon.SaveSensitiveRuleCache(cfg.DataDir, rules, time.Now().UTC()); err != nil {
-		fmt.Fprintf(os.Stderr, "gesta-agent hook: sensitive rules cache was not updated: %v\n", err)
-	}
-	return rules, true
-}
-
-func sensitiveRuleCacheExpired(cache daemon.SensitiveRuleCache, now time.Time) bool {
-	if cache.SyncedAt.IsZero() {
-		return true
-	}
-	if now.IsZero() {
-		now = time.Now()
-	}
-	if cache.SyncedAt.After(now) {
-		return false
-	}
-	return now.Sub(cache.SyncedAt) >= hookSensitiveRulesCacheMaxAge
-}
-
-func fetchHookSensitiveRules(ctx context.Context, cfg daemon.Config) ([]model.SensitiveRule, bool) {
-	client := daemon.NewClient(cfg.EffectiveServerURL(), cfg.Token)
-	type result struct {
-		rules []model.SensitiveRule
-		err   error
-	}
-	ch := make(chan result, 1)
-	go func() {
-		rules, err := client.SensitiveRules()
 		ch <- result{rules: rules, err: err}
 	}()
 	select {

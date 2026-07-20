@@ -40,8 +40,8 @@ func NewRunner(cfg Config) (*Runner, error) {
 func (r *Runner) RunOnce(ctx context.Context) error {
 	startedAt := time.Now()
 	r.logCollectionStarted()
-	if err := r.SyncPolicyRules(); err != nil {
-		r.logger.Warn("policy sync failed", "error", err)
+	if err := r.SyncRules(); err != nil {
+		r.logger.Warn("rule sync failed", "error", err)
 	}
 	adapters, err := r.collectAndQueue(ctx)
 	if err != nil {
@@ -161,25 +161,35 @@ func (r *Runner) handleUpgradeFromHeartbeat(resp model.HeartbeatResponse) error 
 	return r.applyUpgradeFromHeartbeat(resp)
 }
 
-func (r *Runner) SyncPolicyRules() error {
+func (r *Runner) SyncRules() error {
+	var syncErrors []error
 	rules, err := r.client.PolicyRules()
 	if err != nil {
-		return err
+		syncErrors = append(syncErrors, fmt.Errorf("policy rules: %w", err))
+	} else if err := SavePolicyCache(r.cfg.DataDir, rules, time.Now().UTC()); err != nil {
+		syncErrors = append(syncErrors, fmt.Errorf("save policy rules: %w", err))
+	} else {
+		r.logger.Info("policy rules synced", "rules", len(rules), "cache", PolicyCachePath(r.cfg.DataDir))
 	}
-	if err := SavePolicyCache(r.cfg.DataDir, rules, time.Now().UTC()); err != nil {
-		return err
-	}
-	r.logger.Info("policy rules synced", "rules", len(rules), "cache", PolicyCachePath(r.cfg.DataDir))
+
 	sensitiveRules, err := r.client.SensitiveRules()
 	if err != nil {
 		r.logger.Warn("sensitive rules sync failed", "error", err)
-		return nil
+	} else if err := SaveSensitiveRuleCache(r.cfg.DataDir, sensitiveRules, time.Now().UTC()); err != nil {
+		syncErrors = append(syncErrors, fmt.Errorf("save sensitive rules: %w", err))
+	} else {
+		r.logger.Info("sensitive rules synced", "rules", len(sensitiveRules), "cache", SensitiveRuleCachePath(r.cfg.DataDir))
 	}
-	if err := SaveSensitiveRuleCache(r.cfg.DataDir, sensitiveRules, time.Now().UTC()); err != nil {
-		return err
+
+	contextRules, err := r.client.ContextRules()
+	if err != nil {
+		r.logger.Warn("context rules sync failed", "error", err)
+	} else if err := SaveContextRuleCache(r.cfg.DataDir, contextRules, time.Now().UTC()); err != nil {
+		syncErrors = append(syncErrors, fmt.Errorf("save context rules: %w", err))
+	} else {
+		r.logger.Info("context rules synced", "rules", len(contextRules.Rules), "cache", ContextRuleCachePath(r.cfg.DataDir))
 	}
-	r.logger.Info("sensitive rules synced", "rules", len(sensitiveRules), "cache", SensitiveRuleCachePath(r.cfg.DataDir))
-	return nil
+	return errors.Join(syncErrors...)
 }
 
 func (r *Runner) SendHeartbeat() error {

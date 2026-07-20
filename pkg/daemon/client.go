@@ -138,6 +138,17 @@ func (c *Client) SensitiveRules() ([]model.SensitiveRule, error) {
 	return resp.Rules, nil
 }
 
+func (c *Client) ContextRules() (model.ContextRuleBundle, error) {
+	var bundle model.ContextRuleBundle
+	if err := c.get("/api/v1/context-rules", c.token, &bundle); err != nil {
+		return model.ContextRuleBundle{}, err
+	}
+	if bundle.Rules == nil {
+		bundle.Rules = []model.ContextRule{}
+	}
+	return bundle, nil
+}
+
 func (c *Client) CreatePolicyApproval(req model.CreatePolicyApprovalRequest) (model.PolicyApproval, error) {
 	var resp model.PolicyApproval
 	if err := c.post("/api/v1/policyapprovals", c.token, req, &resp); err != nil {
