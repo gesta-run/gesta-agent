@@ -123,6 +123,9 @@ func TestClaudeHookBlocksUserPromptSubmitSecret(t *testing.T) {
 	if err := daemon.SaveConfig("", cfg); err != nil {
 		t.Fatalf("SaveConfig: %v", err)
 	}
+	if err := daemon.SaveSensitiveRuleCache(cfg.DataDir, []model.SensitiveRule{openAIKeySensitiveRule()}, cfgTime()); err != nil {
+		t.Fatalf("SaveSensitiveRuleCache: %v", err)
+	}
 
 	secret := "sk-" + strings.Repeat("a", 32)
 	input := []byte(`{
@@ -144,13 +147,10 @@ func TestClaudeHookBlocksUserPromptSubmitSecret(t *testing.T) {
 	if strings.Contains(text, secret) {
 		t.Fatalf("response leaked secret: %s", text)
 	}
-	if got := atomic.LoadInt32(&eventRequests); got != 1 {
-		t.Fatalf("event flush requests = %d, want 1", got)
+	if got := atomic.LoadInt32(&eventRequests); got != 0 {
+		t.Fatalf("event requests on prompt path = %d, want 0", got)
 	}
-	if len(uploaded.Events) != 1 {
-		t.Fatalf("uploaded events = %d, want 1: %#v", len(uploaded.Events), uploaded.Events)
-	}
-	event := uploaded.Events[0]
+	event := readSingleQueuedEvent(t, cfg)
 	if event.EventType != "sensitive.finding" || event.Source != "claude_code" || event.AgentType != "claude_code" {
 		t.Fatalf("unexpected event envelope: %#v", event)
 	}
@@ -194,6 +194,10 @@ func TestClaudeHookRecordsNonBlockingSensitiveRule(t *testing.T) {
 			}}); err != nil {
 				t.Fatalf("encode sensitive rules: %v", err)
 			}
+		case "/api/v1/context-rules":
+			if err := json.NewEncoder(w).Encode(model.ContextRuleBundle{Version: "empty", Rules: []model.ContextRule{}}); err != nil {
+				t.Fatalf("encode context rules: %v", err)
+			}
 		case "/api/v1/events":
 			atomic.AddInt32(&eventRequests, 1)
 			if err := json.NewDecoder(r.Body).Decode(&uploaded); err != nil {
@@ -210,6 +214,24 @@ func TestClaudeHookRecordsNonBlockingSensitiveRule(t *testing.T) {
 	if err := daemon.SaveConfig("", cfg); err != nil {
 		t.Fatalf("SaveConfig: %v", err)
 	}
+	if err := daemon.SaveSensitiveRuleCache(cfg.DataDir, []model.SensitiveRule{
+		{
+			RuleID:       "srule_record_customer_secret",
+			Name:         "Customer secrets",
+			Status:       "active",
+			Source:       "user_prompt",
+			DetectorType: "regex",
+			Pattern:      `customer_secret_[0-9]+`,
+			Category:     "customer_secret",
+			Severity:     "medium",
+			Action:       "record",
+			SampleMode:   "fingerprint_only",
+			Confidence:   0.77,
+			Priority:     1,
+		},
+	}, cfgTime()); err != nil {
+		t.Fatalf("SaveSensitiveRuleCache: %v", err)
+	}
 
 	input := []byte(`{
 		"hook_event_name": "UserPromptSubmit",
@@ -219,13 +241,10 @@ func TestClaudeHookRecordsNonBlockingSensitiveRule(t *testing.T) {
 	if len(response) != 0 {
 		t.Fatalf("record-only finding should allow prompt, got %#v", response)
 	}
-	if got := atomic.LoadInt32(&eventRequests); got != 1 {
-		t.Fatalf("event flush requests = %d, want 1", got)
+	if got := atomic.LoadInt32(&eventRequests); got != 0 {
+		t.Fatalf("event requests on prompt path = %d, want 0", got)
 	}
-	if len(uploaded.Events) != 1 {
-		t.Fatalf("uploaded events = %d, want 1: %#v", len(uploaded.Events), uploaded.Events)
-	}
-	event := uploaded.Events[0]
+	event := readSingleQueuedEvent(t, cfg)
 	if event.Source != "claude_code" || event.AgentType != "claude_code" {
 		t.Fatalf("unexpected event envelope: %#v", event)
 	}

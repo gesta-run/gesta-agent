@@ -11,7 +11,6 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/gesta-run/gesta-agent/pkg/daemon"
 	"github.com/gesta-run/gesta-agent/pkg/model"
@@ -59,7 +58,7 @@ func TestCodexHookCapturesOutputBaselineForNonShellTool(t *testing.T) {
 		"session_id": "baseline-session",
 		"cwd": "` + filepath.ToSlash(repo) + `"
 	}`)
-	response := processCodexHook(context.Background(), input)
+	response := processAgentHook(context.Background(), input, "codex", "codex")
 	if len(response) != 0 {
 		t.Fatalf("non-shell hook response = %#v, want empty allow response", response)
 	}
@@ -118,7 +117,7 @@ func TestCodexHookBlocksAnyBashCommandFromPolicy(t *testing.T) {
 		"tool_name": "Bash",
 		"tool_input": {"command": "ls -al"}
 	}`)
-	response := processCodexHook(context.Background(), input)
+	response := processAgentHook(context.Background(), input, "codex", "codex")
 	data, err := json.Marshal(response)
 	if err != nil {
 		t.Fatalf("marshal response: %v", err)
@@ -170,6 +169,9 @@ func TestCodexHookBlocksUserPromptSubmitSecret(t *testing.T) {
 	if err := daemon.SaveConfig("", cfg); err != nil {
 		t.Fatalf("SaveConfig: %v", err)
 	}
+	if err := daemon.SaveSensitiveRuleCache(cfg.DataDir, []model.SensitiveRule{openAIKeySensitiveRule()}, cfgTime()); err != nil {
+		t.Fatalf("SaveSensitiveRuleCache: %v", err)
+	}
 
 	secret := "sk-" + strings.Repeat("a", 32)
 	input := []byte(`{
@@ -180,7 +182,7 @@ func TestCodexHookBlocksUserPromptSubmitSecret(t *testing.T) {
 		"cwd": "/Users/alice/private/repo",
 		"model": "gpt-5"
 	}`)
-	response := processCodexHook(context.Background(), input)
+	response := processAgentHook(context.Background(), input, "codex", "codex")
 	data, err := json.Marshal(response)
 	if err != nil {
 		t.Fatalf("marshal response: %v", err)
@@ -195,13 +197,10 @@ func TestCodexHookBlocksUserPromptSubmitSecret(t *testing.T) {
 	if strings.Contains(text, secret) {
 		t.Fatalf("response leaked secret: %s", text)
 	}
-	if got := atomic.LoadInt32(&eventRequests); got != 1 {
-		t.Fatalf("event flush requests = %d, want 1", got)
+	if got := atomic.LoadInt32(&eventRequests); got != 0 {
+		t.Fatalf("event requests on prompt path = %d, want 0", got)
 	}
-	if len(uploaded.Events) != 1 {
-		t.Fatalf("uploaded events = %d, want 1: %#v", len(uploaded.Events), uploaded.Events)
-	}
-	event := uploaded.Events[0]
+	event := readSingleQueuedEvent(t, cfg)
 	if event.EventType != "sensitive.finding" || event.Source != "codex" || event.AgentType != "codex" {
 		t.Fatalf("unexpected event envelope: %#v", event)
 	}
@@ -227,7 +226,7 @@ func TestCodexHookBlocksUserPromptSubmitSecret(t *testing.T) {
 	if sample, ok := payload["sample"].(string); !ok || !strings.Contains(sample, secret) {
 		t.Fatalf("uploaded finding should keep the original sample: %#v", payload)
 	}
-	uploadedData, err := json.Marshal(uploaded)
+	uploadedData, err := json.Marshal(event)
 	if err != nil {
 		t.Fatalf("marshal uploaded: %v", err)
 	}
@@ -292,6 +291,24 @@ func TestCodexHookBlocksBuiltInSmartSecretRule(t *testing.T) {
 	if err := daemon.SaveConfig("", cfg); err != nil {
 		t.Fatalf("SaveConfig: %v", err)
 	}
+	if err := daemon.SaveSensitiveRuleCache(cfg.DataDir, []model.SensitiveRule{
+		{
+			RuleID:       "srule_builtin_smart_secret_detector",
+			Name:         "Smart secret detector",
+			Status:       "active",
+			Source:       "user_prompt",
+			DetectorType: "secret",
+			Category:     "secret",
+			Severity:     "critical",
+			Action:       "block",
+			SampleMode:   "redacted",
+			Confidence:   0.9,
+			Priority:     0,
+			Owner:        "system",
+		},
+	}, cfgTime()); err != nil {
+		t.Fatalf("SaveSensitiveRuleCache: %v", err)
+	}
 
 	secret := "test_9xLmR7QpV2nB4sC8dF6gH1jK3zT5wY0aE9rU2iO4pS6dV8kN0m"
 	input := []byte(`{
@@ -299,7 +316,7 @@ func TestCodexHookBlocksBuiltInSmartSecretRule(t *testing.T) {
 		"prompt": "auth0 token is: ` + secret + `",
 		"session_id": "built-in-sensitive-session"
 	}`)
-	response := processCodexHook(context.Background(), input)
+	response := processAgentHook(context.Background(), input, "codex", "codex")
 	data, err := json.Marshal(response)
 	if err != nil {
 		t.Fatalf("marshal response: %v", err)
@@ -311,13 +328,10 @@ func TestCodexHookBlocksBuiltInSmartSecretRule(t *testing.T) {
 	if strings.Contains(text, secret) {
 		t.Fatalf("response leaked secret: %s", text)
 	}
-	if got := atomic.LoadInt32(&eventRequests); got != 1 {
-		t.Fatalf("event flush requests = %d, want 1", got)
+	if got := atomic.LoadInt32(&eventRequests); got != 0 {
+		t.Fatalf("event requests on prompt path = %d, want 0", got)
 	}
-	if len(uploaded.Events) != 1 {
-		t.Fatalf("uploaded events = %d, want 1: %#v", len(uploaded.Events), uploaded.Events)
-	}
-	payload := uploaded.Events[0].Payload
+	payload := readSingleQueuedEvent(t, cfg).Payload
 	if payload["rule_id"] != "srule_builtin_smart_secret_detector" ||
 		payload["category"] != "secret" ||
 		payload["sample_mode"] != "redacted" ||
@@ -328,91 +342,6 @@ func TestCodexHookBlocksBuiltInSmartSecretRule(t *testing.T) {
 	sample, ok := payload["sample"].(string)
 	if !ok || !strings.Contains(sample, "[REDACTED]") || strings.Contains(sample, secret) {
 		t.Fatalf("sample should be redacted, got %#v", payload["sample"])
-	}
-}
-
-func TestCodexHookRefreshesStaleEmptySensitiveRuleCache(t *testing.T) {
-	tmp := t.TempDir()
-	home := filepath.Join(tmp, "home")
-	if err := os.MkdirAll(home, 0o700); err != nil {
-		t.Fatalf("mkdir home: %v", err)
-	}
-	t.Setenv("HOME", home)
-
-	var sensitiveRuleRequests int32
-	var eventRequests int32
-	var uploaded model.EventBatch
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/v1/sensitive-rules":
-			atomic.AddInt32(&sensitiveRuleRequests, 1)
-			if err := json.NewEncoder(w).Encode(model.SensitiveRulesResponse{Rules: []model.SensitiveRule{
-				{
-					RuleID:       "srule_builtin_smart_secret_detector",
-					Name:         "Smart secret detector",
-					Status:       "active",
-					Source:       "user_prompt",
-					DetectorType: "secret",
-					Category:     "secret",
-					Severity:     "critical",
-					Action:       "block",
-					SampleMode:   "redacted",
-					Confidence:   0.9,
-					Priority:     0,
-					Owner:        "system",
-				},
-			}}); err != nil {
-				t.Fatalf("encode sensitive rules: %v", err)
-			}
-		case "/api/v1/events":
-			atomic.AddInt32(&eventRequests, 1)
-			if err := json.NewDecoder(r.Body).Decode(&uploaded); err != nil {
-				t.Fatalf("decode events: %v", err)
-			}
-			_, _ = w.Write([]byte(`{"status":"ok"}`))
-		default:
-			t.Fatalf("unexpected path: %s", r.URL.Path)
-		}
-	}))
-	defer server.Close()
-
-	cfg := daemon.NewDirectRuntimeConfig(server.URL, "dtok_codex_hook_stale_sensitive_cache")
-	if err := daemon.SaveConfig("", cfg); err != nil {
-		t.Fatalf("SaveConfig: %v", err)
-	}
-	if err := daemon.SaveSensitiveRuleCache(cfg.DataDir, []model.SensitiveRule{}, time.Now().Add(-2*hookSensitiveRulesCacheMaxAge)); err != nil {
-		t.Fatalf("SaveSensitiveRuleCache: %v", err)
-	}
-
-	secret := "test_9xLmR7QpV2nB4sC8dF6gH1jK3zT5wY0aE9rU2iO4pS6dV8kN0m"
-	input := []byte(`{
-		"hook_event_name": "UserPromptSubmit",
-		"prompt": "auth0 token is: ` + secret + `",
-		"session_id": "stale-sensitive-cache-session"
-	}`)
-	response := processCodexHook(context.Background(), input)
-	data, err := json.Marshal(response)
-	if err != nil {
-		t.Fatalf("marshal response: %v", err)
-	}
-	if !strings.Contains(string(data), `"decision":"block"`) {
-		t.Fatalf("expected block response after refreshing stale empty cache, got %s", data)
-	}
-	if got := atomic.LoadInt32(&sensitiveRuleRequests); got != 1 {
-		t.Fatalf("sensitive rule fetches = %d, want 1", got)
-	}
-	if got := atomic.LoadInt32(&eventRequests); got != 1 {
-		t.Fatalf("event flush requests = %d, want 1", got)
-	}
-	if len(uploaded.Events) != 1 {
-		t.Fatalf("uploaded events = %d, want 1: %#v", len(uploaded.Events), uploaded.Events)
-	}
-	cache, err := daemon.LoadSensitiveRuleCache(cfg.DataDir)
-	if err != nil {
-		t.Fatalf("LoadSensitiveRuleCache: %v", err)
-	}
-	if len(cache.Rules) != 1 || cache.Rules[0].RuleID != "srule_builtin_smart_secret_detector" {
-		t.Fatalf("cache rules = %#v, want refreshed built-in rule", cache.Rules)
 	}
 }
 
@@ -447,6 +376,10 @@ func TestCodexHookRecordsNonBlockingSensitiveRule(t *testing.T) {
 			}}); err != nil {
 				t.Fatalf("encode sensitive rules: %v", err)
 			}
+		case "/api/v1/context-rules":
+			if err := json.NewEncoder(w).Encode(model.ContextRuleBundle{Version: "empty", Rules: []model.ContextRule{}}); err != nil {
+				t.Fatalf("encode context rules: %v", err)
+			}
 		case "/api/v1/events":
 			atomic.AddInt32(&eventRequests, 1)
 			if err := json.NewDecoder(r.Body).Decode(&uploaded); err != nil {
@@ -463,23 +396,38 @@ func TestCodexHookRecordsNonBlockingSensitiveRule(t *testing.T) {
 	if err := daemon.SaveConfig("", cfg); err != nil {
 		t.Fatalf("SaveConfig: %v", err)
 	}
+	if err := daemon.SaveSensitiveRuleCache(cfg.DataDir, []model.SensitiveRule{
+		{
+			RuleID:       "srule_record_customer_secret",
+			Name:         "Customer secrets",
+			Status:       "active",
+			Source:       "user_prompt",
+			DetectorType: "regex",
+			Pattern:      `customer_secret_[0-9]+`,
+			Category:     "customer_secret",
+			Severity:     "medium",
+			Action:       "record",
+			SampleMode:   "fingerprint_only",
+			Confidence:   0.77,
+			Priority:     1,
+		},
+	}, cfgTime()); err != nil {
+		t.Fatalf("SaveSensitiveRuleCache: %v", err)
+	}
 
 	input := []byte(`{
 		"hook_event_name": "UserPromptSubmit",
 		"prompt": "customer_secret_123 should be observed",
 		"session_id": "record-session"
 	}`)
-	response := processCodexHook(context.Background(), input)
+	response := processAgentHook(context.Background(), input, "codex", "codex")
 	if len(response) != 0 {
 		t.Fatalf("record-only finding should allow prompt, got %#v", response)
 	}
-	if got := atomic.LoadInt32(&eventRequests); got != 1 {
-		t.Fatalf("event flush requests = %d, want 1", got)
+	if got := atomic.LoadInt32(&eventRequests); got != 0 {
+		t.Fatalf("event requests on prompt path = %d, want 0", got)
 	}
-	if len(uploaded.Events) != 1 {
-		t.Fatalf("uploaded events = %d, want 1: %#v", len(uploaded.Events), uploaded.Events)
-	}
-	payload := uploaded.Events[0].Payload
+	payload := readSingleQueuedEvent(t, cfg).Payload
 	if payload["action"] != "record" ||
 		payload["rule_id"] != "srule_record_customer_secret" ||
 		payload["category"] != "customer_secret" ||
@@ -510,7 +458,7 @@ func TestCodexHookAllowsUserPromptSubmitWithoutSensitiveData(t *testing.T) {
 		"hook_event_name": "UserPromptSubmit",
 		"prompt": "please summarize the dashboard and suggest better labels"
 	}`)
-	response := processCodexHook(context.Background(), input)
+	response := processAgentHook(context.Background(), input, "codex", "codex")
 	if len(response) != 0 {
 		t.Fatalf("plain prompt should be allowed, got %#v", response)
 	}
@@ -549,7 +497,7 @@ func TestCodexHookAllowsWarnPolicy(t *testing.T) {
 		"tool_name": "Bash",
 		"tool_input": {"command": "echo ok"}
 	}`)
-	response := processCodexHook(context.Background(), input)
+	response := processAgentHook(context.Background(), input, "codex", "codex")
 	if len(response) != 0 {
 		t.Fatalf("warn should allow Codex tool call, got %#v", response)
 	}
@@ -587,7 +535,7 @@ func TestCodexHookTreatsExecCommandAsShellCommand(t *testing.T) {
 		"tool_name": "functions.exec_command",
 		"tool_input": {"cmd": "ls -alh"}
 	}`)
-	response := processCodexHook(context.Background(), input)
+	response := processAgentHook(context.Background(), input, "codex", "codex")
 	data, err := json.Marshal(response)
 	if err != nil {
 		t.Fatalf("marshal response: %v", err)
@@ -634,7 +582,7 @@ func TestCodexHookDoesNotApplyCommandRegexToNonBashTools(t *testing.T) {
 		"tool_name": "apply_patch",
 		"tool_input": {"command": "*** Begin Patch\n+listing text with ls\n*** End Patch"}
 	}`)
-	response := processCodexHook(context.Background(), input)
+	response := processAgentHook(context.Background(), input, "codex", "codex")
 	if len(response) != 0 {
 		t.Fatalf("non-Bash tools should not be evaluated as shell commands, got %#v", response)
 	}

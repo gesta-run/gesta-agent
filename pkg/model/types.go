@@ -143,6 +143,26 @@ type SensitiveRulesResponse struct {
 	Rules []SensitiveRule `json:"rules"`
 }
 
+type ContextRule struct {
+	RuleID         string   `json:"rule_id"`
+	Name           string   `json:"name"`
+	Description    string   `json:"description"`
+	Status         string   `json:"status"`
+	MatchType      string   `json:"match_type"`
+	Keywords       []string `json:"keywords"`
+	Pattern        string   `json:"pattern"`
+	ContextContent string   `json:"context_content"`
+	Priority       int      `json:"priority"`
+	AgentType      string   `json:"agent_type"`
+	HitCount       int      `json:"hit_count"`
+}
+
+type ContextRuleBundle struct {
+	Version     string        `json:"version"`
+	GeneratedAt time.Time     `json:"generated_at"`
+	Rules       []ContextRule `json:"rules"`
+}
+
 type PolicyApproval struct {
 	ApprovalID     string     `json:"approval_id"`
 	OrgID          string     `json:"org_id"`
