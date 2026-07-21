@@ -72,6 +72,20 @@ func (a CodexAdapter) Collect(ctx context.Context, cfg Config) (AdapterResult, [
 
 	if stateDB != "" {
 		if aggregate, usageEvents, transcriptEvents, err := readCodexState(ctx, stateDB); err == nil {
+			// Register each session's repo for the merged-commit scan
+			// (CLO-1747) BEFORE the backfill filter: the hook pipeline cannot
+			// be relied on for codex, and on the first collection after an
+			// install or upgrade the filter drops every pre-existing session —
+			// exactly the sessions whose repos need discovering. Discovery
+			// only writes the local registry, so backfill semantics are not
+			// affected.
+			for _, transcript := range transcriptEvents {
+				if cwd := firstString(transcript, "_cwd"); cwd != "" {
+					codexRepoDiscovery.observeCwd(ctx, cfg.DataDir, cwd)
+				} else {
+					codexRepoDiscovery.observeRollout(ctx, cfg.DataDir, firstString(transcript, "_rollout_path"))
+				}
+			}
 			sensitiveRules := codexSensitiveRulesForCollection(cfg)
 			sensitiveEvents := codexSensitiveFindingEventsFromTranscripts(cfg, transcriptEvents, sensitiveRules)
 			filteredUsage, filteredTranscripts, baselineMeta, err := filterCodexSessionBackfill(cfg, stateDB, usageEvents, transcriptEvents, time.Now().UTC())

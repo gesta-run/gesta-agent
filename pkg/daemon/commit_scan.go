@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gesta-run/gesta-agent/pkg/model"
@@ -46,6 +47,26 @@ const (
 	// emits several events.
 	commitsPerEvent = 100
 )
+
+// shallowChecked tracks which clones this daemon process has already probed
+// for shallowness, so the probe (and its warning event) fires once per clone
+// per run rather than every scan cycle.
+var shallowChecked = struct {
+	mu   sync.Mutex
+	seen map[string]bool
+}{seen: map[string]bool{}}
+
+// shallowCheckOnce reports whether this is the first shallow probe for root in
+// this daemon process.
+func shallowCheckOnce(root string) bool {
+	shallowChecked.mu.Lock()
+	defer shallowChecked.mu.Unlock()
+	if shallowChecked.seen[root] {
+		return false
+	}
+	shallowChecked.seen[root] = true
+	return true
+}
 
 // commitFact is one merged commit reduced to reportable numbers.
 type commitFact struct {
@@ -107,6 +128,17 @@ func (a GitCommitsAdapter) Collect(ctx context.Context, cfg Config) (AdapterResu
 			// dominated by upstream syncs, not authored product work
 			// (see defaultOutputExcludedRepoPatterns).
 			continue
+		}
+		// A shallow clone silently hides everything behind its boundary from
+		// the scan, so it must not look like a complete history. One warning
+		// event per clone per daemon run; the fix (`git fetch --unshallow`) is
+		// the developer's call, never an unrequested network fetch.
+		if shallowCheckOnce(root) && gitIsShallowClone(ctx, root) {
+			events = append(events, snapshotEvent(cfg, "adapter.warning", "git", "git_commits", map[string]interface{}{
+				"repo_remote": remote,
+				"warning":     "shallow_clone",
+				"detail":      "history behind the shallow boundary is invisible to the commit scan; run `git fetch --unshallow` in this clone",
+			}))
 		}
 		repoID := util.ShortHash("git-remote\x00" + remote)
 		// Cursors are keyed per CLONE, not per remote: two local clones of the

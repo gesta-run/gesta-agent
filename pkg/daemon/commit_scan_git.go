@@ -90,6 +90,14 @@ func resolveDefaultBranchRef(ctx context.Context, root string) (string, bool) {
 	return "", false
 }
 
+// gitIsShallowClone reports whether the clone at root is shallow. Shallow
+// history ends at the clone boundary, so the commit scan silently undercounts
+// there; the adapter surfaces it as a one-time warning per daemon run.
+func gitIsShallowClone(ctx context.Context, root string) bool {
+	out, err := gitStdout(ctx, root, "", "rev-parse", "--is-shallow-repository")
+	return err == nil && strings.TrimSpace(out) == "true"
+}
+
 func gitOriginURL(ctx context.Context, root string) string {
 	out, err := gitStdout(ctx, root, "", "config", "--get", "remote.origin.url")
 	if err != nil {
