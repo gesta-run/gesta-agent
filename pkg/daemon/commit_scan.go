@@ -4,9 +4,11 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/gesta-run/gesta-agent/pkg/model"
 	"github.com/gesta-run/gesta-agent/pkg/util"
@@ -46,6 +48,14 @@ const (
 	// Commits per repo.commits event. Bounds payload size; a backfill simply
 	// emits several events.
 	commitsPerEvent = 100
+	// A merge that introduces more than this many commits is a history import or
+	// long-lived branch reconciliation, not a single reviewed PR: branch-labeling
+	// is skipped for it rather than stamping thousands of commits with one branch
+	// name (Signal 2 circuit breaker, CLO-1732 §6).
+	mergeProvenanceMaxCommits = 500
+	// Branch names never legitimately exceed this; a longer "branch" parsed out of
+	// a user-controlled merge subject is truncated before it becomes a fact.
+	maxBranchNameLen = 200
 )
 
 // shallowChecked tracks which clones this daemon process has already probed
@@ -82,6 +92,11 @@ type commitFact struct {
 	DocDeleted   int64
 	AIAssisted   bool
 	AITool       string
+	// MergedViaBranch is the branch this commit was merged through, when it was
+	// introduced by a first-parent merge on the default branch (Signal 2). Empty
+	// otherwise. Stored as a raw fact; the control plane interprets it at read
+	// time (e.g. codex/ → codex), so no interpretation is baked in here.
+	MergedViaBranch string
 }
 
 // GitCommitsAdapter scans registered repos for commits newly merged to the
@@ -176,6 +191,24 @@ func (a GitCommitsAdapter) Collect(ctx context.Context, cfg Config) (AdapterResu
 			scanErrors++
 			continue
 		}
+		// Signal 2: label each commit with the branch it was merged through.
+		// Built over the full uncapped range so a PR whose commits fall in this
+		// capped batch is still labeled even when its merge commit sits past the
+		// cap (earliest-received dedup would otherwise freeze them unlabeled).
+		provenance, provenanceOK := mergeProvenanceMap(ctx, root, ref, cursor.LastSHA, now)
+		if !provenanceOK {
+			// Provenance is a SECONDARY signal: a git failure here is surfaced in
+			// status (so it is not a silent gap) but must not block the primary
+			// output pipeline, so facts still ship. Any labels we did compute are
+			// applied; an unlabeled codex commit reads as non-AI only until it
+			// ages out of the efficiency window (read bound is 120 days).
+			scanErrors++
+		}
+		for i := range facts {
+			if branch := provenance[facts[i].SHA]; branch != "" {
+				facts[i].MergedViaBranch = branch
+			}
+		}
 		events = append(events, commitFactEvents(cfg, repoID, cursorKey, remote, ref, facts, now)...)
 	}
 	// Never a silent undercount: a repo that keeps failing (timeouts, git
@@ -248,6 +281,152 @@ func listRepoCommits(ctx context.Context, root, ref, cursorSHA string, now time.
 	}
 	shas, truncated := capShaList(parseShaLines(out), max)
 	return shas, truncated, true
+}
+
+// mergeProvenanceMap maps each non-merge commit reachable on ref (within the
+// same range the commit scan covers) to the branch it was merged through, by
+// walking the default branch's first-parent merges and parsing their subjects
+// (Signal 2, CLO-1732). A commit not introduced by a recognized merge is absent
+// from the map. The map is deliberately built over the FULL, uncapped range: the
+// commit scan caps output at commitScanMaxCommits and reports the oldest chunk
+// first, so a PR's commits can land in this cycle's batch while the merge commit
+// that names their branch sits past the cap — labeling must still find it, or
+// earliest-received dedup at the control plane freezes those rows unlabeled.
+// Returns ok=false when the provenance pass could not run reliably (git error on
+// the merge-log call, or ctx cancellation): the caller surfaces that in status
+// rather than treating an empty result as "repo has no merges". Only true merge
+// commits carry this signal — a squash- or rebase-merged PR leaves no merge
+// commit and no branch to recover, so a repo whose PRs land that way stays
+// invisible to Signal 2 (a documented limitation, not a bug here).
+func mergeProvenanceMap(ctx context.Context, root, ref, cursorSHA string, now time.Time) (map[string]string, bool) {
+	return mergeProvenanceMapCapped(ctx, root, ref, cursorSHA, now, mergeProvenanceMaxCommits)
+}
+
+func mergeProvenanceMapCapped(ctx context.Context, root, ref, cursorSHA string, now time.Time, maxCommits int) (map[string]string, bool) {
+	provenance := map[string]string{}
+	out, ok := mergeLogOutput(ctx, root, ref, cursorSHA, now)
+	if !ok {
+		return provenance, false
+	}
+	for _, chunk := range strings.Split(out, "\x1e") {
+		// Honor daemon shutdown/cancellation between merges, not only between
+		// subprocesses: a repo with many merges must not pin a shutting-down
+		// daemon for one 60s subprocess timeout per merge.
+		if ctx.Err() != nil {
+			return provenance, false
+		}
+		parts := strings.SplitN(chunk, "\x1f", 2)
+		if len(parts) < 2 {
+			continue
+		}
+		mergeSHA := strings.TrimSpace(parts[0])
+		if !isHexSHA(mergeSHA) {
+			continue
+		}
+		branch := parseMergeBranch(parts[1])
+		if branch == "" {
+			continue
+		}
+		// The commits this merge introduced: reachable from the merge but not
+		// from its first parent (the mainline before the merge). --max-count
+		// bounds the read so the circuit breaker never loads a giant import.
+		listOut, err := gitStdout(ctx, root, "",
+			"rev-list", "--no-merges", "--max-count="+strconv.Itoa(maxCommits+1),
+			mergeSHA+"^1.."+mergeSHA)
+		if err != nil {
+			// A single merge's rev-list failing drops only that merge's labels
+			// (bounded, self-healing as it ages out), rather than failing the
+			// whole pass and blocking the repo's output on a secondary signal.
+			continue
+		}
+		introduced := parseShaLines(listOut)
+		if len(introduced) > maxCommits {
+			// Giant merge / history import — skip, do not mislabel its commits.
+			continue
+		}
+		for _, sha := range introduced {
+			// First (newest) merge that introduced a commit wins; under the
+			// org's mainline-merge history each commit is introduced exactly once.
+			if _, exists := provenance[sha]; !exists {
+				provenance[sha] = branch
+			}
+		}
+	}
+	return provenance, true
+}
+
+// mergeLogOutput returns the \x1e-framed "<sha>\x1f<subject>" of ref's
+// first-parent merges over the commit scan's range, mirroring listRepoCommits'
+// cursor-then-horizon fallback so both passes cover the same commits. A hostile
+// \x1e or \x1f inside a subject only yields a follow-on chunk whose first field
+// fails sha validation and is dropped — never a mislabel.
+func mergeLogOutput(ctx context.Context, root, ref, cursorSHA string, now time.Time) (string, bool) {
+	const pretty = "--pretty=format:%x1e%H%x1f%s"
+	if cursorSHA != "" {
+		if out, err := gitStdout(ctx, root, "", "log", "--merges", "--first-parent", pretty, cursorSHA+".."+ref); err == nil {
+			return out, true
+		}
+	}
+	horizon := now.AddDate(0, 0, -commitScanHorizonDays)
+	out, err := gitStdout(ctx, root, "", "log", "--merges", "--first-parent", pretty, "--since="+horizon.Format(time.RFC3339), ref)
+	if err != nil {
+		return "", false
+	}
+	return out, true
+}
+
+// parseMergeBranch extracts the merged head-branch name from a merge commit
+// subject, in the two anchored formats the org's history uses:
+//
+//	Merge pull request #N from <owner>/<branch>   (GitHub merge)
+//	Merge branch '<branch>'[ into <base>]         (git CLI merge)
+//
+// Anchored at the start (a subject merely mentioning "codex/" is not a merge);
+// returns "" when the subject is neither form or the branch is empty.
+func parseMergeBranch(subject string) string {
+	subject = strings.TrimSpace(subject)
+	const prPrefix = "Merge pull request #"
+	const branchPrefix = "Merge branch '"
+	switch {
+	case strings.HasPrefix(subject, prPrefix):
+		idx := strings.Index(subject, " from ")
+		if idx < 0 {
+			return ""
+		}
+		ownerBranch := subject[idx+len(" from "):]
+		// "<owner>/<branch>": owner has no slash, branch is the remainder.
+		_, branch, found := strings.Cut(ownerBranch, "/")
+		if !found {
+			return ""
+		}
+		return sanitizeBranchName(branch)
+	case strings.HasPrefix(subject, branchPrefix):
+		branch, _, found := strings.Cut(subject[len(branchPrefix):], "'")
+		if !found {
+			return ""
+		}
+		return sanitizeBranchName(branch)
+	}
+	return ""
+}
+
+// sanitizeBranchName strips control characters (a merge subject is
+// user-controlled) and bounds the length before the value becomes a stored fact.
+func sanitizeBranchName(branch string) string {
+	// Strip control AND Unicode format characters: the latter (U+202E RTL
+	// override, zero-width spaces, U+2028/U+2029 line separators) are display
+	// spoofing vectors and this value is eventually rendered in the console.
+	branch = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
+			return -1
+		}
+		return r
+	}, branch)
+	branch = strings.TrimSpace(branch)
+	if runes := []rune(branch); len(runes) > maxBranchNameLen {
+		branch = strings.TrimSpace(string(runes[:maxBranchNameLen]))
+	}
+	return branch
 }
 
 func parseShaLines(out string) []string {
@@ -456,6 +635,9 @@ func commitFactEvents(cfg Config, repoID, cursorKey, remote, ref string, facts [
 			}
 			if fact.AITool != "" {
 				commit["ai_tool"] = fact.AITool
+			}
+			if fact.MergedViaBranch != "" {
+				commit["merged_via_branch"] = fact.MergedViaBranch
 			}
 			commits = append(commits, commit)
 		}

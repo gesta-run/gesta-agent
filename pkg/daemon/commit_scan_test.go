@@ -409,3 +409,153 @@ func TestRegisteredCommitScanReposRoundTrip(t *testing.T) {
 		t.Fatalf("registry dir missing: %v", err)
 	}
 }
+
+// TestParseMergeBranch covers the two anchored merge-subject formats and the
+// non-matches that must NOT be read as a branch (Signal 2, CLO-1732).
+func TestParseMergeBranch(t *testing.T) {
+	cases := []struct{ subject, want string }{
+		// GitHub PR merge: branch is everything after "<owner>/".
+		{"Merge pull request #123 from cloudpilot-ai/codex/add-widget", "codex/add-widget"},
+		{"Merge pull request #7 from someone/feature/login", "feature/login"},
+		{"Merge pull request #9 from org/codex/a/b/c", "codex/a/b/c"},
+		// git CLI branch merge, with and without an "into <base>" tail.
+		{"Merge branch 'codex/quick-fix'", "codex/quick-fix"},
+		{"Merge branch 'release-0.4' into main", "release-0.4"},
+		{"Merge branch 'codex/x' of github.com:o/r into main", "codex/x"},
+		// Not merge subjects at all — must never yield a branch.
+		{"feat: add codex/ prefix support", ""},
+		{"fix bug in codex/foo", ""},
+		// Anchoring: the prefix must be at the very start.
+		{"xMerge pull request #1 from o/codex/y", ""},
+		// Degenerate merge subjects.
+		{"Merge pull request #1 from owner/", ""},
+		{"Merge pull request #1 from ownerbranch", ""},
+		{"Merge branch 'unterminated", ""},
+		{"", ""},
+	}
+	for _, c := range cases {
+		if got := parseMergeBranch(c.subject); got != c.want {
+			t.Errorf("parseMergeBranch(%q) = %q, want %q", c.subject, got, c.want)
+		}
+	}
+}
+
+// A merge subject is user-controlled: control bytes in the "branch name" must be
+// stripped before it becomes a stored fact.
+func TestParseMergeBranchStripsHostileBytes(t *testing.T) {
+	if got := parseMergeBranch("Merge branch 'codex/\x00\x07evil\x1f'"); got != "codex/evil" {
+		t.Fatalf("ASCII control bytes not stripped: %q", got)
+	}
+	// Unicode format characters — U+202E (RTL override), U+200B (zero-width
+	// space), U+2028 (line separator) — are display-spoofing vectors and must be
+	// stripped too before the branch becomes a rendered fact.
+	if got := parseMergeBranch("Merge branch 'codex/\u202e\u200bevil '"); got != "codex/evil" {
+		t.Fatalf("unicode format chars not stripped: %q", got)
+	}
+}
+
+// commitFactEvents emits merged_via_branch only when present — omitted keys keep
+// pre-Signal-2 payload shape byte-for-byte.
+func TestCommitFactEventsEmitMergedViaBranch(t *testing.T) {
+	facts := []commitFact{
+		{SHA: strings.Repeat("a", 40), MergedViaBranch: "codex/x"},
+		{SHA: strings.Repeat("b", 40)},
+	}
+	events := commitFactEvents(Config{CustomerID: "c", DaemonID: "d"}, "repo", "ck", "example.com/o/r", "main", facts, time.Now().UTC())
+	var commits []map[string]interface{}
+	for _, event := range events {
+		if raw, ok := event.Payload["commits"].([]map[string]interface{}); ok {
+			commits = append(commits, raw...)
+		}
+	}
+	if len(commits) != 2 {
+		t.Fatalf("got %d commits, want 2", len(commits))
+	}
+	if commits[0]["merged_via_branch"] != "codex/x" {
+		t.Fatalf("first commit merged_via_branch = %v, want codex/x", commits[0]["merged_via_branch"])
+	}
+	if _, present := commits[1]["merged_via_branch"]; present {
+		t.Fatalf("unlabeled commit must omit merged_via_branch, got %v", commits[1]["merged_via_branch"])
+	}
+}
+
+// mergeProvenanceMap labels the commits a codex/ PR merge introduced, and never
+// the merge commit itself (merge commits are not output).
+func TestMergeProvenanceMapLabelsMergedBranch(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	root := t.TempDir()
+	run := func(args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", root}, args...)...)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	run("init", "--initial-branch=main")
+	run("config", "user.email", "t@example.com")
+	run("config", "user.name", "T")
+	mustWriteFile(t, filepath.Join(root, "base.go"), "package main\n")
+	run("add", ".")
+	run("commit", "-m", "base")
+	run("checkout", "-b", "codex/add-thing")
+	mustWriteFile(t, filepath.Join(root, "thing.go"), "package main\n\nfunc thing() {}\n")
+	run("add", ".")
+	run("commit", "-m", "add thing")
+	childSHA := run("rev-parse", "HEAD")
+	run("checkout", "main")
+	run("merge", "--no-ff", "codex/add-thing", "-m", "Merge pull request #1 from cloudpilot-ai/codex/add-thing")
+	mergeSHA := run("rev-parse", "HEAD")
+
+	m, ok := mergeProvenanceMap(context.Background(), root, "HEAD", "", time.Now().UTC())
+	if !ok {
+		t.Fatalf("provenance pass reported not-ok on a healthy repo")
+	}
+	if m[childSHA] != "codex/add-thing" {
+		t.Fatalf("child %s mapped to %q, want codex/add-thing (map=%v)", childSHA, m[childSHA], m)
+	}
+	if _, ok := m[mergeSHA]; ok {
+		t.Fatalf("merge commit %s must not be labeled as output", mergeSHA)
+	}
+}
+
+// The giant-merge circuit breaker: a merge that introduces more than the cap is
+// a history import, not a PR, and must be skipped rather than mislabeled.
+func TestMergeProvenanceCircuitBreakerSkipsGiantMerges(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	root := t.TempDir()
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", root}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	run("init", "--initial-branch=main")
+	run("config", "user.email", "t@example.com")
+	run("config", "user.name", "T")
+	mustWriteFile(t, filepath.Join(root, "base.go"), "package main\n")
+	run("add", ".")
+	run("commit", "-m", "base")
+	run("checkout", "-b", "codex/big")
+	for i := 0; i < 2; i++ {
+		mustWriteFile(t, filepath.Join(root, "f.go"), strings.Repeat("x\n", i+1))
+		run("add", ".")
+		run("commit", "-m", "step")
+	}
+	run("checkout", "main")
+	run("merge", "--no-ff", "codex/big", "-m", "Merge pull request #2 from cloudpilot-ai/codex/big")
+	now := time.Now().UTC()
+
+	if skipped, ok := mergeProvenanceMapCapped(context.Background(), root, "HEAD", "", now, 1); !ok || len(skipped) != 0 {
+		t.Fatalf("merge of 2 commits must be skipped at cap=1 (ok=%v), got %v", ok, skipped)
+	}
+	if labeled, ok := mergeProvenanceMapCapped(context.Background(), root, "HEAD", "", now, 500); !ok || len(labeled) != 2 {
+		t.Fatalf("both child commits should be labeled at cap=500 (ok=%v), got %d (%v)", ok, len(labeled), labeled)
+	}
+}
