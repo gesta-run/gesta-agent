@@ -71,6 +71,20 @@ func TestInstallClaudeCodePolicyHookPreservesExistingHooks(t *testing.T) {
           {"type": "command", "command": "/tmp/existing-hook"}
         ]
       }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {"type": "command", "command": "'/old/gesta-agent' claude-hook"}
+        ]
+      },
+      {
+        "matcher": "*",
+        "hooks": [
+          {"type": "command", "command": "/tmp/existing-post-hook"}
+        ]
+      }
     ]
   }
 }`
@@ -106,11 +120,25 @@ func TestInstallClaudeCodePolicyHookPreservesExistingHooks(t *testing.T) {
 	if !ok {
 		t.Fatalf("first PreToolUse group not an object: %#v", pre[0])
 	}
-	if firstPre["matcher"] != "Bash" {
-		t.Fatalf("first PreToolUse matcher = %#v, want Bash", firstPre["matcher"])
+	if firstPre["matcher"] != "*" {
+		t.Fatalf("first PreToolUse matcher = %#v, want wildcard", firstPre["matcher"])
 	}
 	if got := claudeGroupCommand(t, pre[0]); !strings.Contains(got, "claude-hook") {
 		t.Fatalf("first PreToolUse hook = %q, want Gesta claude-hook", got)
+	}
+	post := claudeEventGroups(t, root, "PostToolUse")
+	if len(post) != 2 {
+		t.Fatalf("PostToolUse groups = %d, want Gesta plus user hook", len(post))
+	}
+	if got := claudeGroupCommand(t, post[0]); !strings.Contains(got, "claude-hook") {
+		t.Fatalf("first PostToolUse hook = %q, want Gesta claude-hook", got)
+	}
+	if got := claudeGroupCommand(t, post[1]); got != "/tmp/existing-post-hook" {
+		t.Fatalf("user PostToolUse hook was not preserved: %q", got)
+	}
+	hooks := root["hooks"].(map[string]interface{})
+	if _, ok := hooks["PostToolUseFailure"]; ok {
+		t.Fatalf("PostToolUseFailure should not be installed: %#v", hooks["PostToolUseFailure"])
 	}
 
 	starts := claudeEventGroups(t, root, "SessionStart")

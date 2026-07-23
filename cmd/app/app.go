@@ -198,7 +198,7 @@ func installAgentHooks(agentPath string) error {
 	}
 	uiOK("Codex policy hook installed and trusted", hookPath)
 	if disabled, path := daemon.CodexHooksDisabled(); disabled {
-		uiWarn(fmt.Sprintf("Codex hooks are disabled in %s; set [features].hooks=true and restart Codex to enable PreToolUse and UserPromptSubmit checks", path))
+		uiWarn(fmt.Sprintf("Codex hooks are disabled in %s; set [features].hooks=true and restart Codex to enable policy checks and turn output measurement", path))
 	}
 
 	claudeSettingsPath, err := daemon.InstallClaudeCodePolicyHook(agentPath)

@@ -41,8 +41,8 @@ the control plane is temporarily unreachable, it uses the local policy cache; if
 no cache exists, no policy rule is applied. The legacy `guard` command remains
 as a compatibility alias for the same enforcement path.
 
-`run` also installs and trusts Codex `PreToolUse` and `UserPromptSubmit` hooks in
-`~/.codex/hooks.json` and enables `[features].hooks` in
+`run` also installs and trusts Codex `PreToolUse`, `Stop`, and
+`UserPromptSubmit` hooks in `~/.codex/hooks.json` and enables `[features].hooks` in
 `~/.codex/config.toml`. `install` performs the integration setup, which is
 useful during installation. The helper script builds the daemon from this
 checkout when run locally, or downloads the published binary when run from
@@ -85,6 +85,13 @@ can block prompt text before it leaves the local client. The hook uses the local
 policy and sensitive-rule caches first, then falls back to the control plane or
 built-in defaults. Restart Codex Desktop or open a new Codex thread after
 installing the hook so the runtime reloads hook configuration.
+
+Output measurement uses agent-owned records rather than workspace or Git
+inference. Codex `Stop` reads the completed turn through the official App Server
+and counts added text from completed `fileChange` and `mcpToolCall` items.
+Claude Code file writes and MCP input are measured after successful execution at
+its public `PostToolUse` boundary. Raw diffs and tool arguments are discarded
+locally; only counts and hashed correlation metadata are queued.
 
 ## Checks
 

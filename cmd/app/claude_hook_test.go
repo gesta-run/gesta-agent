@@ -15,6 +15,82 @@ import (
 	"github.com/gesta-run/gesta-agent/pkg/model"
 )
 
+func TestClaudeHookMeasuresWriteAndMCPAfterSuccessfulToolUse(t *testing.T) {
+	home := filepath.Join(t.TempDir(), "home")
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		t.Fatalf("mkdir home: %v", err)
+	}
+	t.Setenv("HOME", home)
+
+	cfg := daemon.NewDirectRuntimeConfig("http://127.0.0.1:1", "dtok_claude_ink")
+	if err := daemon.SaveConfig("", cfg); err != nil {
+		t.Fatalf("SaveConfig: %v", err)
+	}
+	for _, event := range []agentHookEvent{
+		{
+			HookEventName: "PostToolUse",
+			ToolName:      "Write",
+			ToolInput:     map[string]interface{}{"file_path": "docs/guide.md", "content": "hello docs"},
+			ToolUseID:     "claude-write-1",
+			SessionID:     "claude-session-1",
+		},
+		{
+			HookEventName: "PostToolUse",
+			ToolName:      "mcp__notion__create_page",
+			ToolInput:     map[string]interface{}{"title": "Release plan"},
+			ToolUseID:     "claude-mcp-1",
+			SessionID:     "claude-session-1",
+		},
+	} {
+		data, err := json.Marshal(event)
+		if err != nil {
+			t.Fatalf("marshal hook: %v", err)
+		}
+		processAgentHook(context.Background(), data, "claude_code", "claude_code")
+	}
+	events, err := daemon.NewQueue(cfg.DataDir).ReadAll()
+	if err != nil {
+		t.Fatalf("read queue: %v", err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("events = %#v, want write and MCP metrics", events)
+	}
+	if events[0].Payload["category"] != "docs" || events[1].Payload["category"] != "docs" {
+		t.Fatalf("categories = %#v, %#v", events[0].Payload, events[1].Payload)
+	}
+}
+
+func TestClaudeHookDoesNotMeasurePreToolUseAttempts(t *testing.T) {
+	home := filepath.Join(t.TempDir(), "home")
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		t.Fatalf("mkdir home: %v", err)
+	}
+	t.Setenv("HOME", home)
+
+	cfg := daemon.NewDirectRuntimeConfig("http://127.0.0.1:1", "dtok_claude_attempt")
+	if err := daemon.SaveConfig("", cfg); err != nil {
+		t.Fatalf("SaveConfig: %v", err)
+	}
+	data, err := json.Marshal(agentHookEvent{
+		HookEventName: "PreToolUse",
+		ToolName:      "Write",
+		ToolInput:     map[string]interface{}{"file_path": "failed.go", "content": "must not count"},
+		ToolUseID:     "claude-write-attempt",
+		SessionID:     "claude-session-attempt",
+	})
+	if err != nil {
+		t.Fatalf("marshal hook: %v", err)
+	}
+	processAgentHook(context.Background(), data, "claude_code", "claude_code")
+	events, err := daemon.NewQueue(cfg.DataDir).ReadAll()
+	if err != nil {
+		t.Fatalf("read queue: %v", err)
+	}
+	if len(events) != 0 {
+		t.Fatalf("PreToolUse attempt produced output metrics: %#v", events)
+	}
+}
+
 func TestClaudeHookBlocksBashCommandFromPolicy(t *testing.T) {
 	tmp := t.TempDir()
 	home := filepath.Join(tmp, "home")

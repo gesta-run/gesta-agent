@@ -6,20 +6,17 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
 
+	"github.com/gesta-run/gesta-agent/pkg/codexapp"
 	"github.com/gesta-run/gesta-agent/pkg/daemon"
 	"github.com/gesta-run/gesta-agent/pkg/model"
 )
 
-func TestCodexHookCapturesOutputBaselineForNonShellTool(t *testing.T) {
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git not available")
-	}
+func TestCodexHookMeasuresOnlyCompletedThreadItems(t *testing.T) {
 	tmp := t.TempDir()
 	home := filepath.Join(tmp, "home")
 	if err := os.MkdirAll(home, 0o700); err != nil {
@@ -27,48 +24,129 @@ func TestCodexHookCapturesOutputBaselineForNonShellTool(t *testing.T) {
 	}
 	t.Setenv("HOME", home)
 
-	repo := filepath.Join(tmp, "repo")
-	if err := os.MkdirAll(repo, 0o700); err != nil {
-		t.Fatalf("mkdir repo: %v", err)
-	}
-	git := func(args ...string) {
-		t.Helper()
-		cmd := exec.Command("git", append([]string{"-C", repo}, args...)...)
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v\n%s", args, err, string(out))
-		}
-	}
-	git("init")
-	git("config", "user.email", "test@example.com")
-	git("config", "user.name", "Test User")
-	if err := os.WriteFile(filepath.Join(repo, "main.go"), []byte("package main\n"), 0o600); err != nil {
-		t.Fatalf("write main.go: %v", err)
-	}
-	git("add", ".")
-	git("commit", "-m", "initial")
-
-	cfg := daemon.NewDirectRuntimeConfig("http://127.0.0.1:1", "dtok_codex_hook_baseline")
+	cfg := daemon.NewDirectRuntimeConfig("http://127.0.0.1:1", "dtok_codex_hook_meter")
 	if err := daemon.SaveConfig("", cfg); err != nil {
 		t.Fatalf("SaveConfig: %v", err)
 	}
 
-	input := []byte(`{
-		"hook_event_name": "PreToolUse",
-		"tool_name": "apply_patch",
-		"session_id": "baseline-session",
-		"cwd": "` + filepath.ToSlash(repo) + `"
-	}`)
+	mcpInput := map[string]interface{}{"title": "Release plan"}
+	input, err := json.Marshal(agentHookEvent{
+		HookEventName: "PreToolUse",
+		ToolName:      "mcp__notion__create_page",
+		ToolInput:     mcpInput,
+		ToolUseID:     "call-mcp-1",
+		SessionID:     "session-meter-1",
+		TurnID:        "turn-meter-1",
+	})
+	if err != nil {
+		t.Fatalf("marshal pre hook: %v", err)
+	}
 	response := processAgentHook(context.Background(), input, "codex", "codex")
 	if len(response) != 0 {
 		t.Fatalf("non-shell hook response = %#v, want empty allow response", response)
 	}
-
-	data, err := os.ReadFile(filepath.Join(home, ".gesta", "output-baselines.json"))
+	events, err := daemon.NewQueue(cfg.DataDir).ReadAll()
 	if err != nil {
-		t.Fatalf("read output baseline: %v", err)
+		t.Fatalf("read gross event: %v", err)
 	}
-	if !strings.Contains(string(data), `"sessions"`) || !strings.Contains(string(data), `"git_sha_before"`) {
-		t.Fatalf("baseline file did not capture session: %s", data)
+	if len(events) != 0 {
+		t.Fatalf("Codex PreToolUse attempt produced output metrics: %#v", events)
+	}
+
+	patch := "*** Begin Patch\n*** Update File: app.go\n@@\n-old\n+new content\n*** End Patch"
+	input, err = json.Marshal(agentHookEvent{
+		HookEventName: "PreToolUse",
+		ToolName:      "apply_patch",
+		ToolInput:     patch,
+		ToolUseID:     "call-file-1",
+		SessionID:     "session-meter-1",
+		TurnID:        "turn-meter-1",
+	})
+	if err != nil {
+		t.Fatalf("marshal file pre hook: %v", err)
+	}
+	processAgentHook(context.Background(), input, "codex", "codex")
+	events, err = daemon.NewQueue(cfg.DataDir).ReadAll()
+	if err != nil {
+		t.Fatalf("read after file pre hook: %v", err)
+	}
+	if len(events) != 0 {
+		t.Fatalf("Codex file PreToolUse produced an ink event: %#v", events)
+	}
+
+	originalReadCodexTurn := readCodexTurn
+	readCodexTurn = func(context.Context, string, string) (codexapp.Turn, error) {
+		completedAt := int64(1_700_000_000)
+		return codexapp.Turn{
+			ID:          "turn-meter-1",
+			Status:      "completed",
+			CompletedAt: &completedAt,
+			Items: []codexapp.Item{
+				{
+					ID:     "call-file-1",
+					Type:   "fileChange",
+					Status: "completed",
+					Changes: []codexapp.FileChange{{
+						Path: "app.go",
+						Kind: codexapp.ChangeKind{Type: "update"},
+						Diff: "@@\n-old\n+new content\n",
+					}},
+				},
+				{
+					ID:        "call-mcp-1",
+					Type:      "mcpToolCall",
+					Status:    "completed",
+					Server:    "notion",
+					Tool:      "create_page",
+					Arguments: mcpInput,
+				},
+				{
+					ID:        "call-mcp-failed",
+					Type:      "mcpToolCall",
+					Status:    "failed",
+					Server:    "notion",
+					Tool:      "create_page",
+					Arguments: map[string]interface{}{"title": "must not count"},
+				},
+				{
+					ID:     "call-file-failed",
+					Type:   "fileChange",
+					Status: "failed",
+					Changes: []codexapp.FileChange{{
+						Path: "failed.go",
+						Kind: codexapp.ChangeKind{Type: "add"},
+						Diff: "must not be counted\n",
+					}},
+				},
+			},
+		}, nil
+	}
+	t.Cleanup(func() { readCodexTurn = originalReadCodexTurn })
+
+	stopInput, err := json.Marshal(agentHookEvent{
+		HookEventName: "Stop",
+		SessionID:     "session-meter-1",
+		TurnID:        "turn-meter-1",
+	})
+	if err != nil {
+		t.Fatalf("marshal Stop hook: %v", err)
+	}
+	processAgentHook(context.Background(), stopInput, "codex", "codex")
+	events, err = daemon.NewQueue(cfg.DataDir).ReadAll()
+	if err != nil {
+		t.Fatalf("read after Stop hook: %v", err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("events = %#v, want completed fileChange and MCP", events)
+	}
+	if events[0].Payload["category"] != "code" || events[0].Payload["characters"] != float64(11) {
+		t.Fatalf("fileChange payload = %#v", events[0].Payload)
+	}
+	all, _ := json.Marshal(events)
+	for _, raw := range []string{"Release plan", "new content", "must not count", "must not be counted", "app.go", "failed.go", "session-meter-1", "turn-meter-1"} {
+		if strings.Contains(string(all), raw) {
+			t.Fatalf("Gross Ink events leaked raw value %q: %s", raw, all)
+		}
 	}
 }
 

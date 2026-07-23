@@ -20,7 +20,15 @@ var codexPolicyHookEvents = []struct {
 }{
 	{hookEventName: "SessionStart", stateEventName: "session_start"},
 	{hookEventName: "PreToolUse", stateEventName: "pre_tool_use", matcher: "*"},
+	{hookEventName: "Stop", stateEventName: "stop"},
 	{hookEventName: "UserPromptSubmit", stateEventName: "user_prompt_submit"},
+}
+
+var retiredCodexPolicyHookEvents = []struct {
+	hookEventName  string
+	stateEventName string
+}{
+	{hookEventName: "PostToolUse", stateEventName: "post_tool_use"},
 }
 
 type codexHooksFile struct {
@@ -62,6 +70,20 @@ func InstallCodexPolicyHook(agentPath string) (string, error) {
 	}
 
 	command := shellQuote(agentPath) + " codex-hook"
+	for _, event := range retiredCodexPolicyHookEvents {
+		groups := hooks.Hooks[event.hookEventName]
+		filtered := make([]codexHookGroup, 0, len(groups))
+		for _, existing := range groups {
+			if !codexHookGroupRunsGesta(existing) {
+				filtered = append(filtered, existing)
+			}
+		}
+		if len(filtered) == 0 {
+			delete(hooks.Hooks, event.hookEventName)
+		} else {
+			hooks.Hooks[event.hookEventName] = filtered
+		}
+	}
 	for _, event := range codexPolicyHookEvents {
 		group := codexPolicyHookGroupWithMatcher(command, event.matcher)
 		groups := hooks.Hooks[event.hookEventName]
@@ -141,6 +163,9 @@ func ensureCodexPolicyHookConfig(hookPath, command string) error {
 
 func updateCodexHookConfig(configText, hookPath, command string) string {
 	updated := ensureCodexFeatureFlags(configText)
+	for _, event := range retiredCodexPolicyHookEvents {
+		updated = removeCodexPolicyHookState(updated, hookPath, event.stateEventName)
+	}
 	for _, event := range codexPolicyHookEvents {
 		updated = ensureCodexPolicyHookState(updated, hookPath, event.stateEventName, codexHookTrustedHash(event.stateEventName, command, event.matcher))
 	}
@@ -148,6 +173,23 @@ func updateCodexHookConfig(configText, hookPath, command string) string {
 		updated += "\n"
 	}
 	return updated
+}
+
+func removeCodexPolicyHookState(configText, hookPath, eventName string) string {
+	header := codexHookStateHeader(hookPath, eventName)
+	lines := splitConfigLines(configText)
+	out := make([]string, 0, len(lines))
+	inRetiredState := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if isTomlHeader(trimmed) {
+			inRetiredState = trimmed == header
+		}
+		if !inRetiredState {
+			out = append(out, line)
+		}
+	}
+	return strings.Join(out, "\n")
 }
 
 func ensureCodexFeatureFlags(configText string) string {
