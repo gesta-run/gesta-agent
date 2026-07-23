@@ -57,16 +57,9 @@ func (a ClaudeCodeAdapter) Collect(ctx context.Context, cfg Config) (AdapterResu
 		}))
 	}
 
-	// Load the merged sessions once, then fan out to the usage/session-index
-	// events and the output.summary events so the transcript tree is parsed a
-	// single time per collection cycle. activeSessions is the set of sessions the
-	// baseline filter judged to have new activity this cycle; output summaries are
-	// gated on it so dormant historical sessions are not re-diffed (see
-	// claudeOutputSummaryEvents).
 	sessions := mergedClaudeSessions(claudeProjectsDir())
-	usageEvents, activeSessions := claudeUsageEventsFromSessions(cfg, sessions, time.Now().UTC())
+	usageEvents, _ := claudeUsageEventsFromSessions(cfg, sessions, time.Now().UTC())
 	events = append(events, usageEvents...)
-	events = append(events, claudeOutputSummaryEvents(ctx, cfg, sessions, activeSessions)...)
 
 	return AdapterResult{Status: status}, events
 }
@@ -84,10 +77,8 @@ func claudeUsageEvents(cfg Config, projectsDir string, observedAt time.Time) []m
 	return events
 }
 
-// claudeUsageEventsFromSessions returns the usage/session-index events plus the
-// set of hashed session ids the baseline filter judged active this cycle (i.e.
-// the sessions whose transcripts advanced). The active set gates output.summary
-// emission so dormant sessions are not re-diffed against a shared worktree.
+// claudeUsageEventsFromSessions returns usage/session-index events plus the set
+// of hashed session ids whose transcripts advanced in this collection cycle.
 func claudeUsageEventsFromSessions(cfg Config, sessions []claudeSessionUsage, observedAt time.Time) ([]model.EventEnvelope, map[string]bool) {
 	usagePayloads, sessionPayloads, meta, err := collectClaudeUsageEventsFromSessions(cfg, sessions, observedAt)
 	if err != nil {
@@ -115,45 +106,6 @@ func claudeUsageEventsFromSessions(cfg Config, sessions []claudeSessionUsage, ob
 		}
 	}
 	return events, active
-}
-
-// claudeOutputSummaryEvents diffs each Claude Code session's worktree against the
-// baseline captured by the hook (see CaptureOutputBaseline) and emits one
-// output.summary event per session that produced measurable output. This mirrors
-// the Codex path in codex.go — without it, Claude Code sessions capture baselines
-// but never emit the delta, so the "Output produced" ledger stays empty.
-//
-// Only sessions in activeSessions (hashed ids the baseline filter judged to have
-// advanced this cycle) are considered. This matches Codex's "new activity only"
-// semantics: diffing every historical transcript each cycle would re-run git
-// subprocesses unboundedly and, worse, mis-attribute a repo's current diff to
-// dormant sessions sharing that worktree — a stale session whose baseline has
-// been pruned falls through to the HEAD-diff fallback and is otherwise credited
-// the entire uncommitted diff, double-counting output across sessions.
-//
-// The session id is hashed to match both the baseline key and the session-index
-// event; the daemon's output cursor (FilterOutputSummaryEvents) dedups repeated
-// cycles, and sessions outside a git repo or with no delta are skipped.
-func claudeOutputSummaryEvents(ctx context.Context, cfg Config, sessions []claudeSessionUsage, activeSessions map[string]bool) []model.EventEnvelope {
-	var events []model.EventEnvelope
-	for _, session := range sessions {
-		if session.CWD == "" {
-			continue
-		}
-		sessionHash := util.ShortHash(session.SessionID)
-		if !activeSessions[sessionHash] {
-			continue
-		}
-		primaryModel := ""
-		if len(session.Models) > 0 {
-			primaryModel = session.Models[0]
-		}
-		event, ok := outputSummaryEvent(ctx, cfg, claudeCodeAgentType, sessionHash, session.CWD, session.FirstEventAt, session.Title, primaryModel)
-		if ok {
-			events = append(events, event)
-		}
-	}
-	return events
 }
 
 func claudeSessionEventID(payload map[string]interface{}) string {

@@ -26,6 +26,20 @@ func TestInstallCodexPolicyHookPreservesExistingHooks(t *testing.T) {
           {"type": "command", "command": "/tmp/existing-hook"}
         ]
       }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {"type": "command", "command": "'/old/gesta-agent' codex-hook"}
+        ]
+      },
+      {
+        "matcher": "*",
+        "hooks": [
+          {"type": "command", "command": "/tmp/existing-post-hook"}
+        ]
+      }
     ]
   }
 }`
@@ -58,11 +72,26 @@ func TestInstallCodexPolicyHookPreservesExistingHooks(t *testing.T) {
 	if got := len(parsed.Hooks["SessionStart"]); got != 1 {
 		t.Fatalf("SessionStart groups = %d, want 1", got)
 	}
+	if got := len(parsed.Hooks["Stop"]); got != 1 {
+		t.Fatalf("Stop groups = %d, want 1", got)
+	}
+	if got := len(parsed.Hooks["PostToolUse"]); got != 1 {
+		t.Fatalf("PostToolUse groups = %d, want only the user's hook", got)
+	}
+	if got := parsed.Hooks["PostToolUse"][0].Hooks[0].Command; got != "/tmp/existing-post-hook" {
+		t.Fatalf("PostToolUse hook = %q, want user's hook", got)
+	}
 	if got := parsed.Hooks["SessionStart"][0].Matcher; got != "" {
 		t.Fatalf("SessionStart matcher = %q, want omitted", got)
 	}
 	if got := parsed.Hooks["SessionStart"][0].Hooks[0].Command; !strings.Contains(got, "codex-hook") {
 		t.Fatalf("first SessionStart hook = %q, want Gesta codex-hook", got)
+	}
+	if got := parsed.Hooks["Stop"][0].Matcher; got != "" {
+		t.Fatalf("Stop matcher = %q, want omitted", got)
+	}
+	if got := parsed.Hooks["Stop"][0].Hooks[0].Command; !strings.Contains(got, "codex-hook") {
+		t.Fatalf("first Stop hook = %q, want Gesta codex-hook", got)
 	}
 	if got := parsed.Hooks["PreToolUse"][0].Hooks[0].Command; !strings.Contains(got, "codex-hook") {
 		t.Fatalf("first PreToolUse hook = %q, want Gesta codex-hook", got)
@@ -209,6 +238,11 @@ enabled = false
 	expectedStartHash := codexHookTrustedHash("session_start", "'/tmp/gesta-agent' codex-hook", "")
 	if !strings.Contains(text, startHookHeader+"\n"+`trusted_hash = "`+expectedStartHash+`"`) {
 		t.Fatalf("Gesta SessionStart hook state was not trusted: %s", text)
+	}
+	stopHookHeader := codexHookStateHeader(hookPath, "stop")
+	expectedStopHash := codexHookTrustedHash("stop", "'/tmp/gesta-agent' codex-hook", "")
+	if !strings.Contains(text, stopHookHeader+"\n"+`trusted_hash = "`+expectedStopHash+`"`) {
+		t.Fatalf("Gesta Stop hook state was not trusted: %s", text)
 	}
 	if strings.Contains(text, `trusted_hash = "sha256:old"`) || strings.Contains(tomlSection(text, preHookHeader), "enabled = false") {
 		t.Fatalf("Gesta hook state still disabled: %s", text)

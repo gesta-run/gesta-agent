@@ -28,7 +28,6 @@ func DefaultAdapters() []Adapter {
 	return []Adapter{
 		CodexAdapter{},
 		ClaudeCodeAdapter{},
-		GitCommitsAdapter{},
 	}
 }
 

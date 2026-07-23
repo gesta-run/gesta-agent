@@ -14,9 +14,12 @@ var claudePolicyHookEvents = []struct {
 	matcher       string
 }{
 	{hookEventName: "SessionStart"},
-	{hookEventName: "PreToolUse", matcher: "Bash"},
+	{hookEventName: "PreToolUse", matcher: "*"},
+	{hookEventName: "PostToolUse", matcher: "*"},
 	{hookEventName: "UserPromptSubmit"},
 }
+
+var retiredClaudePolicyHookEvents = []string{"PostToolUseFailure"}
 
 // InstallClaudeCodePolicyHook registers the Gesta policy hook in
 // ~/.claude/settings.json. It preserves all unknown top-level keys and unknown
@@ -56,6 +59,20 @@ func InstallClaudeCodePolicyHook(agentPath string) (string, error) {
 	}
 
 	command := shellQuote(agentPath) + " claude-hook"
+	for _, event := range retiredClaudePolicyHookEvents {
+		existing, _ := hooks[event].([]interface{})
+		filtered := make([]interface{}, 0, len(existing))
+		for _, group := range existing {
+			if !claudeHookGroupRunsGesta(group) {
+				filtered = append(filtered, group)
+			}
+		}
+		if len(filtered) == 0 {
+			delete(hooks, event)
+		} else {
+			hooks[event] = filtered
+		}
+	}
 	for _, event := range claudePolicyHookEvents {
 		gestaGroup := claudePolicyHookGroup(command, event.matcher)
 		existing, _ := hooks[event.hookEventName].([]interface{})

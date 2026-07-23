@@ -13,23 +13,23 @@ import (
 	"github.com/gesta-run/gesta-agent/pkg/daemon"
 	"github.com/gesta-run/gesta-agent/pkg/model"
 	"github.com/gesta-run/gesta-agent/pkg/policy"
-	"github.com/gesta-run/gesta-agent/pkg/util"
 )
 
 const gestaSensitivePromptDeniedMessage = "Gesta blocked this prompt because it appears to contain secret material. Remove secrets or replace them with placeholders, then retry."
 
 type agentHookEvent struct {
-	HookEventName  string                 `json:"hook_event_name"`
-	Prompt         string                 `json:"prompt"`
-	ToolName       string                 `json:"tool_name"`
-	ToolInput      map[string]interface{} `json:"tool_input"`
-	SessionID      string                 `json:"session_id"`
-	ConversationID string                 `json:"conversation_id"`
-	TurnID         string                 `json:"turn_id"`
-	CWD            string                 `json:"cwd"`
-	Model          string                 `json:"model"`
-	TranscriptPath string                 `json:"transcript_path"`
-	PermissionMode string                 `json:"permission_mode"`
+	HookEventName  string      `json:"hook_event_name"`
+	Prompt         string      `json:"prompt"`
+	ToolName       string      `json:"tool_name"`
+	ToolInput      interface{} `json:"tool_input"`
+	ToolUseID      string      `json:"tool_use_id"`
+	SessionID      string      `json:"session_id"`
+	ConversationID string      `json:"conversation_id"`
+	TurnID         string      `json:"turn_id"`
+	CWD            string      `json:"cwd"`
+	Model          string      `json:"model"`
+	TranscriptPath string      `json:"transcript_path"`
+	PermissionMode string      `json:"permission_mode"`
 }
 
 func codexHook(ctx context.Context, args []string) error {
@@ -67,13 +67,23 @@ func processAgentHook(ctx context.Context, data []byte, agentType, source string
 	}
 	switch event.HookEventName {
 	case "SessionStart":
-		cfg, _ := guardConfig()
-		captureOutputBaselineBestEffort(ctx, cfg, event)
 		return map[string]interface{}{}
 	case "UserPromptSubmit":
 		return processUserPromptSubmit(ctx, event, agentType, source)
 	case "PreToolUse":
 		return processPreToolUse(ctx, event, agentType, source)
+	case "PostToolUse":
+		if agentType == "claude_code" {
+			cfg, _ := guardConfig()
+			recordGrossToolUseBestEffortWithConfig(cfg, event, agentType, source)
+		}
+		return map[string]interface{}{}
+	case "Stop":
+		if agentType == "codex" {
+			cfg, _ := guardConfig()
+			recordCodexTurnBestEffort(ctx, cfg, event)
+		}
+		return map[string]interface{}{}
 	default:
 		return map[string]interface{}{}
 	}
@@ -85,7 +95,6 @@ func processUserPromptSubmit(ctx context.Context, event agentHookEvent, agentTyp
 	}
 
 	cfg, _ := guardConfig()
-	captureOutputBaselineBestEffort(ctx, cfg, event)
 	findings := detectSensitivePrompt(cfg, event.Prompt)
 	if len(findings) > 0 {
 		recordSensitiveFindingsBestEffortWithConfig(cfg, event, findings, source, agentType)
@@ -100,9 +109,7 @@ func processUserPromptSubmit(ctx context.Context, event agentHookEvent, agentTyp
 }
 
 func processPreToolUse(ctx context.Context, event agentHookEvent, agentType, source string) map[string]interface{} {
-	_ = source
 	cfg, shouldFlush := guardConfig()
-	captureOutputBaselineBestEffort(ctx, cfg, event)
 	if !hookEventIsShellCommand(event) {
 		return map[string]interface{}{}
 	}
@@ -149,17 +156,6 @@ func processPreToolUse(ctx context.Context, event agentHookEvent, agentType, sou
 			"permissionDecisionReason": reason,
 			"additionalContext":        reason,
 		},
-	}
-}
-
-func captureOutputBaselineBestEffort(ctx context.Context, cfg daemon.Config, event agentHookEvent) {
-	sessionID := firstNonEmpty(event.SessionID, event.ConversationID)
-	cwd := strings.TrimSpace(event.CWD)
-	if sessionID == "" || cwd == "" {
-		return
-	}
-	if err := daemon.CaptureOutputBaseline(ctx, cfg, cwd, util.ShortHash(sessionID)); err != nil {
-		fmt.Fprintf(os.Stderr, "gesta-agent hook: output baseline was not captured: %v\n", err)
 	}
 }
 
@@ -280,22 +276,28 @@ func hookEventArgs(event agentHookEvent) []string {
 	if command := hookShellCommand(event); command != "" {
 		return []string{"sh", "-c", command}
 	}
-	if path := firstStringField(event.ToolInput, "file_path", "path"); path != "" {
+	if path := firstStringField(toolInputMap(event.ToolInput), "file_path", "path"); path != "" {
 		return []string{toolName, path}
 	}
 	return []string{toolName, compactJSON(event.ToolInput)}
 }
 
 func hookShellCommand(event agentHookEvent) string {
+	input := toolInputMap(event.ToolInput)
 	switch normalizeToolName(event.ToolName) {
 	case "bash", "shell", "exec_command", "functions.exec_command":
-		if command := stringField(event.ToolInput, "command"); command != "" {
+		if command := stringField(input, "command"); command != "" {
 			return command
 		}
-		return stringField(event.ToolInput, "cmd")
+		return stringField(input, "cmd")
 	default:
 		return ""
 	}
+}
+
+func toolInputMap(value interface{}) map[string]interface{} {
+	values, _ := value.(map[string]interface{})
+	return values
 }
 
 func normalizeToolName(value string) string {

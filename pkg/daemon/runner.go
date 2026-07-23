@@ -75,10 +75,6 @@ func (r *Runner) collectAndQueue(ctx context.Context) ([]model.AdapterStatus, er
 	}
 	queueEvents, internalEvents := filterInternalEvents(events)
 	queueEvents = append(queueEvents, usageDeltas...)
-	queueEvents, commitOutputSummaries, err := FilterOutputSummaryEvents(r.cfg, queueEvents)
-	if err != nil {
-		return nil, fmt.Errorf("filter output summaries: %w", err)
-	}
 	if len(usageDeltas) > 0 {
 		r.logger.Info("usage deltas prepared", "deltas", len(usageDeltas))
 	} else {
@@ -96,18 +92,6 @@ func (r *Runner) collectAndQueue(ctx context.Context) ([]model.AdapterStatus, er
 			return nil, fmt.Errorf("commit usage deltas: %w", err)
 		}
 		r.logger.Info("usage cursors committed")
-	}
-	if commitOutputSummaries != nil {
-		if err := commitOutputSummaries(); err != nil {
-			return nil, fmt.Errorf("commit output summaries: %w", err)
-		}
-		r.logger.Info("output cursors committed")
-	}
-	if commitScanCursors := CommitScanCursorCommit(r.cfg, queueEvents); commitScanCursors != nil {
-		if err := commitScanCursors(); err != nil {
-			return nil, fmt.Errorf("commit scan cursors: %w", err)
-		}
-		r.logger.Info("commit-scan cursors committed")
 	}
 	return adapters, nil
 }
