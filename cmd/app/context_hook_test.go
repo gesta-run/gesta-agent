@@ -74,8 +74,24 @@ func TestCodexHookInjectsOrganizationContextWithoutUploadingPrompt(t *testing.T)
 		}
 	}
 	payload := queued[0].Payload
-	if payload["prompt_text_stored"] != false || payload["matched_count"] != float64(2) {
+	if payload["prompt_text_stored"] != false {
 		t.Fatalf("unexpected context event payload: %#v", payload)
+	}
+	for _, key := range []string{"rule_ids", "matched_count"} {
+		if _, exists := payload[key]; exists {
+			t.Fatalf("context event contains redundant %q: %#v", key, payload)
+		}
+	}
+	matches, ok := payload["rule_matches"].([]interface{})
+	if !ok || len(matches) != 2 {
+		t.Fatalf("rule match snapshots = %#v, want 2 entries", payload["rule_matches"])
+	}
+	firstMatch, ok := matches[0].(map[string]interface{})
+	if !ok ||
+		firstMatch["rule_id"] != "crule_code" ||
+		firstMatch["rule_name"] != "Code quality" ||
+		firstMatch["match_type"] != "keyword_any" {
+		t.Fatalf("first rule match snapshot = %#v", matches[0])
 	}
 	for _, key := range []string{"prompt_hash", "session_id_hash", "turn_id_hash"} {
 		if _, exists := payload[key]; exists {

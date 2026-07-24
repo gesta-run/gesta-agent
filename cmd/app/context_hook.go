@@ -54,14 +54,17 @@ func recordContextRuleMatch(
 	agentType, source, bundleVersion string,
 	result contextmatch.Result,
 ) error {
-	ruleIDs := make([]string, 0, len(result.Rules))
+	ruleMatches := make([]map[string]string, 0, len(result.Rules))
 	for _, rule := range result.Rules {
-		ruleIDs = append(ruleIDs, rule.RuleID)
+		ruleMatches = append(ruleMatches, map[string]string{
+			"rule_id":    rule.RuleID,
+			"rule_name":  rule.Name,
+			"match_type": rule.MatchType,
+		})
 	}
 	payload := map[string]interface{}{
-		"rule_ids":           ruleIDs,
+		"rule_matches":       ruleMatches,
 		"bundle_version":     privacy.RedactAndTruncate(bundleVersion, 128),
-		"matched_count":      len(ruleIDs),
 		"truncated":          result.Truncated,
 		"hook_event_name":    "UserPromptSubmit",
 		"prompt_text_stored": false,
