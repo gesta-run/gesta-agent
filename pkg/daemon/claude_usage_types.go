@@ -61,6 +61,7 @@ type claudeSessionUsage struct {
 	Total               claudeAssistantUsage
 	Messages            []map[string]interface{}
 	TranscriptTruncated bool
+	MCPToolCalls        []claudeTranscriptToolCall
 }
 
 type claudeModelDayKey struct {
@@ -74,6 +75,15 @@ type claudeTranscriptCandidate struct {
 	Timestamp string
 	Model     string
 	MessageID string
+}
+
+type claudeTranscriptToolCall struct {
+	Name       string
+	CallID     string
+	Timestamp  string
+	MCPServer  string
+	MCPTool    string
+	BlockIndex int
 }
 
 func (s claudeSessionUsage) totalTokens() int64 { return s.Total.TotalTokens() }

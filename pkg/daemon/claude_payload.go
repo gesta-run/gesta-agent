@@ -144,6 +144,14 @@ func claudeSessionFingerprint(session claudeSessionUsage) string {
 		usage := session.ByModelDay[key]
 		parts = append(parts, key.Day+"|"+key.Model+"|"+stringInt(usage.TotalTokens()))
 	}
+	for _, call := range session.MCPToolCalls {
+		parts = append(parts, strings.Join([]string{
+			"mcp",
+			call.Timestamp,
+			call.Name,
+			util.ShortHash(call.CallID),
+		}, "|"))
+	}
 	if len(session.Messages) > 0 {
 		data, _ := json.Marshal(session.Messages)
 		parts = append(parts, string(data))

@@ -52,6 +52,7 @@ func mergeClaudeSessionsByID(sessions []claudeSessionUsage) []claudeSessionUsage
 				Total:               file.Total,
 				Messages:            cloneClaudeTranscriptMessages(file.Messages),
 				TranscriptTruncated: file.TranscriptTruncated,
+				MCPToolCalls:        mergeClaudeMCPToolCalls(nil, file.MCPToolCalls),
 				ByModelDay:          map[claudeModelDayKey]claudeAssistantUsage{},
 			}
 			for key, usage := range file.ByModelDay {
@@ -89,6 +90,7 @@ func mergeClaudeSessionsByID(sessions []claudeSessionUsage) []claudeSessionUsage
 		existing.AssistantEvents += file.AssistantEvents
 		existing.Total = existing.Total.add(file.Total)
 		existing.Messages, existing.TranscriptTruncated = mergeClaudeTranscriptMessages(existing.Messages, file.Messages, existing.TranscriptTruncated || file.TranscriptTruncated)
+		existing.MCPToolCalls = mergeClaudeMCPToolCalls(existing.MCPToolCalls, file.MCPToolCalls)
 		for key, usage := range file.ByModelDay {
 			existing.ByModelDay[key] = existing.ByModelDay[key].add(usage)
 		}
@@ -112,6 +114,45 @@ func mergeClaudeSessionsByID(sessions []claudeSessionUsage) []claudeSessionUsage
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].SessionID < result[j].SessionID })
 	return result
+}
+
+func mergeClaudeMCPToolCalls(existing, next []claudeTranscriptToolCall) []claudeTranscriptToolCall {
+	if len(existing) == 0 && len(next) == 0 {
+		return nil
+	}
+	merged := make([]claudeTranscriptToolCall, 0, len(existing)+len(next))
+	indexes := map[string]int{}
+	add := func(call claudeTranscriptToolCall) {
+		key := claudeMCPToolCallKey(call)
+		if index, duplicate := indexes[key]; duplicate {
+			current := merged[index]
+			if current.Timestamp == "" && call.Timestamp != "" {
+				merged[index] = call
+			}
+			return
+		}
+		indexes[key] = len(merged)
+		merged = append(merged, call)
+	}
+	for _, call := range existing {
+		add(call)
+	}
+	for _, call := range next {
+		add(call)
+	}
+	sort.SliceStable(merged, func(i, j int) bool {
+		if merged[i].Timestamp != merged[j].Timestamp {
+			return merged[i].Timestamp < merged[j].Timestamp
+		}
+		if merged[i].CallID != merged[j].CallID {
+			return merged[i].CallID < merged[j].CallID
+		}
+		if merged[i].Name != merged[j].Name {
+			return merged[i].Name < merged[j].Name
+		}
+		return merged[i].BlockIndex < merged[j].BlockIndex
+	})
+	return merged
 }
 
 func addClaudeTranscriptCandidate(candidates *[]claudeTranscriptCandidate, indexes map[string]int, role, text, timestamp, modelName, messageID string) {

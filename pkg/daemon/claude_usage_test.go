@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gesta-run/gesta-agent/pkg/model"
 	"github.com/gesta-run/gesta-agent/pkg/util"
 )
 
@@ -64,6 +65,31 @@ func itoa(v int) string { return stringInt(int64(v)) }
 func jsonString(s string) string {
 	// minimal json string quoting for test fixtures (no special chars expected)
 	return `"` + s + `"`
+}
+
+func collectClaudeUsageEvents(
+	cfg Config,
+	projectsDir string,
+	observedAt time.Time,
+) (usageEvents, sessionEvents []map[string]interface{}, meta map[string]interface{}, err error) {
+	collection, err := collectClaudeEvents(cfg, projectsDir, observedAt)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	if collection.Commit != nil {
+		if err := collection.Commit(); err != nil {
+			return nil, nil, nil, err
+		}
+	}
+	return collection.UsageEvents, collection.SessionEvents, collection.Meta, nil
+}
+
+func claudeUsageEvents(cfg Config, projectsDir string, observedAt time.Time) []model.EventEnvelope {
+	events, commit := claudeEvents(cfg, projectsDir, observedAt)
+	if commit != nil {
+		_ = commit()
+	}
+	return events
 }
 
 func TestParseClaudeTranscriptSkipsSyntheticAndSumsUsage(t *testing.T) {
