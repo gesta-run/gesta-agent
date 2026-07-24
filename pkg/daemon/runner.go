@@ -63,7 +63,7 @@ func (r *Runner) logCollectionStarted() {
 }
 
 func (r *Runner) collectAndQueue(ctx context.Context) ([]model.AdapterStatus, error) {
-	events, adapters := Collect(ctx, r.cfg)
+	events, adapters, commitAdapters := Collect(ctx, r.cfg)
 	r.logger.Info("agent collection completed",
 		"events", len(events),
 		"event_types", eventTypeCounts(events),
@@ -87,6 +87,12 @@ func (r *Runner) collectAndQueue(ctx context.Context) ([]model.AdapterStatus, er
 		return nil, fmt.Errorf("queue events: %w", err)
 	}
 	r.logger.Info("events queued", "events", len(queueEvents), "queue_size", r.queue.Size())
+	if commitAdapters != nil {
+		if err := commitAdapters(); err != nil {
+			return nil, fmt.Errorf("commit adapter cursors: %w", err)
+		}
+		r.logger.Info("adapter cursors committed")
+	}
 	if commitUsageDeltas != nil {
 		if err := commitUsageDeltas(); err != nil {
 			return nil, fmt.Errorf("commit usage deltas: %w", err)

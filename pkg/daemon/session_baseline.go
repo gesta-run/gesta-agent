@@ -37,8 +37,9 @@ type codexSessionBaselineGroup struct {
 }
 
 type claudeCodeSessionBaselineGroup struct {
-	InitializedAt string                     `json:"initialized_at,omitempty"`
-	Sessions      map[string]baselineSession `json:"sessions"`
+	InitializedAt    string                     `json:"initialized_at,omitempty"`
+	MCPInitializedAt string                     `json:"mcp_initialized_at,omitempty"`
+	Sessions         map[string]baselineSession `json:"sessions"`
 }
 
 type codexSessionBaseline struct {
@@ -83,6 +84,11 @@ type baselineSession struct {
 	// recovery cursor is reconstructed from the Previous* fields, so it needs its
 	// own record of whether those cache counters were ever real.
 	PreviousCacheObserved bool `json:"previous_cache_observed,omitempty"`
+	// MCPToolCallCursorAt and MCPToolCallCursorEventIDs form a bounded cursor for
+	// transcript MCP calls. Only event IDs sharing the latest timestamp are
+	// retained, so the baseline does not grow with the total number of calls.
+	MCPToolCallCursorAt       string   `json:"mcp_tool_call_cursor_at,omitempty"`
+	MCPToolCallCursorEventIDs []string `json:"mcp_tool_call_cursor_event_ids,omitempty"`
 }
 
 func filterCodexSessionBackfill(cfg Config, stateDB string, usageEvents, transcriptEvents []map[string]interface{}, observedAt time.Time) ([]map[string]interface{}, []map[string]interface{}, map[string]interface{}, error) {

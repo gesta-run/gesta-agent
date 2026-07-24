@@ -22,6 +22,7 @@ type Adapter interface {
 
 type AdapterResult struct {
 	Status model.AdapterStatus
+	Commit func() error
 }
 
 func DefaultAdapters() []Adapter {
@@ -40,13 +41,13 @@ func DefaultAdapterNames() []string {
 	return names
 }
 
-func Collect(ctx context.Context, cfg Config) ([]model.EventEnvelope, []model.AdapterStatus) {
+func Collect(ctx context.Context, cfg Config) ([]model.EventEnvelope, []model.AdapterStatus, func() error) {
 	return CollectWithAdapters(ctx, cfg, DefaultAdapters())
 }
 
-func CollectWithAdapters(ctx context.Context, cfg Config, adapters []Adapter) ([]model.EventEnvelope, []model.AdapterStatus) {
+func CollectWithAdapters(ctx context.Context, cfg Config, adapters []Adapter) ([]model.EventEnvelope, []model.AdapterStatus, func() error) {
 	type adapterCollection struct {
-		result model.AdapterStatus
+		result AdapterResult
 		events []model.EventEnvelope
 	}
 	results := make([]adapterCollection, len(adapters))
@@ -57,7 +58,7 @@ func CollectWithAdapters(ctx context.Context, cfg Config, adapters []Adapter) ([
 			defer wg.Done()
 			result, adapterEvents := adapter.Collect(ctx, cfg)
 			results[index] = adapterCollection{
-				result: result.Status,
+				result: result,
 				events: adapterEvents,
 			}
 		}(index, adapter)
@@ -66,12 +67,30 @@ func CollectWithAdapters(ctx context.Context, cfg Config, adapters []Adapter) ([
 
 	var events []model.EventEnvelope
 	statuses := make([]model.AdapterStatus, 0, len(results))
+	commits := make([]func() error, 0, len(results))
 	for _, result := range results {
-		statuses = append(statuses, result.result)
+		statuses = append(statuses, result.result.Status)
 		events = append(events, result.events...)
+		if result.result.Commit != nil {
+			commits = append(commits, result.result.Commit)
+		}
 	}
 	events = append(events, systemEvent(cfg))
-	return events, statuses
+	return events, statuses, combineAdapterCommits(commits)
+}
+
+func combineAdapterCommits(commits []func() error) func() error {
+	if len(commits) == 0 {
+		return nil
+	}
+	return func() error {
+		for _, commit := range commits {
+			if err := commit(); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 }
 
 func baseEvent(cfg Config, eventType, source, agentType string, payload map[string]interface{}) model.EventEnvelope {

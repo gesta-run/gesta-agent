@@ -50,36 +50,28 @@ func (a ClaudeCodeAdapter) Collect(ctx context.Context, cfg Config) (AdapterResu
 		}))
 	}
 
-	if mcpOutput, err := commandOutput(ctx, "claude", "mcp", "list"); err == nil {
-		status.MCPInventory = mcpInventoryFromListOutput(mcpOutput, observedAt)
-	} else {
-		status.MCPInventory = failedMCPInventory(err, observedAt)
-	}
+	status.MCPInventory = claudeMCPInventory(claudeConfigPath(), observedAt)
 
 	sessions := mergedClaudeSessions(claudeProjectsDir())
-	usageEvents, _ := claudeUsageEventsFromSessions(cfg, sessions, time.Now().UTC())
-	events = append(events, usageEvents...)
+	adapterEvents, commit := claudeEventsFromSessions(cfg, sessions, observedAt)
+	events = append(events, adapterEvents...)
 
-	return AdapterResult{Status: status}, events
+	return AdapterResult{Status: status, Commit: commit}, events
 }
 
-// claudeUsageEvents scans the Claude Code transcripts under projectsDir, applies
-// the per-session baseline so repeated cycles never double count, and returns the
-// usage.summary + agent_sessions session-index events. usage.summary events drive
-// the generic usage-delta machinery (BuildUsageDeltaEvents) and the control
-// plane's usage_events / agent_sessions tables, matching the shapes Codex emits.
-func claudeUsageEvents(cfg Config, projectsDir string, observedAt time.Time) []model.EventEnvelope {
+func claudeEvents(cfg Config, projectsDir string, observedAt time.Time) ([]model.EventEnvelope, func() error) {
 	if projectsDir == "" {
-		return nil
+		return nil, nil
 	}
-	events, _ := claudeUsageEventsFromSessions(cfg, mergedClaudeSessions(projectsDir), observedAt)
-	return events
+	return claudeEventsFromSessions(cfg, mergedClaudeSessions(projectsDir), observedAt)
 }
 
-// claudeUsageEventsFromSessions returns usage/session-index events plus the set
-// of hashed session ids whose transcripts advanced in this collection cycle.
-func claudeUsageEventsFromSessions(cfg Config, sessions []claudeSessionUsage, observedAt time.Time) ([]model.EventEnvelope, map[string]bool) {
-	usagePayloads, sessionPayloads, meta, err := collectClaudeUsageEventsFromSessions(cfg, sessions, observedAt)
+func claudeEventsFromSessions(
+	cfg Config,
+	sessions []claudeSessionUsage,
+	observedAt time.Time,
+) ([]model.EventEnvelope, func() error) {
+	collection, err := collectClaudeEventsFromSessions(cfg, sessions, observedAt)
 	if err != nil {
 		return []model.EventEnvelope{
 			snapshotEvent(cfg, "adapter.warning", claudeCodeUsageSource, claudeCodeAgentType, map[string]interface{}{
@@ -89,22 +81,19 @@ func claudeUsageEventsFromSessions(cfg Config, sessions []claudeSessionUsage, ob
 		}, nil
 	}
 	var events []model.EventEnvelope
-	if len(meta) > 0 {
-		events = append(events, snapshotEvent(cfg, "claude_code.usage_summary", claudeCodeUsageSource, claudeCodeAgentType, meta))
+	if len(collection.Meta) > 0 {
+		events = append(events, snapshotEvent(cfg, "claude_code.usage_summary", claudeCodeUsageSource, claudeCodeAgentType, collection.Meta))
 	}
-	for _, payload := range usagePayloads {
+	for _, payload := range collection.UsageEvents {
 		events = append(events, baseEvent(cfg, "usage.summary", claudeCodeUsageSource, claudeCodeAgentType, payload))
 	}
-	active := make(map[string]bool, len(sessionPayloads))
-	for _, payload := range sessionPayloads {
+	for _, payload := range collection.SessionEvents {
 		event := baseEvent(cfg, "session.transcript", claudeCodeUsageSource, claudeCodeAgentType, payload)
 		event.EventID = claudeSessionEventID(payload)
 		events = append(events, event)
-		if id := firstPayloadString(payload, "session_id", "session_id_hash"); id != "" {
-			active[id] = true
-		}
 	}
-	return events, active
+	events = append(events, collection.MCPEvents...)
+	return events, collection.Commit
 }
 
 func claudeSessionEventID(payload map[string]interface{}) string {
