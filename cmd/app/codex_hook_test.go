@@ -10,10 +10,12 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/gesta-run/gesta-agent/pkg/codexapp"
 	"github.com/gesta-run/gesta-agent/pkg/daemon"
 	"github.com/gesta-run/gesta-agent/pkg/model"
+	"github.com/gesta-run/gesta-agent/pkg/toolinput"
 )
 
 func TestCodexHookMeasuresOnlyCompletedThreadItems(t *testing.T) {
@@ -142,11 +144,57 @@ func TestCodexHookMeasuresOnlyCompletedThreadItems(t *testing.T) {
 	if events[0].Payload["category"] != "code" || events[0].Payload["characters"] != float64(11) {
 		t.Fatalf("fileChange payload = %#v", events[0].Payload)
 	}
+	if events[0].Payload["schema_version"] != float64(3) || events[0].Payload["efficiency_eligible"] != true {
+		t.Fatalf("fileChange eligibility payload = %#v", events[0].Payload)
+	}
 	all, _ := json.Marshal(events)
 	for _, raw := range []string{"Release plan", "new content", "must not count", "must not be counted", "app.go", "failed.go", "session-meter-1", "turn-meter-1"} {
 		if strings.Contains(string(all), raw) {
 			t.Fatalf("Gross Ink events leaked raw value %q: %s", raw, all)
 		}
+	}
+}
+
+func TestGrossInkEventPreservesEfficiencyExclusionMetadata(t *testing.T) {
+	cfg := daemon.Config{
+		CustomerID:   "customer-1",
+		DeploymentID: "deployment-1",
+		DaemonID:     "daemon-1",
+		DeviceID:     "device-1",
+		DataDir:      t.TempDir(),
+	}
+	err := appendGrossMeasurements(cfg, grossObservation{
+		CallID:     "call-1",
+		SessionID:  "session-1",
+		TurnID:     "turn-1",
+		AgentType:  "codex",
+		Source:     "codex",
+		ObservedAt: time.Unix(1_700_000_000, 0),
+		Measurements: []toolinput.Measurement{{
+			ToolClass:                 "file_write",
+			Category:                  toolinput.CategoryCode,
+			Counts:                    toolinput.Counts{Characters: 200_000, Lines: 20_001, Words: 20_001},
+			EfficiencyEligible:        false,
+			EfficiencyExclusionReason: "observation_line_limit_exceeded",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("appendGrossMeasurements: %v", err)
+	}
+	events, err := daemon.NewQueue(cfg.DataDir).ReadAll()
+	if err != nil {
+		t.Fatalf("read Gross Ink event: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("events = %#v, want one", events)
+	}
+	payload := events[0].Payload
+	if payload["efficiency_eligible"] != false ||
+		payload["efficiency_exclusion_reason"] != "observation_line_limit_exceeded" {
+		t.Fatalf("eligibility metadata = %#v", payload)
+	}
+	if payload["lines"] != float64(20_001) {
+		t.Fatalf("Gross Ink counts were dropped: %#v", payload)
 	}
 }
 

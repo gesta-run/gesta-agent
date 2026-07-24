@@ -143,7 +143,7 @@ func appendGrossMeasurements(cfg daemon.Config, observation grossObservation) er
 			targetHash = util.ShortHash(measurement.Target)
 		}
 		identity := strings.Join([]string{
-			"tool.input.gross.v2",
+			"tool.input.gross.v3",
 			cfg.DaemonID,
 			observation.Source,
 			sessionID,
@@ -153,18 +153,22 @@ func appendGrossMeasurements(cfg daemon.Config, observation grossObservation) er
 			targetHash,
 		}, "\x00")
 		payload := map[string]interface{}{
-			"schema_version":   2,
-			"call_id_hash":     util.ShortHash(callID),
-			"tool_name":        privacy.RedactAndTruncate(strings.TrimSpace(observation.ToolName), 256),
-			"tool_class":       measurement.ToolClass,
-			"category":         measurement.Category,
-			"characters":       measurement.Counts.Characters,
-			"lines":            measurement.Counts.Lines,
-			"words":            measurement.Counts.Words,
-			"raw_input_stored": false,
-			"origin":           observation.Origin,
-			"observed_at":      createdAt.Format(time.RFC3339Nano),
-			"session_id":       util.ShortHash(sessionID),
+			"schema_version":      3,
+			"call_id_hash":        util.ShortHash(callID),
+			"tool_name":           privacy.RedactAndTruncate(strings.TrimSpace(observation.ToolName), 256),
+			"tool_class":          measurement.ToolClass,
+			"category":            measurement.Category,
+			"characters":          measurement.Counts.Characters,
+			"lines":               measurement.Counts.Lines,
+			"words":               measurement.Counts.Words,
+			"efficiency_eligible": measurement.EfficiencyEligible,
+			"raw_input_stored":    false,
+			"origin":              observation.Origin,
+			"observed_at":         createdAt.Format(time.RFC3339Nano),
+			"session_id":          util.ShortHash(sessionID),
+		}
+		if measurement.EfficiencyExclusionReason != "" {
+			payload["efficiency_exclusion_reason"] = measurement.EfficiencyExclusionReason
 		}
 		if turnID != "" {
 			payload["turn_id_hash"] = util.ShortHash(turnID)

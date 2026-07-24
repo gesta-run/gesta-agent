@@ -13,8 +13,54 @@ func TestMeasureCodexFileChangesByTargetCategory(t *testing.T) {
 	if got := measurements[0]; got.Category != CategoryCode || got.Counts.Lines != 2 || got.Counts.Characters != 19 {
 		t.Fatalf("code measurement = %#v", got)
 	}
+	if !measurements[0].EfficiencyEligible {
+		t.Fatalf("ordinary code measurement must be efficiency eligible: %#v", measurements[0])
+	}
 	if got := measurements[1]; got.Category != CategoryDocs || got.Counts.Lines != 1 || got.Counts.Characters != 10 {
 		t.Fatalf("docs measurement = %#v", got)
+	}
+}
+
+func TestEfficiencyEligibilityExcludesBulkObservationsWithoutDroppingGrossInk(t *testing.T) {
+	tests := []struct {
+		name     string
+		category string
+		counts   Counts
+		want     bool
+		reason   string
+	}{
+		{
+			name:     "line boundary is eligible",
+			category: CategoryCode,
+			counts:   Counts{Lines: maxEfficiencyLinesPerObservation},
+			want:     true,
+		},
+		{
+			name:     "bulk code is excluded",
+			category: CategoryCode,
+			counts:   Counts{Lines: maxEfficiencyLinesPerObservation + 1},
+			reason:   "observation_line_limit_exceeded",
+		},
+		{
+			name:     "document word boundary is eligible",
+			category: CategoryDocs,
+			counts:   Counts{Lines: 1, Words: maxEfficiencyDocumentWordsPerObservation},
+			want:     true,
+		},
+		{
+			name:     "bulk document is excluded",
+			category: CategoryDocs,
+			counts:   Counts{Lines: 1, Words: maxEfficiencyDocumentWordsPerObservation + 1},
+			reason:   "observation_document_word_limit_exceeded",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			eligible, reason := efficiencyEligibility(test.category, test.counts)
+			if eligible != test.want || reason != test.reason {
+				t.Fatalf("efficiencyEligibility() = (%t, %q), want (%t, %q)", eligible, reason, test.want, test.reason)
+			}
+		})
 	}
 }
 
