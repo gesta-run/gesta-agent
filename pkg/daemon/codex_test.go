@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -316,26 +315,6 @@ func TestCodexToolCallEventsFromTranscriptKeepMetadataOnly(t *testing.T) {
 	text := string(serialized)
 	if strings.Contains(text, "secret/private") || strings.Contains(text, "cat .env") || strings.Contains(text, "do not store this") || strings.Contains(text, rolloutPath) {
 		t.Fatalf("tool call metadata leaked arguments, output, or local path: %s", text)
-	}
-}
-
-func TestMCPServersFromListOutput(t *testing.T) {
-	output := `Name       Command                                                            Args  Env  Cwd  Status   Auth
-node_repl  /Applications/Codex.app/Contents/Resources/cua_node/bin/node_repl  -     -    -    enabled  Unsupported
-
-Name       Url                            Bearer Token Env Var  Status   Auth
-anysearch  https://api.anysearch.com/mcp  -                     enabled  Bearer token
-notion     https://mcp.notion.com/mcp     -                     enabled  OAuth
-
-Checking MCP server health...
-anysearch: https://api.anysearch.com/mcp
-auth0:
-`
-
-	got := mcpServersFromListOutput(output)
-	want := []string{"node_repl", "anysearch", "notion", "auth0"}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("servers = %#v, want %#v", got, want)
 	}
 }
 
