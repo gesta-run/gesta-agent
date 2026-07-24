@@ -30,11 +30,15 @@ type CodexAdapter struct{}
 func (CodexAdapter) Name() string { return "codex" }
 
 func (a CodexAdapter) Collect(ctx context.Context, cfg Config) (AdapterResult, []model.EventEnvelope) {
-	now := time.Now().UTC().Format(time.RFC3339)
+	observedAt := time.Now().UTC()
+	now := observedAt.Format(time.RFC3339)
 	path := codexBinaryPath()
 	stateDB := latestCodexStateDB()
 	if path == "" && stateDB == "" {
-		return AdapterResult{Status: model.AdapterStatus{Name: a.Name(), Detected: false, Status: "not_found", UpdatedAt: now}}, nil
+		return AdapterResult{Status: model.AdapterStatus{
+			Name: a.Name(), Detected: false, Status: "not_found", UpdatedAt: now,
+			MCPInventory: unsupportedMCPInventory(observedAt),
+		}}, nil
 	}
 	statusText := "ok"
 	version := ""
@@ -43,7 +47,10 @@ func (a CodexAdapter) Collect(ctx context.Context, cfg Config) (AdapterResult, [
 	} else {
 		statusText = "state_db_only"
 	}
-	status := model.AdapterStatus{Name: a.Name(), Detected: true, Version: version, Status: statusText, UpdatedAt: now}
+	status := model.AdapterStatus{
+		Name: a.Name(), Detected: true, Version: version, Status: statusText, UpdatedAt: now,
+		MCPInventory: unsupportedMCPInventory(observedAt),
+	}
 
 	var events []model.EventEnvelope
 	discovery := map[string]interface{}{
@@ -61,12 +68,9 @@ func (a CodexAdapter) Collect(ctx context.Context, cfg Config) (AdapterResult, [
 	if path != "" {
 		mcpOutput, err := commandOutput(ctx, path, "mcp", "list")
 		if err == nil {
-			payload := commandOutputMetadata(mcpOutput)
-			servers := mcpServersFromListOutput(mcpOutput)
-			payload["command"] = "codex mcp list"
-			payload["servers"] = servers
-			payload["server_count"] = len(servers)
-			events = append(events, snapshotEvent(cfg, "mcp.inventory", "codex", "codex", payload))
+			status.MCPInventory = mcpInventoryFromListOutput(mcpOutput, observedAt)
+		} else {
+			status.MCPInventory = failedMCPInventory(err, observedAt)
 		}
 	}
 

@@ -29,11 +29,25 @@ type EnrollmentResponse struct {
 }
 
 type AdapterStatus struct {
-	Name      string `json:"name"`
-	Detected  bool   `json:"detected"`
-	Version   string `json:"version,omitempty"`
-	Status    string `json:"status"`
-	UpdatedAt string `json:"updated_at"`
+	Name         string              `json:"name"`
+	Detected     bool                `json:"detected"`
+	Version      string              `json:"version,omitempty"`
+	Status       string              `json:"status"`
+	UpdatedAt    string              `json:"updated_at"`
+	MCPInventory *MCPInventoryStatus `json:"mcp_inventory,omitempty"`
+}
+
+type MCPServerConfiguration struct {
+	Name    string `json:"name"`
+	Enabled bool   `json:"enabled"`
+}
+
+type MCPInventoryStatus struct {
+	ScanStatus string                   `json:"scan_status"`
+	ObservedAt string                   `json:"observed_at"`
+	Hash       string                   `json:"hash,omitempty"`
+	ErrorCode  string                   `json:"error_code,omitempty"`
+	Servers    []MCPServerConfiguration `json:"servers,omitempty"`
 }
 
 type HeartbeatRequest struct {

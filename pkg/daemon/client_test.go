@@ -82,6 +82,22 @@ func TestClientHeartbeatSendsDaemonTokenAndHostType(t *testing.T) {
 		if _, ok := payload["offline_queue_size"]; ok {
 			t.Fatalf("heartbeat exposed offline_queue_size: %#v", payload)
 		}
+		adapters, ok := payload["adapters"].([]interface{})
+		if !ok || len(adapters) != 1 {
+			t.Fatalf("heartbeat adapters = %#v", payload["adapters"])
+		}
+		adapter, ok := adapters[0].(map[string]interface{})
+		if !ok {
+			t.Fatalf("heartbeat adapter = %#v", adapters[0])
+		}
+		inventory, ok := adapter["mcp_inventory"].(map[string]interface{})
+		if !ok || inventory["scan_status"] != "ok" {
+			t.Fatalf("heartbeat inventory = %#v", adapter["mcp_inventory"])
+		}
+		servers, ok := inventory["servers"].([]interface{})
+		if !ok || len(servers) != 1 {
+			t.Fatalf("heartbeat inventory servers = %#v", inventory["servers"])
+		}
 		_ = json.NewEncoder(w).Encode(model.HeartbeatResponse{
 			Upgrade: &model.AgentUpgradePolicy{
 				Mode:          "auto",
@@ -99,6 +115,16 @@ func TestClientHeartbeatSendsDaemonTokenAndHostType(t *testing.T) {
 		PolicyVersion: model.DefaultPolicyVersion,
 		HostType:      "laptop",
 		HealthStatus:  "ok",
+		Adapters: []model.AdapterStatus{{
+			Name: "codex",
+			MCPInventory: &model.MCPInventoryStatus{
+				ScanStatus: "ok",
+				ObservedAt: "2026-07-24T00:00:00Z",
+				Servers: []model.MCPServerConfiguration{{
+					Name: "vercel", Enabled: true,
+				}},
+			},
+		}},
 	})
 	if err != nil {
 		t.Fatalf("heartbeat: %v", err)

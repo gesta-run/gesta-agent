@@ -18,13 +18,20 @@ type ClaudeCodeAdapter struct{}
 func (ClaudeCodeAdapter) Name() string { return "claude_code" }
 
 func (a ClaudeCodeAdapter) Collect(ctx context.Context, cfg Config) (AdapterResult, []model.EventEnvelope) {
-	now := time.Now().UTC().Format(time.RFC3339)
+	observedAt := time.Now().UTC()
+	now := observedAt.Format(time.RFC3339)
 	path, err := exec.LookPath("claude")
 	if err != nil {
-		return AdapterResult{Status: model.AdapterStatus{Name: a.Name(), Detected: false, Status: "not_found", UpdatedAt: now}}, nil
+		return AdapterResult{Status: model.AdapterStatus{
+			Name: a.Name(), Detected: false, Status: "not_found", UpdatedAt: now,
+			MCPInventory: unsupportedMCPInventory(observedAt),
+		}}, nil
 	}
 	version := safeVersion(ctx, "claude", "--version")
-	status := model.AdapterStatus{Name: a.Name(), Detected: true, Version: version, Status: "ok", UpdatedAt: now}
+	status := model.AdapterStatus{
+		Name: a.Name(), Detected: true, Version: version, Status: "ok", UpdatedAt: now,
+		MCPInventory: unsupportedMCPInventory(observedAt),
+	}
 	events := []model.EventEnvelope{
 		snapshotEvent(cfg, "agent.discovery", "daemon", "claude_code", map[string]interface{}{
 			"binary_path_hash": util.ShortHash(path),
@@ -44,17 +51,9 @@ func (a ClaudeCodeAdapter) Collect(ctx context.Context, cfg Config) (AdapterResu
 	}
 
 	if mcpOutput, err := commandOutput(ctx, "claude", "mcp", "list"); err == nil {
-		payload := commandOutputMetadata(mcpOutput)
-		servers := mcpServersFromListOutput(mcpOutput)
-		payload["command"] = "claude mcp list"
-		payload["servers"] = servers
-		payload["server_count"] = len(servers)
-		events = append(events, snapshotEvent(cfg, "mcp.inventory", "claude_code", "claude_code", payload))
+		status.MCPInventory = mcpInventoryFromListOutput(mcpOutput, observedAt)
 	} else {
-		events = append(events, snapshotEvent(cfg, "adapter.warning", "claude_code", "claude_code", map[string]interface{}{
-			"message": "claude mcp list is not available or did not complete; deep event stream support must be validated separately",
-			"error":   privacy.RedactAndTruncate(err.Error(), 2048),
-		}))
+		status.MCPInventory = failedMCPInventory(err, observedAt)
 	}
 
 	sessions := mergedClaudeSessions(claudeProjectsDir())

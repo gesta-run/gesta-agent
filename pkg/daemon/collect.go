@@ -127,6 +127,9 @@ func commandOutput(ctx context.Context, name string, args ...string) (string, er
 	cmd := exec.CommandContext(cmdCtx, name, args...)
 	cmd.Env = os.Environ()
 	out, err := cmd.CombinedOutput()
+	if cmdCtx.Err() != nil {
+		return string(out), cmdCtx.Err()
+	}
 	return string(out), err
 }
 
@@ -142,45 +145,6 @@ func commandOutputMetadata(output string) map[string]interface{} {
 		"line_count":    lineCount,
 		"metadata_only": true,
 	}
-}
-
-func mcpServersFromListOutput(output string) []string {
-	seen := map[string]bool{}
-	var servers []string
-	for _, line := range strings.Split(output, "\n") {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" {
-			continue
-		}
-		lower := strings.ToLower(trimmed)
-		if strings.HasPrefix(lower, "name ") || strings.Contains(lower, "no mcp") {
-			continue
-		}
-		fields := strings.Fields(trimmed)
-		if len(fields) == 0 {
-			continue
-		}
-		name := normalizeMCPServerName(fields[0])
-		if name == "" || strings.Trim(name, "-") == "" {
-			continue
-		}
-		if !seen[name] {
-			seen[name] = true
-			servers = append(servers, name)
-		}
-	}
-	return servers
-}
-
-func normalizeMCPServerName(value string) string {
-	value = strings.Trim(strings.TrimSpace(value), "`\"'")
-	value = strings.TrimRight(value, ":")
-	value = strings.TrimSpace(value)
-	lower := strings.ToLower(value)
-	if lower == "" || lower == "checking" {
-		return ""
-	}
-	return value
 }
 
 func findFiles(pattern string) []string {
