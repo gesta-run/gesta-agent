@@ -14,6 +14,12 @@ const (
 	CategoryDocs   = "docs"
 	CategoryConfig = "config"
 	CategoryOther  = "other"
+
+	// Efficiency measures delivered work rather than generated bulk artifacts.
+	// Eligibility is decided at the agent-owned observation boundary, while the
+	// measurement still reports the complete Gross Ink counts for observability.
+	maxEfficiencyLinesPerObservation         int64 = 20_000
+	maxEfficiencyDocumentWordsPerObservation int64 = 120_000
 )
 
 type Counts struct {
@@ -23,10 +29,12 @@ type Counts struct {
 }
 
 type Measurement struct {
-	ToolClass string
-	Category  string
-	Target    string
-	Counts    Counts
+	ToolClass                 string
+	Category                  string
+	Target                    string
+	Counts                    Counts
+	EfficiencyEligible        bool
+	EfficiencyExclusionReason string
 }
 
 type accumulatorKey struct {
@@ -378,6 +386,16 @@ func countText(text string) Counts {
 	return Counts{Characters: characters, Lines: lines, Words: int64(len(strings.Fields(text)))}
 }
 
+func efficiencyEligibility(category string, counts Counts) (bool, string) {
+	if counts.Lines > maxEfficiencyLinesPerObservation {
+		return false, "observation_line_limit_exceeded"
+	}
+	if category == CategoryDocs && counts.Words > maxEfficiencyDocumentWordsPerObservation {
+		return false, "observation_document_word_limit_exceeded"
+	}
+	return true, ""
+}
+
 func measurementsFrom(acc map[accumulatorKey]Counts) []Measurement {
 	keys := make([]accumulatorKey, 0, len(acc))
 	for key := range acc {
@@ -398,7 +416,15 @@ func measurementsFrom(acc map[accumulatorKey]Counts) []Measurement {
 		if counts.Characters == 0 && counts.Lines == 0 && counts.Words == 0 {
 			continue
 		}
-		measurements = append(measurements, Measurement{ToolClass: key.toolClass, Category: key.category, Target: key.target, Counts: counts})
+		eligible, reason := efficiencyEligibility(key.category, counts)
+		measurements = append(measurements, Measurement{
+			ToolClass:                 key.toolClass,
+			Category:                  key.category,
+			Target:                    key.target,
+			Counts:                    counts,
+			EfficiencyEligible:        eligible,
+			EfficiencyExclusionReason: reason,
+		})
 	}
 	return measurements
 }
