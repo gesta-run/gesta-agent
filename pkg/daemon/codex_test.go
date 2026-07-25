@@ -249,8 +249,13 @@ func TestCodexTranscriptPayloadExtractsRedactedMessages(t *testing.T) {
 	if strings.Contains(text, "nl -ba console/src/app/page.tsx") {
 		t.Fatalf("payload included command text: %s", text)
 	}
-	if codexTranscriptEventID(publicPayload) != codexTranscriptEventID(publicPayload) {
-		t.Fatal("transcript event id should be deterministic")
+	var equivalentPayload map[string]interface{}
+	if err := json.Unmarshal(serialized, &equivalentPayload); err != nil {
+		t.Fatalf("unmarshal equivalent payload: %v", err)
+	}
+	firstEventID := codexTranscriptEventID(publicPayload)
+	if firstEventID == "" || firstEventID != codexTranscriptEventID(equivalentPayload) {
+		t.Fatal("transcript event id should be stable for equivalent payloads")
 	}
 }
 

@@ -107,6 +107,97 @@ func TestInstallCodexPolicyHookPreservesExistingHooks(t *testing.T) {
 	}
 }
 
+func TestInstallCodexPolicyHookRefusesInvalidHooksFile(t *testing.T) {
+	home := t.TempDir()
+	codexDir := filepath.Join(home, ".codex")
+	if err := os.MkdirAll(codexDir, 0o700); err != nil {
+		t.Fatalf("mkdir codex dir: %v", err)
+	}
+	t.Setenv("HOME", home)
+	hookPath := filepath.Join(codexDir, "hooks.json")
+	original := []byte(`{"hooks":`)
+	if err := os.WriteFile(hookPath, original, 0o600); err != nil {
+		t.Fatalf("write invalid hooks file: %v", err)
+	}
+
+	if _, err := InstallCodexPolicyHook("/tmp/gesta-agent"); err == nil {
+		t.Fatal("expected invalid hooks file to be rejected")
+	}
+	data, err := os.ReadFile(hookPath)
+	if err != nil {
+		t.Fatalf("read hooks file: %v", err)
+	}
+	if string(data) != string(original) {
+		t.Fatalf("invalid hooks file was overwritten: %q", data)
+	}
+}
+
+func TestInstallCodexPolicyHookPreservesUnknownFields(t *testing.T) {
+	home := t.TempDir()
+	codexDir := filepath.Join(home, ".codex")
+	if err := os.MkdirAll(codexDir, 0o700); err != nil {
+		t.Fatalf("mkdir codex dir: %v", err)
+	}
+	t.Setenv("HOME", home)
+	hookPath := filepath.Join(codexDir, "hooks.json")
+	existing := `{
+  "futureTop": {"revision": 7},
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "futureGroup": "keep-group",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/tmp/existing-hook",
+            "futureCommand": {"mode": "keep-command"}
+          }
+        ]
+      }
+    ]
+  }
+}`
+	if err := os.WriteFile(hookPath, []byte(existing), 0o600); err != nil {
+		t.Fatalf("write hooks file: %v", err)
+	}
+
+	path, err := InstallCodexPolicyHook("/tmp/gesta-agent")
+	if err != nil {
+		t.Fatalf("InstallCodexPolicyHook: %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read hooks file: %v", err)
+	}
+	var hooks codexHooksFile
+	if err := json.Unmarshal(data, &hooks); err != nil {
+		t.Fatalf("decode hooks file: %v", err)
+	}
+	var topExtension struct {
+		Revision int `json:"revision"`
+	}
+	if err := json.Unmarshal(hooks.Extra["futureTop"], &topExtension); err != nil || topExtension.Revision != 7 {
+		t.Fatalf("top-level extension = %s, err = %v; want preserved", hooks.Extra["futureTop"], err)
+	}
+	if got := len(hooks.Hooks["PreToolUse"]); got != 2 {
+		t.Fatalf("PreToolUse groups = %d, want Gesta and existing groups", got)
+	}
+	existingGroup := hooks.Hooks["PreToolUse"][1]
+	if got := string(existingGroup.Extra["futureGroup"]); got != `"keep-group"` {
+		t.Fatalf("group extension = %s, want preserved", got)
+	}
+	if got := len(existingGroup.Hooks); got != 1 {
+		t.Fatalf("existing group hooks = %d, want 1", got)
+	}
+	var commandExtension struct {
+		Mode string `json:"mode"`
+	}
+	if err := json.Unmarshal(existingGroup.Hooks[0].Extra["futureCommand"], &commandExtension); err != nil || commandExtension.Mode != "keep-command" {
+		t.Fatalf("command extension = %s, err = %v; want preserved", existingGroup.Hooks[0].Extra["futureCommand"], err)
+	}
+}
+
 func TestInstallCodexPolicyHookDeduplicatesExistingGestaHook(t *testing.T) {
 	tmp := t.TempDir()
 	home := filepath.Join(tmp, "home")

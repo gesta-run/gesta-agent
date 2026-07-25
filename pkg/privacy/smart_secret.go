@@ -106,7 +106,6 @@ func trimSmartSecretCandidate(input string, start, end int) (int, int) {
 	value := input[start:end]
 	if idx := strings.LastIndex(value, "="); idx >= 0 && idx+1 < len(value) {
 		start += idx + 1
-		value = input[start:end]
 	}
 	for start < end {
 		r := rune(input[start])
@@ -300,10 +299,7 @@ func smartSecretLooksLikePublicURLCandidate(input string, start, end int) bool {
 		return false
 	}
 	host := value[:firstSlash]
-	if !smartSecretLooksLikeHostname(host) {
-		return false
-	}
-	return true
+	return smartSecretLooksLikeHostname(host)
 }
 
 func smartSecretLooksLikeHostname(value string) bool {

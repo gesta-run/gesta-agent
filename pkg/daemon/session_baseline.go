@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gesta-run/gesta-agent/internal/atomicfile"
 	"github.com/gesta-run/gesta-agent/pkg/model"
 	"github.com/gesta-run/gesta-agent/pkg/util"
 )
@@ -91,13 +92,20 @@ type baselineSession struct {
 	MCPToolCallCursorEventIDs []string `json:"mcp_tool_call_cursor_event_ids,omitempty"`
 }
 
-func filterCodexSessionBackfill(cfg Config, stateDB string, usageEvents, transcriptEvents []map[string]interface{}, observedAt time.Time) ([]map[string]interface{}, []map[string]interface{}, map[string]interface{}, error) {
+type codexBaselineResult struct {
+	UsageEvents      []map[string]interface{}
+	TranscriptEvents []map[string]interface{}
+	Meta             map[string]interface{}
+	Commit           func() error
+}
+
+func filterCodexSessionBackfill(cfg Config, stateDB string, usageEvents, transcriptEvents []map[string]interface{}, observedAt time.Time) (codexBaselineResult, error) {
 	if observedAt.IsZero() {
 		observedAt = time.Now().UTC()
 	}
 	store, err := loadSessionBaselineStore(cfg.DataDir)
 	if err != nil {
-		return nil, nil, nil, err
+		return codexBaselineResult{}, err
 	}
 	stateDBHash := util.ShortHash(stateDB)
 	baseline := store.Codex.StateDBs[stateDBHash]
@@ -105,35 +113,71 @@ func filterCodexSessionBackfill(cfg Config, stateDB string, usageEvents, transcr
 		baseline.Sessions = map[string]baselineSession{}
 	}
 
-	meta := map[string]interface{}{
+	result := codexBaselineResult{Meta: map[string]interface{}{
 		"session_backfill":               codexSessionBackfillModeValue,
 		"session_baseline_enabled":       true,
 		"session_baseline_state_db_hash": stateDBHash,
 		"usage_summary_mode":             "cursor_only",
-	}
+	}}
 	if baseline.InitializedAt == "" {
-		for _, payload := range usageEvents {
-			addBaselineSession(baseline.Sessions, payload)
-		}
-		for _, payload := range transcriptEvents {
-			addBaselineSession(baseline.Sessions, payload)
-		}
-		baseline.InitializedAt = observedAt.UTC().Format(time.RFC3339Nano)
-		baseline.StateDBHash = stateDBHash
-		store.Codex.StateDBs[stateDBHash] = baseline
-		if err := saveSessionBaselineStore(cfg.DataDir, store); err != nil {
-			return nil, nil, nil, err
-		}
-		meta["session_baseline_initialized"] = true
-		meta["historical_sessions_ignored"] = len(baseline.Sessions)
-		return nil, nil, meta, nil
+		initializeCodexBaseline(&baseline, stateDBHash, usageEvents, transcriptEvents, observedAt)
+		result.Meta["session_baseline_initialized"] = true
+		result.Meta["historical_sessions_ignored"] = len(baseline.Sessions)
+		result.Commit = commitCodexBaseline(cfg.DataDir, stateDBHash, baseline)
+		return result, nil
 	}
 
-	filteredUsage := make([]map[string]interface{}, 0, len(usageEvents))
-	filteredTranscripts := make([]map[string]interface{}, 0, len(transcriptEvents))
-	baselineUpdates := make([]map[string]interface{}, 0, len(usageEvents)+len(transcriptEvents))
-	changedUsageSessions := map[string]struct{}{}
-	ignoredSessions := map[string]struct{}{}
+	var updates []map[string]interface{}
+	var changedUsageSessions map[string]struct{}
+	var ignoredSessions map[string]struct{}
+	result.UsageEvents, updates, changedUsageSessions, ignoredSessions = filterCodexUsageBaseline(baseline, usageEvents)
+	result.TranscriptEvents, updates = filterCodexTranscriptBaseline(
+		baseline,
+		transcriptEvents,
+		updates,
+		changedUsageSessions,
+		ignoredSessions,
+	)
+	baselineDirty := false
+	for _, payload := range updates {
+		if addBaselineSession(baseline.Sessions, payload) {
+			baselineDirty = true
+		}
+	}
+	if baselineDirty {
+		result.Commit = commitCodexBaseline(cfg.DataDir, stateDBHash, baseline)
+	}
+	result.Meta["session_baseline_initialized"] = false
+	result.Meta["session_baseline_ignored_sessions"] = len(baseline.Sessions)
+	result.Meta["historical_sessions_ignored"] = len(ignoredSessions)
+	result.Meta["usage_summary_events_cursor_only"] = len(result.UsageEvents)
+	return result, nil
+}
+
+func initializeCodexBaseline(
+	baseline *codexSessionBaseline,
+	stateDBHash string,
+	usageEvents, transcriptEvents []map[string]interface{},
+	observedAt time.Time,
+) {
+	for _, payload := range usageEvents {
+		addBaselineSession(baseline.Sessions, payload)
+	}
+	for _, payload := range transcriptEvents {
+		addBaselineSession(baseline.Sessions, payload)
+	}
+	baseline.InitializedAt = observedAt.UTC().Format(time.RFC3339Nano)
+	baseline.StateDBHash = stateDBHash
+}
+
+func filterCodexUsageBaseline(
+	baseline codexSessionBaseline,
+	usageEvents []map[string]interface{},
+) (filtered, updates []map[string]interface{}, changed, ignored map[string]struct{}) {
+	filtered = make([]map[string]interface{}, 0, len(usageEvents))
+	updates = make([]map[string]interface{}, 0, len(usageEvents))
+	changed = map[string]struct{}{}
+	ignored = map[string]struct{}{}
 	for _, payload := range usageEvents {
 		sessionID := sessionIDFromPayload(payload)
 		if sessionID == "" {
@@ -142,27 +186,27 @@ func filterCodexSessionBackfill(cfg Config, stateDB string, usageEvents, transcr
 		if existing, ok := baseline.Sessions[sessionID]; ok {
 			total, hasTokens := payloadIntValue(payload, "total_tokens", "tokens_used")
 			if !existing.TokensObserved {
-				ignoredSessions[sessionID] = struct{}{}
+				ignored[sessionID] = struct{}{}
 				if hasTokens {
-					baselineUpdates = append(baselineUpdates, payload)
+					updates = append(updates, payload)
 				}
 				continue
 			}
 			if baselineTokenAccountingChanged(existing, payload) {
-				ignoredSessions[sessionID] = struct{}{}
+				ignored[sessionID] = struct{}{}
 				if hasTokens {
-					baselineUpdates = append(baselineUpdates, payload)
+					updates = append(updates, payload)
 				}
 				continue
 			}
 			if !hasTokens {
-				ignoredSessions[sessionID] = struct{}{}
+				ignored[sessionID] = struct{}{}
 				continue
 			}
 			if !baselineUsageAdvanced(existing, payload, total) {
-				ignoredSessions[sessionID] = struct{}{}
+				ignored[sessionID] = struct{}{}
 				if total > existing.TotalTokens {
-					baselineUpdates = append(baselineUpdates, payload)
+					updates = append(updates, payload)
 				}
 				continue
 			}
@@ -175,10 +219,19 @@ func filterCodexSessionBackfill(cfg Config, stateDB string, usageEvents, transcr
 			markInternalInitialDelta(payload)
 		}
 		markInternalCursorOnly(payload)
-		filteredUsage = append(filteredUsage, payload)
-		changedUsageSessions[sessionID] = struct{}{}
-		baselineUpdates = append(baselineUpdates, payload)
+		filtered = append(filtered, payload)
+		changed[sessionID] = struct{}{}
+		updates = append(updates, payload)
 	}
+	return filtered, updates, changed, ignored
+}
+
+func filterCodexTranscriptBaseline(
+	baseline codexSessionBaseline,
+	transcriptEvents, updates []map[string]interface{},
+	changedUsageSessions, ignoredSessions map[string]struct{},
+) ([]map[string]interface{}, []map[string]interface{}) {
+	filtered := make([]map[string]interface{}, 0, len(transcriptEvents))
 	for _, payload := range transcriptEvents {
 		sessionID := sessionIDFromPayload(payload)
 		if sessionID == "" {
@@ -186,33 +239,28 @@ func filterCodexSessionBackfill(cfg Config, stateDB string, usageEvents, transcr
 		}
 		if shouldSkipBaselineTranscript(baseline, payload) {
 			if _, usageChanged := changedUsageSessions[sessionID]; usageChanged {
-				filteredTranscripts = append(filteredTranscripts, payload)
-				baselineUpdates = append(baselineUpdates, payload)
+				filtered = append(filtered, payload)
+				updates = append(updates, payload)
 				continue
 			}
 			ignoredSessions[sessionID] = struct{}{}
 			continue
 		}
-		filteredTranscripts = append(filteredTranscripts, payload)
-		baselineUpdates = append(baselineUpdates, payload)
+		filtered = append(filtered, payload)
+		updates = append(updates, payload)
 	}
-	baselineDirty := false
-	for _, payload := range baselineUpdates {
-		if addBaselineSession(baseline.Sessions, payload) {
-			baselineDirty = true
+	return filtered, updates
+}
+
+func commitCodexBaseline(dataDir, stateDBHash string, baseline codexSessionBaseline) func() error {
+	return func() error {
+		store, err := loadSessionBaselineStore(dataDir)
+		if err != nil {
+			return err
 		}
-	}
-	if baselineDirty {
 		store.Codex.StateDBs[stateDBHash] = baseline
-		if err := saveSessionBaselineStore(cfg.DataDir, store); err != nil {
-			return nil, nil, nil, err
-		}
+		return saveSessionBaselineStore(dataDir, store)
 	}
-	meta["session_baseline_initialized"] = false
-	meta["session_baseline_ignored_sessions"] = len(baseline.Sessions)
-	meta["historical_sessions_ignored"] = len(ignoredSessions)
-	meta["usage_summary_events_cursor_only"] = len(filteredUsage)
-	return filteredUsage, filteredTranscripts, meta, nil
 }
 
 func addBaselineSession(sessions map[string]baselineSession, payload map[string]interface{}) bool {
@@ -515,19 +563,7 @@ func saveSessionBaselineStore(dataDir string, store sessionBaselineStore) error 
 		dataDir = DefaultDataDir()
 	}
 	normalizeSessionBaselineStore(&store)
-	if err := os.MkdirAll(dataDir, 0o700); err != nil {
-		return err
-	}
-	data, err := json.MarshalIndent(store, "", "  ")
-	if err != nil {
-		return err
-	}
-	path := filepath.Join(dataDir, sessionBaselineFile)
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
+	return atomicfile.WriteJSON(filepath.Join(dataDir, sessionBaselineFile), store)
 }
 
 func newSessionBaselineStore() sessionBaselineStore {

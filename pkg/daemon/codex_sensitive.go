@@ -31,10 +31,6 @@ func codexSensitiveFindingEventsFromTranscripts(cfg Config, transcripts []map[st
 	return events
 }
 
-func codexSensitiveFindingEvents(cfg Config, transcript map[string]interface{}, rules []model.SensitiveRule) []model.EventEnvelope {
-	return codexSensitiveFindingEventsAt(cfg, transcript, rules, time.Now().UTC())
-}
-
 func codexSensitiveFindingEventsAt(cfg Config, transcript map[string]interface{}, rules []model.SensitiveRule, observedAt time.Time) []model.EventEnvelope {
 	if len(rules) == 0 {
 		return nil

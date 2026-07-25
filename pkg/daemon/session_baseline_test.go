@@ -11,6 +11,102 @@ import (
 	"github.com/gesta-run/gesta-agent/pkg/util"
 )
 
+func filterAndCommitCodexSessionBackfill(
+	cfg Config,
+	stateDB string,
+	usageEvents, transcriptEvents []map[string]interface{},
+	observedAt time.Time,
+) ([]map[string]interface{}, []map[string]interface{}, map[string]interface{}, error) {
+	result, err := filterCodexSessionBackfill(cfg, stateDB, usageEvents, transcriptEvents, observedAt)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	if result.Commit != nil {
+		if err := result.Commit(); err != nil {
+			return nil, nil, nil, err
+		}
+	}
+	return result.UsageEvents, result.TranscriptEvents, result.Meta, nil
+}
+
+func TestFilterCodexSessionBackfillStagesBaselineCommit(t *testing.T) {
+	cfg := Config{DataDir: t.TempDir()}
+	stateDB := filepath.Join(t.TempDir(), "state.sqlite")
+	result, err := filterCodexSessionBackfill(
+		cfg,
+		stateDB,
+		[]map[string]interface{}{{
+			"session_id": "old-session", "total_tokens": int64(100),
+			"updated_at": "2026-06-21T00:00:00Z",
+		}},
+		nil,
+		time.Date(2026, 6, 22, 3, 0, 0, 0, time.UTC),
+	)
+	if err != nil {
+		t.Fatalf("filterCodexSessionBackfill: %v", err)
+	}
+	if result.Commit == nil {
+		t.Fatal("baseline initialization should return a staged commit")
+	}
+	if _, err := os.Stat(filepath.Join(cfg.DataDir, sessionBaselineFile)); !os.IsNotExist(err) {
+		t.Fatalf("baseline was persisted before commit: %v", err)
+	}
+	if err := result.Commit(); err != nil {
+		t.Fatalf("commit baseline: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(cfg.DataDir, sessionBaselineFile)); err != nil {
+		t.Fatalf("baseline was not persisted after commit: %v", err)
+	}
+}
+
+func TestAdapterBaselineCommitsPreserveEachOther(t *testing.T) {
+	cfg := Config{DataDir: t.TempDir()}
+	observedAt := time.Date(2026, 6, 22, 3, 0, 0, 0, time.UTC)
+	codexResult, err := filterCodexSessionBackfill(
+		cfg,
+		filepath.Join(t.TempDir(), "state.sqlite"),
+		[]map[string]interface{}{{"session_id": "codex-session", "total_tokens": int64(10)}},
+		nil,
+		observedAt,
+	)
+	if err != nil {
+		t.Fatalf("filter Codex baseline: %v", err)
+	}
+	claudeResult, err := filterClaudeSessionBaseline(
+		cfg,
+		[]map[string]interface{}{{"session_id": "claude-session", "total_tokens": int64(20)}},
+		nil,
+		nil,
+		observedAt,
+	)
+	if err != nil {
+		t.Fatalf("filter Claude baseline: %v", err)
+	}
+	if err := claudeResult.Commit(); err != nil {
+		t.Fatalf("commit Claude baseline: %v", err)
+	}
+	if err := codexResult.Commit(); err != nil {
+		t.Fatalf("commit Codex baseline: %v", err)
+	}
+
+	store, err := loadSessionBaselineStore(cfg.DataDir)
+	if err != nil {
+		t.Fatalf("load merged baseline: %v", err)
+	}
+	if _, ok := store.ClaudeCode.Sessions["claude-session"]; !ok {
+		t.Fatalf("Claude baseline was lost: %#v", store.ClaudeCode.Sessions)
+	}
+	var codexSessionFound bool
+	for _, baseline := range store.Codex.StateDBs {
+		if _, ok := baseline.Sessions["codex-session"]; ok {
+			codexSessionFound = true
+		}
+	}
+	if !codexSessionFound {
+		t.Fatalf("Codex baseline was lost: %#v", store.Codex.StateDBs)
+	}
+}
+
 func TestFilterCodexSessionBackfillInitializesBaseline(t *testing.T) {
 	cfg := Config{DataDir: t.TempDir()}
 	stateDB := filepath.Join(t.TempDir(), "state.sqlite")
@@ -23,7 +119,7 @@ func TestFilterCodexSessionBackfillInitializesBaseline(t *testing.T) {
 		{"session_id": "old-session", "updated_at": "2026-06-21T00:00:00Z", "transcript_hash": "old-hash"},
 	}
 
-	filteredUsage, filteredTranscripts, meta, err := filterCodexSessionBackfill(cfg, stateDB, usage, transcripts, observedAt)
+	filteredUsage, filteredTranscripts, meta, err := filterAndCommitCodexSessionBackfill(cfg, stateDB, usage, transcripts, observedAt)
 	if err != nil {
 		t.Fatalf("filterCodexSessionBackfill: %v", err)
 	}
@@ -63,7 +159,7 @@ func TestFilterCodexSessionBackfillSkipsBaselineAndKeepsNewSessions(t *testing.T
 	stateDB := filepath.Join(t.TempDir(), "state.sqlite")
 	observedAt := time.Date(2026, 6, 22, 3, 0, 0, 0, time.UTC)
 
-	if _, _, _, err := filterCodexSessionBackfill(cfg, stateDB, []map[string]interface{}{
+	if _, _, _, err := filterAndCommitCodexSessionBackfill(cfg, stateDB, []map[string]interface{}{
 		{"session_id": "old-session", "total_tokens": int64(100), "updated_at": "2026-06-21T00:00:00Z"},
 	}, []map[string]interface{}{
 		{"session_id": "old-session", "updated_at": "2026-06-21T00:00:00Z", "transcript_hash": "old-hash"},
@@ -80,7 +176,7 @@ func TestFilterCodexSessionBackfillSkipsBaselineAndKeepsNewSessions(t *testing.T
 		{"session_id": "new-session", "updated_at": "2026-06-22T00:00:00Z", "transcript_hash": "new-hash"},
 	}
 
-	filteredUsage, filteredTranscripts, meta, err := filterCodexSessionBackfill(cfg, stateDB, usage, transcripts, observedAt.Add(time.Minute))
+	filteredUsage, filteredTranscripts, meta, err := filterAndCommitCodexSessionBackfill(cfg, stateDB, usage, transcripts, observedAt.Add(time.Minute))
 	if err != nil {
 		t.Fatalf("filterCodexSessionBackfill: %v", err)
 	}
@@ -115,13 +211,13 @@ func TestFilterCodexSessionBackfillUsesForkParentBaselineForNewSession(t *testin
 	stateDB := filepath.Join(t.TempDir(), "state.sqlite")
 	observedAt := time.Date(2026, 6, 22, 3, 0, 0, 0, time.UTC)
 
-	if _, _, _, err := filterCodexSessionBackfill(cfg, stateDB, []map[string]interface{}{
+	if _, _, _, err := filterAndCommitCodexSessionBackfill(cfg, stateDB, []map[string]interface{}{
 		{"session_id": "parent-session", "total_tokens": int64(100), "input_tokens": int64(60), "output_tokens": int64(40), "updated_at": "2026-06-21T00:00:00Z"},
 	}, nil, observedAt); err != nil {
 		t.Fatalf("initialize baseline: %v", err)
 	}
 
-	filteredUsage, _, _, err := filterCodexSessionBackfill(cfg, stateDB, []map[string]interface{}{
+	filteredUsage, _, _, err := filterAndCommitCodexSessionBackfill(cfg, stateDB, []map[string]interface{}{
 		{
 			"session_id":        "child-session",
 			"parent_session_id": "parent-session",
@@ -172,13 +268,13 @@ func TestFilterCodexSessionBackfillSeedsForkWithoutKnownParent(t *testing.T) {
 	stateDB := filepath.Join(t.TempDir(), "state.sqlite")
 	observedAt := time.Date(2026, 6, 22, 3, 0, 0, 0, time.UTC)
 
-	if _, _, _, err := filterCodexSessionBackfill(cfg, stateDB, []map[string]interface{}{
+	if _, _, _, err := filterAndCommitCodexSessionBackfill(cfg, stateDB, []map[string]interface{}{
 		{"session_id": "old-session", "total_tokens": int64(100), "updated_at": "2026-06-21T00:00:00Z"},
 	}, nil, observedAt); err != nil {
 		t.Fatalf("initialize baseline: %v", err)
 	}
 
-	filteredUsage, _, _, err := filterCodexSessionBackfill(cfg, stateDB, []map[string]interface{}{
+	filteredUsage, _, _, err := filterAndCommitCodexSessionBackfill(cfg, stateDB, []map[string]interface{}{
 		{
 			"session_id":        "child-session",
 			"parent_session_id": "missing-parent",
@@ -215,7 +311,7 @@ func TestFilterCodexSessionBackfillKeepsChangedBaselineSession(t *testing.T) {
 	stateDB := filepath.Join(t.TempDir(), "state.sqlite")
 	observedAt := time.Date(2026, 6, 22, 3, 0, 0, 0, time.UTC)
 
-	if _, _, _, err := filterCodexSessionBackfill(cfg, stateDB, []map[string]interface{}{
+	if _, _, _, err := filterAndCommitCodexSessionBackfill(cfg, stateDB, []map[string]interface{}{
 		{"session_id": "old-session", "total_tokens": int64(100), "updated_at": "2026-06-21T00:00:00Z"},
 	}, []map[string]interface{}{
 		{"session_id": "old-session", "updated_at": "2026-06-21T00:00:00Z", "transcript_hash": "hash-1"},
@@ -230,7 +326,7 @@ func TestFilterCodexSessionBackfillKeepsChangedBaselineSession(t *testing.T) {
 		{"session_id": "old-session", "updated_at": "2026-06-22T00:00:00Z", "transcript_hash": "hash-2"},
 	}
 
-	filteredUsage, filteredTranscripts, _, err := filterCodexSessionBackfill(cfg, stateDB, usage, transcripts, observedAt.Add(time.Minute))
+	filteredUsage, filteredTranscripts, _, err := filterAndCommitCodexSessionBackfill(cfg, stateDB, usage, transcripts, observedAt.Add(time.Minute))
 	if err != nil {
 		t.Fatalf("filterCodexSessionBackfill: %v", err)
 	}
@@ -265,13 +361,13 @@ func TestFilterCodexSessionBackfillSeedsLegacyTokenBaselineBeforeDelta(t *testin
 	stateDB := filepath.Join(t.TempDir(), "state.sqlite")
 	observedAt := time.Date(2026, 6, 22, 3, 0, 0, 0, time.UTC)
 
-	if _, _, _, err := filterCodexSessionBackfill(cfg, stateDB, nil, []map[string]interface{}{
+	if _, _, _, err := filterAndCommitCodexSessionBackfill(cfg, stateDB, nil, []map[string]interface{}{
 		{"session_id": "old-session", "updated_at": "2026-06-21T00:00:00Z"},
 	}, observedAt); err != nil {
 		t.Fatalf("initialize baseline: %v", err)
 	}
 
-	filteredUsage, filteredTranscripts, _, err := filterCodexSessionBackfill(cfg, stateDB, []map[string]interface{}{
+	filteredUsage, filteredTranscripts, _, err := filterAndCommitCodexSessionBackfill(cfg, stateDB, []map[string]interface{}{
 		{"session_id": "old-session", "total_tokens": int64(100), "updated_at": "2026-06-22T00:00:00Z"},
 	}, []map[string]interface{}{
 		{"session_id": "old-session", "updated_at": "2026-06-22T00:00:00Z", "transcript_hash": "hash-after-upgrade"},
@@ -300,13 +396,13 @@ func TestFilterCodexSessionBackfillMigratesTokenAccountingWithoutBackfill(t *tes
 	stateDB := filepath.Join(t.TempDir(), "state.sqlite")
 	observedAt := time.Date(2026, 6, 22, 3, 0, 0, 0, time.UTC)
 
-	if _, _, _, err := filterCodexSessionBackfill(cfg, stateDB, []map[string]interface{}{
+	if _, _, _, err := filterAndCommitCodexSessionBackfill(cfg, stateDB, []map[string]interface{}{
 		{"session_id": "old-session", "total_tokens": int64(100), "input_tokens": int64(80), "output_tokens": int64(20), "updated_at": "2026-06-21T00:00:00Z"},
 	}, nil, observedAt); err != nil {
 		t.Fatalf("initialize baseline: %v", err)
 	}
 
-	filteredUsage, _, _, err := filterCodexSessionBackfill(cfg, stateDB, []map[string]interface{}{
+	filteredUsage, _, _, err := filterAndCommitCodexSessionBackfill(cfg, stateDB, []map[string]interface{}{
 		{"session_id": "old-session", "total_tokens": int64(1000), "input_tokens": int64(900), "output_tokens": int64(100), "token_accounting": "raw_total", "updated_at": "2026-06-22T00:00:00Z"},
 	}, nil, observedAt.Add(time.Minute))
 	if err != nil {
@@ -316,7 +412,7 @@ func TestFilterCodexSessionBackfillMigratesTokenAccountingWithoutBackfill(t *tes
 		t.Fatalf("filtered usage = %#v, want accounting migration to skip historical raw jump", filteredUsage)
 	}
 
-	filteredUsage, _, _, err = filterCodexSessionBackfill(cfg, stateDB, []map[string]interface{}{
+	filteredUsage, _, _, err = filterAndCommitCodexSessionBackfill(cfg, stateDB, []map[string]interface{}{
 		{"session_id": "old-session", "total_tokens": int64(1200), "input_tokens": int64(1080), "output_tokens": int64(120), "token_accounting": "raw_total", "updated_at": "2026-06-22T00:01:00Z"},
 	}, nil, observedAt.Add(2*time.Minute))
 	if err != nil {
@@ -338,13 +434,13 @@ func TestFilterCodexSessionBackfillSeedsParserCorrectionWithoutDelta(t *testing.
 	stateDB := filepath.Join(t.TempDir(), "state.sqlite")
 	observedAt := time.Date(2026, 6, 22, 3, 0, 0, 0, time.UTC)
 
-	if _, _, _, err := filterCodexSessionBackfill(cfg, stateDB, []map[string]interface{}{
+	if _, _, _, err := filterAndCommitCodexSessionBackfill(cfg, stateDB, []map[string]interface{}{
 		{"session_id": "old-session", "total_tokens": int64(100), "input_tokens": int64(80), "output_tokens": int64(20), "token_accounting": "raw_total", "updated_at": "2026-06-21T00:00:00Z"},
 	}, nil, observedAt); err != nil {
 		t.Fatalf("initialize baseline: %v", err)
 	}
 
-	filteredUsage, _, _, err := filterCodexSessionBackfill(cfg, stateDB, []map[string]interface{}{
+	filteredUsage, _, _, err := filterAndCommitCodexSessionBackfill(cfg, stateDB, []map[string]interface{}{
 		{"session_id": "old-session", "total_tokens": int64(150), "input_tokens": int64(120), "output_tokens": int64(30), "token_accounting": "raw_total", "updated_at": "2026-06-21T00:00:00Z"},
 	}, nil, observedAt.Add(time.Minute))
 	if err != nil {
@@ -369,13 +465,13 @@ func TestFilterCodexSessionBackfillKeepsPostCutoffTranscriptForLegacyBaseline(t 
 	stateDB := filepath.Join(t.TempDir(), "state.sqlite")
 	observedAt := time.Date(2026, 6, 22, 3, 0, 0, 0, time.UTC)
 
-	if _, _, _, err := filterCodexSessionBackfill(cfg, stateDB, []map[string]interface{}{
+	if _, _, _, err := filterAndCommitCodexSessionBackfill(cfg, stateDB, []map[string]interface{}{
 		{"session_id": "old-session", "total_tokens": int64(100)},
 	}, nil, observedAt); err != nil {
 		t.Fatalf("initialize baseline: %v", err)
 	}
 
-	_, filteredTranscripts, _, err := filterCodexSessionBackfill(cfg, stateDB, nil, []map[string]interface{}{
+	_, filteredTranscripts, _, err := filterAndCommitCodexSessionBackfill(cfg, stateDB, nil, []map[string]interface{}{
 		{"session_id": "old-session", "updated_at": "2026-06-22T03:01:00Z", "transcript_hash": "post-cutoff-hash"},
 	}, observedAt.Add(2*time.Minute))
 	if err != nil {
@@ -412,7 +508,7 @@ func TestFilterInternalEventsDropsCursorOnlyEvents(t *testing.T) {
 func TestLoadSessionBaselineStoreRecoversTrailingGarbage(t *testing.T) {
 	dataDir := t.TempDir()
 	stateDB := filepath.Join(t.TempDir(), "state.sqlite")
-	if _, _, _, err := filterCodexSessionBackfill(Config{DataDir: dataDir}, stateDB, []map[string]interface{}{
+	if _, _, _, err := filterAndCommitCodexSessionBackfill(Config{DataDir: dataDir}, stateDB, []map[string]interface{}{
 		{"session_id": "old-session", "total_tokens": int64(100), "updated_at": "2026-06-21T00:00:00Z"},
 	}, nil, time.Date(2026, 6, 22, 3, 0, 0, 0, time.UTC)); err != nil {
 		t.Fatalf("initialize baseline: %v", err)

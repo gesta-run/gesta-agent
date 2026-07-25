@@ -262,7 +262,7 @@ func firstNonEmpty(values ...string) string {
 }
 
 func usageError() error {
-	return fmt.Errorf(`gesta-agent
+	return fmt.Errorf(`usage: gesta-agent
 
 Commands:
   run --control-url http://localhost:8080 --apikey user_api_key
@@ -279,6 +279,5 @@ Internal commands:
 
 Environment:
   GESTA_CONTROL_URL  control plane URL used by run/install
-  GESTA_API_KEY      API key used by install
-`)
+  GESTA_API_KEY      API key used by install`)
 }

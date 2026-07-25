@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gesta-run/gesta-agent/internal/atomicfile"
 	"github.com/gesta-run/gesta-agent/pkg/model"
 	"github.com/gesta-run/gesta-agent/pkg/util"
 )
@@ -42,6 +43,14 @@ type usageObservation struct {
 	cacheRead       int64
 	cacheWrite      int64
 	cacheObserved   bool
+}
+
+type usageTokenDelta struct {
+	total      int64
+	input      int64
+	output     int64
+	cacheRead  int64
+	cacheWrite int64
 }
 
 type usageDeltaCommit func() error
@@ -121,44 +130,11 @@ func usageDeltaFromEvent(cfg Config, event model.EventEnvelope, store usageCurso
 		previous.CacheWriteTokens = observation.cacheWrite
 	}
 
-	deltaTokens := observation.total - previous.TotalTokens
-	if deltaTokens <= 0 {
+	tokenDelta, ok := calculateUsageTokenDelta(observation, previous)
+	if !ok {
 		return model.EventEnvelope{}, key, nextCursor, true
 	}
-	deltaInput := observation.input - previous.InputTokens
-	if deltaInput < 0 {
-		deltaInput = 0
-	}
-	deltaOutput := observation.output - previous.OutputTokens
-	if deltaOutput < 0 {
-		deltaOutput = 0
-	}
-	deltaCacheRead := observation.cacheRead - previous.CacheReadTokens
-	if deltaCacheRead < 0 {
-		deltaCacheRead = 0
-	}
-	deltaCacheWrite := observation.cacheWrite - previous.CacheWriteTokens
-	if deltaCacheWrite < 0 {
-		deltaCacheWrite = 0
-	}
-	windowStart := parseUsageCursorTime(previous.ObservedAt, observedAt.Add(-cfg.EffectiveUsageWindow()))
-	windowEnd := observedAt.UTC()
-	// Adapters that pre-bucket usage by day (e.g. Claude Code emits a usage
-	// summary per model+day) can pin the delta's day with usage_day so the
-	// control plane attributes tokens to the day the work happened rather than
-	// the day the daemon observed it. Codex never sets this, so its behavior is
-	// unchanged.
-	if day := firstPayloadString(event.Payload, "usage_day"); day != "" {
-		if parsedDay, errDay := time.Parse("2006-01-02", day); errDay == nil {
-			windowEnd = time.Date(parsedDay.Year(), parsedDay.Month(), parsedDay.Day(), 23, 59, 59, 0, time.UTC)
-			if windowEnd.After(observedAt.UTC()) {
-				windowEnd = observedAt.UTC()
-			}
-			if windowStart.After(windowEnd) {
-				windowStart = windowEnd
-			}
-		}
-	}
+	windowStart, windowEnd := usageDeltaWindow(cfg, event.Payload, previous, observedAt)
 	payload := map[string]interface{}{
 		"accounting":             "delta",
 		"source_event_id":        event.EventID,
@@ -167,12 +143,12 @@ func usageDeltaFromEvent(cfg Config, event model.EventEnvelope, store usageCurso
 		"window_start":           windowStart.Format(time.RFC3339Nano),
 		"window_end":             windowEnd.Format(time.RFC3339Nano),
 		"configured_window_sec":  int64(cfg.EffectiveUsageWindow().Seconds()),
-		"total_tokens":           deltaTokens,
-		"tokens_used":            deltaTokens,
-		"input_tokens":           deltaInput,
-		"output_tokens":          deltaOutput,
-		"cache_read_tokens":      deltaCacheRead,
-		"cache_write_tokens":     deltaCacheWrite,
+		"total_tokens":           tokenDelta.total,
+		"tokens_used":            tokenDelta.total,
+		"input_tokens":           tokenDelta.input,
+		"output_tokens":          tokenDelta.output,
+		"cache_read_tokens":      tokenDelta.cacheRead,
+		"cache_write_tokens":     tokenDelta.cacheWrite,
 		"session_total_tokens":   observation.total,
 		"session_input_tokens":   observation.input,
 		"session_output_tokens":  observation.output,
@@ -190,6 +166,35 @@ func usageDeltaFromEvent(cfg Config, event model.EventEnvelope, store usageCurso
 	delta := baseEvent(cfg, "usage.delta", event.Source, event.AgentType, payload)
 	delta.CreatedAt = windowEnd
 	return delta, key, nextCursor, true
+}
+
+func calculateUsageTokenDelta(observation usageObservation, previous usageCursor) (usageTokenDelta, bool) {
+	delta := usageTokenDelta{
+		total:      observation.total - previous.TotalTokens,
+		input:      max(observation.input-previous.InputTokens, 0),
+		output:     max(observation.output-previous.OutputTokens, 0),
+		cacheRead:  max(observation.cacheRead-previous.CacheReadTokens, 0),
+		cacheWrite: max(observation.cacheWrite-previous.CacheWriteTokens, 0),
+	}
+	return delta, delta.total > 0
+}
+
+func usageDeltaWindow(cfg Config, payload map[string]interface{}, previous usageCursor, observedAt time.Time) (time.Time, time.Time) {
+	windowStart := parseUsageCursorTime(previous.ObservedAt, observedAt.Add(-cfg.EffectiveUsageWindow()))
+	windowEnd := observedAt.UTC()
+	// Pre-bucketed adapters can pin usage to the day when work happened.
+	if day := firstPayloadString(payload, "usage_day"); day != "" {
+		if parsedDay, err := time.Parse("2006-01-02", day); err == nil {
+			windowEnd = time.Date(parsedDay.Year(), parsedDay.Month(), parsedDay.Day(), 23, 59, 59, 0, time.UTC)
+			if windowEnd.After(observedAt.UTC()) {
+				windowEnd = observedAt.UTC()
+			}
+			if windowStart.After(windowEnd) {
+				windowStart = windowEnd
+			}
+		}
+	}
+	return windowStart, windowEnd
 }
 
 func usageObservationFromEvent(event model.EventEnvelope) (usageObservation, bool) {
@@ -260,19 +265,7 @@ func saveUsageCursorStore(dataDir string, store usageCursorStore) error {
 	if store.Sessions == nil {
 		store.Sessions = map[string]usageCursor{}
 	}
-	if err := os.MkdirAll(dataDir, 0o700); err != nil {
-		return err
-	}
-	data, err := json.MarshalIndent(store, "", "  ")
-	if err != nil {
-		return err
-	}
-	path := filepath.Join(dataDir, usageCursorFile)
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
+	return atomicfile.WriteJSON(filepath.Join(dataDir, usageCursorFile), store)
 }
 
 func parseUsageCursorTime(value string, fallback time.Time) time.Time {

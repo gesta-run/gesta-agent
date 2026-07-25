@@ -53,6 +53,7 @@ func (a CodexAdapter) Collect(ctx context.Context, cfg Config) (AdapterResult, [
 	}
 
 	var events []model.EventEnvelope
+	var commit func() error
 	discovery := map[string]interface{}{
 		"version": version,
 	}
@@ -78,8 +79,8 @@ func (a CodexAdapter) Collect(ctx context.Context, cfg Config) (AdapterResult, [
 		if aggregate, usageEvents, transcriptEvents, err := readCodexState(ctx, stateDB); err == nil {
 			sensitiveRules := codexSensitiveRulesForCollection(cfg)
 			sensitiveEvents := codexSensitiveFindingEventsFromTranscripts(cfg, transcriptEvents, sensitiveRules)
-			filteredUsage, filteredTranscripts, baselineMeta, err := filterCodexSessionBackfill(cfg, stateDB, usageEvents, transcriptEvents, time.Now().UTC())
-			for key, value := range baselineMeta {
+			baselineResult, err := filterCodexSessionBackfill(cfg, stateDB, usageEvents, transcriptEvents, time.Now().UTC())
+			for key, value := range baselineResult.Meta {
 				aggregate[key] = value
 			}
 			if err != nil {
@@ -91,8 +92,9 @@ func (a CodexAdapter) Collect(ctx context.Context, cfg Config) (AdapterResult, [
 				usageEvents = nil
 				transcriptEvents = nil
 			} else {
-				usageEvents = filteredUsage
-				transcriptEvents = filteredTranscripts
+				usageEvents = baselineResult.UsageEvents
+				transcriptEvents = baselineResult.TranscriptEvents
+				commit = baselineResult.Commit
 			}
 			events = append(events, snapshotEvent(cfg, "codex.usage_summary", "codex", "codex", aggregate))
 			for _, usage := range usageEvents {
@@ -113,7 +115,7 @@ func (a CodexAdapter) Collect(ctx context.Context, cfg Config) (AdapterResult, [
 			}))
 		}
 	}
-	return AdapterResult{Status: status}, events
+	return AdapterResult{Status: status, Commit: commit}, events
 }
 
 func codexBinaryPath() string {

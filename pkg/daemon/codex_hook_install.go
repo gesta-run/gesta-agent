@@ -5,10 +5,13 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/gesta-run/gesta-agent/internal/atomicfile"
 )
 
 const gestaCodexHookStatus = "Checking Gesta policy"
@@ -31,22 +34,6 @@ var retiredCodexPolicyHookEvents = []struct {
 	{hookEventName: "PostToolUse", stateEventName: "post_tool_use"},
 }
 
-type codexHooksFile struct {
-	Hooks map[string][]codexHookGroup `json:"hooks"`
-}
-
-type codexHookGroup struct {
-	Matcher string             `json:"matcher,omitempty"`
-	Hooks   []codexHookCommand `json:"hooks"`
-}
-
-type codexHookCommand struct {
-	Type          string `json:"type"`
-	Command       string `json:"command"`
-	Timeout       int    `json:"timeout,omitempty"`
-	StatusMessage string `json:"statusMessage,omitempty"`
-}
-
 func InstallCodexPolicyHook(agentPath string) (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -62,8 +49,14 @@ func InstallCodexPolicyHook(agentPath string) (string, error) {
 	}
 
 	var hooks codexHooksFile
-	if data, err := os.ReadFile(hookPath); err == nil && len(strings.TrimSpace(string(data))) > 0 {
-		_ = json.Unmarshal(data, &hooks)
+	data, readErr := os.ReadFile(hookPath)
+	if readErr != nil && !errors.Is(readErr, os.ErrNotExist) {
+		return "", fmt.Errorf("read %s: %w", hookPath, readErr)
+	}
+	if readErr == nil && len(strings.TrimSpace(string(data))) > 0 {
+		if err := json.Unmarshal(data, &hooks); err != nil {
+			return "", fmt.Errorf("existing %s is not a valid hooks file; refusing to overwrite: %w", hookPath, err)
+		}
 	}
 	if hooks.Hooks == nil {
 		hooks.Hooks = map[string][]codexHookGroup{}
@@ -98,22 +91,13 @@ func InstallCodexPolicyHook(agentPath string) (string, error) {
 		hooks.Hooks[event.hookEventName] = filtered
 	}
 
-	data, err := json.MarshalIndent(hooks, "", "  ")
-	if err != nil {
-		return "", err
-	}
-	data = append(data, '\n')
-	if err := os.WriteFile(hookPath, data, 0o600); err != nil {
+	if err := atomicfile.WriteJSON(hookPath, hooks); err != nil {
 		return "", err
 	}
 	if err := ensureCodexPolicyHookConfig(hookPath, command); err != nil {
 		return "", err
 	}
 	return hookPath, nil
-}
-
-func codexPolicyHookGroup(command string) codexHookGroup {
-	return codexPolicyHookGroupWithMatcher(command, "*")
 }
 
 func codexPolicyHookGroupWithMatcher(command, matcher string) codexHookGroup {
@@ -147,9 +131,6 @@ func ensureCodexPolicyHookConfig(hookPath, command string) error {
 		return err
 	}
 	configPath := filepath.Join(home, ".codex", "config.toml")
-	if err := os.MkdirAll(filepath.Dir(configPath), 0o700); err != nil {
-		return err
-	}
 	data, err := os.ReadFile(configPath)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
@@ -158,7 +139,7 @@ func ensureCodexPolicyHookConfig(hookPath, command string) error {
 	if updated == string(data) {
 		return nil
 	}
-	return os.WriteFile(configPath, []byte(updated), 0o600)
+	return atomicfile.Write(configPath, []byte(updated))
 }
 
 func updateCodexHookConfig(configText, hookPath, command string) string {
