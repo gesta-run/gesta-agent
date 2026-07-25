@@ -43,10 +43,11 @@ as a compatibility alias for the same enforcement path.
 
 `run` also installs and trusts Codex `PreToolUse`, `Stop`, and
 `UserPromptSubmit` hooks in `~/.codex/hooks.json` and enables `[features].hooks` in
-`~/.codex/config.toml`. `install` performs the integration setup, which is
-useful during installation. The helper script builds the daemon from this
-checkout when run locally, or downloads the published binary when run from
-GitHub Pages:
+`~/.codex/config.toml`. It installs the corresponding Claude Code hooks,
+including `PostToolUse` and `Stop`, in `~/.claude/settings.json`. `install`
+performs the integration setup, which is useful during installation. The helper
+script builds the daemon from this checkout when run locally, or downloads the
+published binary when run from GitHub Pages:
 
 ```bash
 ./scripts/install.sh --control-url http://localhost:8080 --apikey sk-...
@@ -92,6 +93,19 @@ and counts added text from completed `fileChange` and `mcpToolCall` items.
 Claude Code file writes and MCP input are measured after successful execution at
 its public `PostToolUse` boundary. Raw diffs and tool arguments are discarded
 locally; only counts and hashed correlation metadata are queued.
+
+At the end of a primary-agent turn, Codex and Claude Code prepare one concise
+`Gesta active` line when a keyword or regex Organization Context policy matched,
+or measurable output was durably queued. Every-prompt context remains active but
+does not count toward the notice. The notice includes only the targeted policy
+match count and output summary, never policy names. `Stop` stores that line
+locally without blocking or starting another model response. The next allowed
+prompt in the same session receives an internal instruction to place the line at
+the bottom of its normal response, then the pending notice is consumed. Turns
+with neither a targeted match nor output remain silent. Blocked prompts do not
+consume pending notices. Local turn state contains only hashed identities,
+aggregate counts, and at most one pending notice per agent and session; all
+expire after 24 hours.
 
 ## Checks
 

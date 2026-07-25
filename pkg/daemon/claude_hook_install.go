@@ -16,6 +16,7 @@ var claudePolicyHookEvents = []struct {
 	{hookEventName: "SessionStart"},
 	{hookEventName: "PreToolUse", matcher: "*"},
 	{hookEventName: "PostToolUse", matcher: "*"},
+	{hookEventName: "Stop"},
 	{hookEventName: "UserPromptSubmit"},
 }
 

@@ -156,6 +156,21 @@ func TestInstallClaudeCodePolicyHookPreservesExistingHooks(t *testing.T) {
 		t.Fatalf("first SessionStart hook = %q, want Gesta claude-hook", got)
 	}
 
+	stops := claudeEventGroups(t, root, "Stop")
+	if len(stops) != 1 {
+		t.Fatalf("Stop groups = %d, want 1", len(stops))
+	}
+	firstStop, ok := stops[0].(map[string]interface{})
+	if !ok {
+		t.Fatalf("first Stop group not an object: %#v", stops[0])
+	}
+	if _, has := firstStop["matcher"]; has {
+		t.Fatalf("Stop group should have no matcher: %#v", firstStop)
+	}
+	if got := claudeGroupCommand(t, stops[0]); !strings.Contains(got, "claude-hook") {
+		t.Fatalf("first Stop hook = %q, want Gesta claude-hook", got)
+	}
+
 	ups := claudeEventGroups(t, root, "UserPromptSubmit")
 	if len(ups) != 1 {
 		t.Fatalf("UserPromptSubmit groups = %d, want 1", len(ups))
@@ -208,6 +223,18 @@ func TestInstallClaudeCodePolicyHookDeduplicatesExistingGestaHook(t *testing.T) 
           {"type": "command", "command": "/tmp/existing-user-prompt-hook"}
         ]
       }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {"type": "command", "command": "'/old/gesta-agent' claude-hook"}
+        ]
+      },
+      {
+        "hooks": [
+          {"type": "command", "command": "/tmp/existing-stop-hook"}
+        ]
+      }
     ]
   }
 }`
@@ -255,6 +282,16 @@ func TestInstallClaudeCodePolicyHookDeduplicatesExistingGestaHook(t *testing.T) 
 	}
 	if !strings.Contains(string(data), "/tmp/existing-user-prompt-hook") {
 		t.Fatalf("existing UserPromptSubmit hook was not preserved: %s", data)
+	}
+	stops := claudeEventGroups(t, root, "Stop")
+	if len(stops) != 2 {
+		t.Fatalf("Stop groups = %d, want 2: %s", len(stops), data)
+	}
+	if got := claudeGroupCommand(t, stops[0]); got != "'/tmp/gesta-agent' claude-hook" {
+		t.Fatalf("first Stop hook = %q", got)
+	}
+	if got := claudeGroupCommand(t, stops[1]); got != "/tmp/existing-stop-hook" {
+		t.Fatalf("existing Stop hook was not preserved: %q", got)
 	}
 }
 

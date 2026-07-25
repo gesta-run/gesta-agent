@@ -67,6 +67,8 @@ func processAgentHook(ctx context.Context, data []byte, agentType, source string
 	}
 	switch event.HookEventName {
 	case "SessionStart":
+		cfg, _ := guardConfig()
+		cleanupTurnReceiptsBestEffort(cfg)
 		return map[string]interface{}{}
 	case "UserPromptSubmit":
 		return processUserPromptSubmit(ctx, event, agentType, source)
@@ -79,11 +81,7 @@ func processAgentHook(ctx context.Context, data []byte, agentType, source string
 		}
 		return map[string]interface{}{}
 	case "Stop":
-		if agentType == "codex" {
-			cfg, _ := guardConfig()
-			recordCodexTurnBestEffort(ctx, cfg, event)
-		}
-		return map[string]interface{}{}
+		return processTurnStop(ctx, event, agentType)
 	default:
 		return map[string]interface{}{}
 	}
@@ -95,6 +93,7 @@ func processUserPromptSubmit(ctx context.Context, event agentHookEvent, agentTyp
 	}
 
 	cfg, _ := guardConfig()
+	beginTurnReceiptBestEffort(cfg, event, agentType)
 	findings := detectSensitivePrompt(cfg, event.Prompt)
 	if len(findings) > 0 {
 		recordSensitiveFindingsBestEffortWithConfig(cfg, event, findings, source, agentType)
@@ -105,7 +104,8 @@ func processUserPromptSubmit(ctx context.Context, event agentHookEvent, agentTyp
 			}
 		}
 	}
-	return processOrganizationContext(cfg, event, agentType, source)
+	response := processOrganizationContext(cfg, event, agentType, source)
+	return injectPendingTurnNoticeBestEffort(cfg, event, agentType, response)
 }
 
 func processPreToolUse(ctx context.Context, event agentHookEvent, agentType, source string) map[string]interface{} {
