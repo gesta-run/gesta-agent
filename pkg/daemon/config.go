@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gesta-run/gesta-agent/internal/atomicfile"
 	"github.com/gesta-run/gesta-agent/pkg/model"
 	"github.com/gesta-run/gesta-agent/pkg/util"
 )
@@ -86,9 +87,6 @@ func SaveConfig(path string, cfg Config) error {
 		path = DefaultStatePath()
 	}
 	normalizeConfig(&cfg, path)
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
 	persisted := cfg
 	persisted.ControlURL = ""
 	persisted.TeamID = ""
@@ -96,11 +94,7 @@ func SaveConfig(path string, cfg Config) error {
 		persisted.APIKey = persisted.Token
 	}
 	persisted.Token = ""
-	data, err := json.MarshalIndent(persisted, "", "  ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(path, data, 0o600)
+	return atomicfile.WriteJSON(path, persisted)
 }
 
 func normalizeConfig(cfg *Config, path string) {

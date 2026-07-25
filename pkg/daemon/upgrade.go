@@ -20,6 +20,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/gesta-run/gesta-agent/internal/atomicfile"
 	"github.com/gesta-run/gesta-agent/pkg/model"
 )
 
@@ -370,15 +371,7 @@ func LoadUpgradeState(dataDir string) (UpgradeState, error) {
 }
 
 func SaveUpgradeState(dataDir string, state UpgradeState) error {
-	path := UpgradeStatePath(dataDir)
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
-	data, err := json.MarshalIndent(state, "", "  ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(path, data, 0o600)
+	return atomicfile.WriteJSON(UpgradeStatePath(dataDir), state)
 }
 
 func normalizeUpgradeMode(mode string) string {

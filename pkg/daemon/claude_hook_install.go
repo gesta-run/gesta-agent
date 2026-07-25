@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/gesta-run/gesta-agent/internal/atomicfile"
 )
 
 var claudePolicyHookEvents = []struct {
@@ -89,12 +91,7 @@ func InstallClaudeCodePolicyHook(agentPath string) (string, error) {
 	}
 	root["hooks"] = hooks
 
-	data, err = json.MarshalIndent(root, "", "  ")
-	if err != nil {
-		return "", err
-	}
-	data = append(data, '\n')
-	if err := os.WriteFile(settingsPath, data, 0o600); err != nil {
+	if err := atomicfile.WriteJSON(settingsPath, root); err != nil {
 		return "", err
 	}
 	return settingsPath, nil

@@ -570,44 +570,6 @@ func transcriptReader(file *os.File) *bufio.Reader {
 	return reader
 }
 
-func codexFunctionCallText(payload map[string]interface{}) string {
-	name := firstString(payload, "name")
-	args := firstString(payload, "arguments")
-	if name == "apply_patch" {
-		return "apply_patch"
-	}
-	if args == "" {
-		return name
-	}
-	var parsed map[string]interface{}
-	if err := json.Unmarshal([]byte(args), &parsed); err != nil {
-		if name != "" {
-			return name + " " + args
-		}
-		return args
-	}
-	if cmd := firstString(parsed, "cmd", "command"); cmd != "" {
-		return cmd
-	}
-	if name == "write_stdin" {
-		if sessionID, ok := asInt64(parsed["session_id"]); ok {
-			return "write_stdin session " + stringInt(sessionID)
-		}
-		return "write_stdin"
-	}
-	if name != "" {
-		return name
-	}
-	if len(parsed) == 0 {
-		return ""
-	}
-	data, err := json.Marshal(parsed)
-	if err != nil {
-		return ""
-	}
-	return string(data)
-}
-
 func isCodexTranscriptRole(role string) bool {
 	switch role {
 	case "user", "assistant":

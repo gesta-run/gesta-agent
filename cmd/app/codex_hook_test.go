@@ -505,72 +505,19 @@ func TestCodexHookBlocksBuiltInSmartSecretRule(t *testing.T) {
 }
 
 func TestCodexHookRecordsNonBlockingSensitiveRule(t *testing.T) {
-	tmp := t.TempDir()
-	home := filepath.Join(tmp, "home")
+	home := filepath.Join(t.TempDir(), "home")
 	if err := os.MkdirAll(home, 0o700); err != nil {
 		t.Fatalf("mkdir home: %v", err)
 	}
 	t.Setenv("HOME", home)
 
-	var eventRequests int32
-	var uploaded model.EventBatch
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/v1/sensitive-rules":
-			if err := json.NewEncoder(w).Encode(model.SensitiveRulesResponse{Rules: []model.SensitiveRule{
-				{
-					RuleID:       "srule_record_customer_secret",
-					Name:         "Customer secrets",
-					Status:       "active",
-					Source:       "user_prompt",
-					DetectorType: "regex",
-					Pattern:      `customer_secret_[0-9]+`,
-					Category:     "customer_secret",
-					Severity:     "medium",
-					Action:       "record",
-					SampleMode:   "fingerprint_only",
-					Confidence:   0.77,
-					Priority:     1,
-				},
-			}}); err != nil {
-				t.Fatalf("encode sensitive rules: %v", err)
-			}
-		case "/api/v1/context-rules":
-			if err := json.NewEncoder(w).Encode(model.ContextRuleBundle{Version: "empty", Rules: []model.ContextRule{}}); err != nil {
-				t.Fatalf("encode context rules: %v", err)
-			}
-		case "/api/v1/events":
-			atomic.AddInt32(&eventRequests, 1)
-			if err := json.NewDecoder(r.Body).Decode(&uploaded); err != nil {
-				t.Fatalf("decode events: %v", err)
-			}
-			_, _ = w.Write([]byte(`{"status":"ok"}`))
-		default:
-			t.Fatalf("unexpected path: %s", r.URL.Path)
-		}
-	}))
-	defer server.Close()
-
-	cfg := daemon.NewDirectRuntimeConfig(server.URL, "dtok_codex_hook_sensitive_record")
+	rule := customerSecretRecordRule()
+	server := newHookRuleServer(t, []model.SensitiveRule{rule})
+	cfg := daemon.NewDirectRuntimeConfig(server.Server.URL, "dtok_codex_hook_sensitive_record")
 	if err := daemon.SaveConfig("", cfg); err != nil {
 		t.Fatalf("SaveConfig: %v", err)
 	}
-	if err := daemon.SaveSensitiveRuleCache(cfg.DataDir, []model.SensitiveRule{
-		{
-			RuleID:       "srule_record_customer_secret",
-			Name:         "Customer secrets",
-			Status:       "active",
-			Source:       "user_prompt",
-			DetectorType: "regex",
-			Pattern:      `customer_secret_[0-9]+`,
-			Category:     "customer_secret",
-			Severity:     "medium",
-			Action:       "record",
-			SampleMode:   "fingerprint_only",
-			Confidence:   0.77,
-			Priority:     1,
-		},
-	}, cfgTime()); err != nil {
+	if err := daemon.SaveSensitiveRuleCache(cfg.DataDir, []model.SensitiveRule{rule}, cfgTime()); err != nil {
 		t.Fatalf("SaveSensitiveRuleCache: %v", err)
 	}
 
@@ -583,7 +530,7 @@ func TestCodexHookRecordsNonBlockingSensitiveRule(t *testing.T) {
 	if len(response) != 0 {
 		t.Fatalf("record-only finding should allow prompt, got %#v", response)
 	}
-	if got := atomic.LoadInt32(&eventRequests); got != 0 {
+	if got := server.EventRequests.Load(); got != 0 {
 		t.Fatalf("event requests on prompt path = %d, want 0", got)
 	}
 	payload := readSingleQueuedEvent(t, cfg).Payload
@@ -624,32 +571,17 @@ func TestCodexHookAllowsUserPromptSubmitWithoutSensitiveData(t *testing.T) {
 }
 
 func TestCodexHookAllowsWarnPolicy(t *testing.T) {
-	tmp := t.TempDir()
-	home := filepath.Join(tmp, "home")
-	if err := os.MkdirAll(home, 0o700); err != nil {
-		t.Fatalf("mkdir home: %v", err)
-	}
-	t.Setenv("HOME", home)
-
-	cfg := daemon.NewDirectRuntimeConfig("http://127.0.0.1:1", "dtok_codex_hook_warn")
-	if err := daemon.SaveConfig("", cfg); err != nil {
-		t.Fatalf("SaveConfig: %v", err)
-	}
-	if err := daemon.SavePolicyCache(cfg.DataDir, []model.PolicyRule{
-		{
-			RuleID:      "rule_hook_warn",
-			Name:        "Warn echo",
-			Description: "warn on echo",
-			Status:      "active",
-			AgentType:   "codex",
-			MatchType:   "command_regex",
-			MatchValue:  ".*echo.*",
-			Action:      "warn",
-			RiskLevel:   "low",
-		},
-	}, cfgTime()); err != nil {
-		t.Fatalf("SavePolicyCache: %v", err)
-	}
+	configureCodexHookPolicy(t, "dtok_codex_hook_warn", model.PolicyRule{
+		RuleID:      "rule_hook_warn",
+		Name:        "Warn echo",
+		Description: "warn on echo",
+		Status:      "active",
+		AgentType:   "codex",
+		MatchType:   "command_regex",
+		MatchValue:  ".*echo.*",
+		Action:      "warn",
+		RiskLevel:   "low",
+	})
 
 	input := []byte(`{
 		"hook_event_name": "PreToolUse",
@@ -709,32 +641,17 @@ func TestCodexHookTreatsExecCommandAsShellCommand(t *testing.T) {
 }
 
 func TestCodexHookDoesNotApplyCommandRegexToNonBashTools(t *testing.T) {
-	tmp := t.TempDir()
-	home := filepath.Join(tmp, "home")
-	if err := os.MkdirAll(home, 0o700); err != nil {
-		t.Fatalf("mkdir home: %v", err)
-	}
-	t.Setenv("HOME", home)
-
-	cfg := daemon.NewDirectRuntimeConfig("http://127.0.0.1:1", "dtok_codex_hook_patch")
-	if err := daemon.SaveConfig("", cfg); err != nil {
-		t.Fatalf("SaveConfig: %v", err)
-	}
-	if err := daemon.SavePolicyCache(cfg.DataDir, []model.PolicyRule{
-		{
-			RuleID:      "rule_hook_block_ls",
-			Name:        "Block ls",
-			Description: "block any ls command",
-			Status:      "active",
-			AgentType:   "codex",
-			MatchType:   "command_regex",
-			MatchValue:  ".*ls.*",
-			Action:      "block",
-			RiskLevel:   "medium",
-		},
-	}, cfgTime()); err != nil {
-		t.Fatalf("SavePolicyCache: %v", err)
-	}
+	configureCodexHookPolicy(t, "dtok_codex_hook_patch", model.PolicyRule{
+		RuleID:      "rule_hook_block_ls",
+		Name:        "Block ls",
+		Description: "block any ls command",
+		Status:      "active",
+		AgentType:   "codex",
+		MatchType:   "command_regex",
+		MatchValue:  ".*ls.*",
+		Action:      "block",
+		RiskLevel:   "medium",
+	})
 
 	input := []byte(`{
 		"hook_event_name": "PreToolUse",

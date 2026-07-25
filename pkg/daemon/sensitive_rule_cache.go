@@ -1,10 +1,8 @@
 package daemon
 
 import (
-	"encoding/json"
 	"errors"
 	"os"
-	"path/filepath"
 	"time"
 
 	"github.com/gesta-run/gesta-agent/pkg/model"
@@ -18,51 +16,25 @@ type SensitiveRuleCache struct {
 }
 
 func SensitiveRuleCachePath(dataDir string) string {
-	if dataDir == "" {
-		dataDir = DefaultDataDir()
-	}
-	return filepath.Join(dataDir, sensitiveRuleCacheFile)
+	return ruleCachePath(dataDir, sensitiveRuleCacheFile)
 }
 
 func SaveSensitiveRuleCache(dataDir string, rules []model.SensitiveRule, syncedAt time.Time) error {
-	if syncedAt.IsZero() {
-		syncedAt = time.Now().UTC()
-	}
-	if rules == nil {
-		rules = []model.SensitiveRule{}
-	}
-	path := SensitiveRuleCachePath(dataDir)
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
-	data, err := json.MarshalIndent(SensitiveRuleCache{
-		SyncedAt: syncedAt.UTC(),
-		Rules:    rules,
-	}, "", "  ")
-	if err != nil {
-		return err
-	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
+	return saveRuleCache(SensitiveRuleCachePath(dataDir), SensitiveRuleCache{
+		SyncedAt: ruleCacheSyncedAt(syncedAt),
+		Rules:    nonNilRules(rules),
+	})
 }
 
 func LoadSensitiveRuleCache(dataDir string) (SensitiveRuleCache, error) {
-	data, err := os.ReadFile(SensitiveRuleCachePath(dataDir))
+	var cache SensitiveRuleCache
+	err := loadRuleCache(SensitiveRuleCachePath(dataDir), &cache)
 	if errors.Is(err, os.ErrNotExist) {
 		return SensitiveRuleCache{Rules: []model.SensitiveRule{}}, err
 	}
 	if err != nil {
 		return SensitiveRuleCache{}, err
 	}
-	var cache SensitiveRuleCache
-	if err := json.Unmarshal(data, &cache); err != nil {
-		return SensitiveRuleCache{}, err
-	}
-	if cache.Rules == nil {
-		cache.Rules = []model.SensitiveRule{}
-	}
+	cache.Rules = nonNilRules(cache.Rules)
 	return cache, nil
 }

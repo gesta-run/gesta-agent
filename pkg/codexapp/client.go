@@ -107,7 +107,7 @@ func resolveExecutable() (string, error) {
 			}
 		}
 	}
-	return "", errors.New("Codex executable was not found; set GESTA_CODEX_BIN")
+	return "", errors.New("codex executable was not found; set GESTA_CODEX_BIN")
 }
 
 func readThread(ctx context.Context, executable, threadID string) ([]Turn, error) {
@@ -170,7 +170,7 @@ func readThread(ctx context.Context, executable, threadID string) ([]Turn, error
 			continue
 		}
 		if response.Error != nil {
-			return nil, fmt.Errorf("Codex thread/read failed (%d): %s", response.Error.Code, response.Error.Message)
+			return nil, fmt.Errorf("codex thread/read failed (%d): %s", response.Error.Code, response.Error.Message)
 		}
 		var result threadReadResponse
 		if err := json.Unmarshal(response.Result, &result); err != nil {
@@ -182,11 +182,11 @@ func readThread(ctx context.Context, executable, threadID string) ([]Turn, error
 		return nil, fmt.Errorf("read Codex app-server response: %w", err)
 	}
 	if err := ctx.Err(); err != nil {
-		return nil, fmt.Errorf("Codex thread/read timed out: %w", err)
+		return nil, fmt.Errorf("codex thread/read timed out: %w", err)
 	}
 	detail := strings.TrimSpace(stderr.String())
 	if detail != "" {
-		return nil, fmt.Errorf("Codex app-server exited without a thread/read response: %s", detail)
+		return nil, fmt.Errorf("codex app-server exited without a thread/read response: %s", detail)
 	}
-	return nil, errors.New("Codex app-server exited without a thread/read response")
+	return nil, errors.New("codex app-server exited without a thread/read response")
 }

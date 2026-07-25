@@ -167,11 +167,6 @@ func isExecutable(path string) bool {
 	return info.Mode()&0o111 != 0
 }
 
-func evaluateGuardCommand(agentType string, args []string) policy.Evaluation {
-	cfg, shouldFetch := guardConfig()
-	return evaluateGuardCommandWithConfig(agentType, args, cfg, shouldFetch)
-}
-
 func evaluateGuardCommandWithConfig(agentType string, args []string, cfg daemon.Config, shouldFetch bool) policy.Evaluation {
 	if shouldFetch {
 		client := daemon.NewClient(cfg.EffectiveServerURL(), cfg.Token)
@@ -191,20 +186,10 @@ func evaluateGuardCommandWithConfig(agentType string, args []string, cfg daemon.
 	return policy.EvaluateCommand(agentType, args)
 }
 
-func recordGuardDecisionBestEffort(evaluation policy.Evaluation, executed bool, exitCode int) {
-	cfg, shouldFlush := guardConfig()
-	recordGuardDecisionBestEffortWithConfig(cfg, shouldFlush, evaluation, executed, exitCode)
-}
-
 func recordGuardDecisionBestEffortWithConfig(cfg daemon.Config, shouldFlush bool, evaluation policy.Evaluation, executed bool, exitCode int) {
 	if err := recordGuardDecisionWithConfig(cfg, shouldFlush, evaluation, executed, exitCode); err != nil {
 		fmt.Fprintf(os.Stderr, "gesta-agent guard: policy decision was not recorded: %v\n", err)
 	}
-}
-
-func recordGuardDecision(evaluation policy.Evaluation, executed bool, exitCode int) error {
-	cfg, shouldFlush := guardConfig()
-	return recordGuardDecisionWithConfig(cfg, shouldFlush, evaluation, executed, exitCode)
 }
 
 func recordGuardDecisionWithConfig(cfg daemon.Config, shouldFlush bool, evaluation policy.Evaluation, executed bool, exitCode int) error {

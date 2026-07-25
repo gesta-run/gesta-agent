@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gesta-run/gesta-agent/internal/atomicfile"
 	"github.com/gesta-run/gesta-agent/pkg/util"
 )
 
@@ -244,34 +245,8 @@ func readBoundedJSON(path string, target interface{}) error {
 }
 
 func atomicWriteJSON(path string, value interface{}) error {
-	data, err := json.MarshalIndent(value, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshal turn receipt: %w", err)
-	}
-	data = append(data, '\n')
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return fmt.Errorf("create turn receipt parent: %w", err)
-	}
-	tmp, err := os.CreateTemp(dir, ".turn-receipt-*.tmp")
-	if err != nil {
-		return fmt.Errorf("create temporary turn receipt: %w", err)
-	}
-	tmpPath := tmp.Name()
-	defer os.Remove(tmpPath)
-	if err := tmp.Chmod(0o600); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("set turn receipt permissions: %w", err)
-	}
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
+	if err := atomicfile.ReplaceJSON(path, value); err != nil {
 		return fmt.Errorf("write turn receipt: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("close turn receipt: %w", err)
-	}
-	if err := os.Rename(tmpPath, path); err != nil {
-		return fmt.Errorf("replace turn receipt: %w", err)
 	}
 	return nil
 }
