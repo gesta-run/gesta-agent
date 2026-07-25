@@ -148,7 +148,7 @@ func TestCodexHookMeasuresOnlyCompletedThreadItems(t *testing.T) {
 	if len(stopResponse) != 0 {
 		t.Fatalf("Stop response = %#v, want empty", stopResponse)
 	}
-	wantNotice := "Gesta active · Observed output: 1 code line, 2 doc words"
+	wantNotice := "Gesta governance · Observed output: 1 code line, 2 doc words"
 	nextPromptInput, err := json.Marshal(agentHookEvent{
 		HookEventName: "UserPromptSubmit",
 		Prompt:        "Continue",

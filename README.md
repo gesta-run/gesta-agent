@@ -95,10 +95,10 @@ its public `PostToolUse` boundary. Raw diffs and tool arguments are discarded
 locally; only counts and hashed correlation metadata are queued.
 
 At the end of a primary-agent turn, Codex and Claude Code prepare one concise
-`Gesta active` line when a keyword or regex Organization Context policy matched,
+`Gesta governance` line when a keyword or regex Organization Context rule matched,
 or measurable output was durably queued. Every-prompt context remains active but
-does not count toward the notice. The notice includes only the targeted policy
-match count and output summary, never policy names. `Stop` stores that line
+does not count toward the notice. The notice includes only the targeted context
+append count and output summary, never rule names. `Stop` stores that line
 locally without blocking or starting another model response. The next allowed
 prompt in the same session receives an internal instruction to place the line at
 the bottom of its normal response, then the pending notice is consumed. Turns

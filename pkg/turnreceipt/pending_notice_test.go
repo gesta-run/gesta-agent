@@ -16,7 +16,7 @@ func TestPendingNoticeIsSessionScopedAndConsumedOnce(t *testing.T) {
 	if err := store.SavePending(
 		"codex",
 		"raw-pending-session",
-		"Gesta active · Policies matched: 1",
+		"Gesta governance · Context append: 1",
 	); err != nil {
 		t.Fatalf("SavePending: %v", err)
 	}
@@ -34,7 +34,7 @@ func TestPendingNoticeIsSessionScopedAndConsumedOnce(t *testing.T) {
 	if err != nil || !found {
 		t.Fatalf("ConsumePending found = %v, err = %v", found, err)
 	}
-	if pending.Notice != "Gesta active · Policies matched: 1" {
+	if pending.Notice != "Gesta governance · Context append: 1" {
 		t.Fatalf("notice = %q", pending.Notice)
 	}
 	if pending.SchemaVersion != pendingSchemaVersion {
