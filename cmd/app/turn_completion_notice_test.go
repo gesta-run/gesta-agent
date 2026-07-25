@@ -16,7 +16,7 @@ import (
 	"github.com/gesta-run/gesta-agent/pkg/turnreceipt"
 )
 
-func TestFormatTurnCompletionNoticeCombinesPolicyCountAndOutput(t *testing.T) {
+func TestFormatTurnCompletionNoticeCombinesContextAppendAndOutput(t *testing.T) {
 	receipt := turnreceipt.Receipt{
 		PolicyMatchCount: 3,
 		Output: turnreceipt.OutputSummary{
@@ -28,19 +28,19 @@ func TestFormatTurnCompletionNoticeCombinesPolicyCountAndOutput(t *testing.T) {
 		},
 	}
 	got := formatTurnCompletionNotice(receipt)
-	want := "Gesta active · Policies matched: 3 · " +
+	want := "Gesta governance · Context append: 3 · " +
 		"Observed output: 1,280 code lines, 42 test lines, 310 doc words, +2 categories"
 	if got != want {
 		t.Fatalf("notice = %q, want %q", got, want)
 	}
 }
 
-func TestFormatTurnCompletionNoticeReportsPolicyCountOnly(t *testing.T) {
+func TestFormatTurnCompletionNoticeReportsContextAppendOnly(t *testing.T) {
 	receipt := turnreceipt.Receipt{
 		PolicyMatchCount: 2,
 	}
 	got := formatTurnCompletionNotice(receipt)
-	want := "Gesta active · Policies matched: 2"
+	want := "Gesta governance · Context append: 2"
 	if got != want {
 		t.Fatalf("notice = %q, want %q", got, want)
 	}
@@ -55,12 +55,12 @@ func TestFormatTurnCompletionNoticeIsSilentWithoutMaterialAction(t *testing.T) {
 	}
 }
 
-func TestFormatTurnCompletionNoticeReportsOutputWithoutPolicyMatch(t *testing.T) {
+func TestFormatTurnCompletionNoticeReportsOutputWithoutContextAppend(t *testing.T) {
 	receipt := turnreceipt.Receipt{
 		Output: turnreceipt.OutputSummary{DocWords: 23},
 	}
 	got := formatTurnCompletionNotice(receipt)
-	want := "Gesta active · Observed output: 23 doc words"
+	want := "Gesta governance · Observed output: 23 doc words"
 	if got != want {
 		t.Fatalf("notice = %q, want %q", got, want)
 	}
@@ -127,7 +127,7 @@ func TestClaudeStopQueuesOneShotNoticeForNextPrompt(t *testing.T) {
 		t.Fatalf("Stop response = %#v, want empty", stop)
 	}
 
-	wantNotice := "Gesta active · Policies matched: 1 · Observed output: 2 code lines"
+	wantNotice := "Gesta governance · Context append: 1 · Observed output: 2 code lines"
 	nextPrompt := runAgentHook(t, agentHookEvent{
 		HookEventName: "UserPromptSubmit",
 		Prompt:        "Continue with the next task",
@@ -277,7 +277,7 @@ func TestPendingNoticeMergesWithCurrentOrganizationContext(t *testing.T) {
 	if err := store.SavePending(
 		"claude_code",
 		"merge-session",
-		"Gesta active · Observed output: 4 code lines",
+		"Gesta governance · Observed output: 4 code lines",
 	); err != nil {
 		t.Fatalf("SavePending: %v", err)
 	}
@@ -289,7 +289,7 @@ func TestPendingNoticeMergesWithCurrentOrganizationContext(t *testing.T) {
 	}, "claude_code")
 	context := hookAdditionalContext(response)
 	if !strings.Contains(context, "Apply the current organization guidance.") ||
-		!strings.Contains(context, "Gesta active · Observed output: 4 code lines") ||
+		!strings.Contains(context, "Gesta governance · Observed output: 4 code lines") ||
 		!strings.Contains(context, "At the bottom of your response") {
 		t.Fatalf("merged additional context = %q", context)
 	}
@@ -315,7 +315,7 @@ func TestBlockedPromptDoesNotConsumePendingNotice(t *testing.T) {
 	if err := turnreceipt.NewStore(cfg.DataDir).SavePending(
 		"codex",
 		"blocked-notice-session",
-		"Gesta active · Policies matched: 1",
+		"Gesta governance · Context append: 1",
 	); err != nil {
 		t.Fatalf("SavePending: %v", err)
 	}
@@ -335,7 +335,7 @@ func TestBlockedPromptDoesNotConsumePendingNotice(t *testing.T) {
 	if err != nil || !found {
 		t.Fatalf("pending after blocked prompt found = %v, err = %v", found, err)
 	}
-	if pending.Notice != "Gesta active · Policies matched: 1" {
+	if pending.Notice != "Gesta governance · Context append: 1" {
 		t.Fatalf("pending notice = %q", pending.Notice)
 	}
 }

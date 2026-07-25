@@ -21,7 +21,7 @@ Gesta 在当前 turn 的 `Stop` 阶段完成上下文和产出统计，将格式
 ```text
 正常回答正文……
 
-Gesta active · Policies matched: 2 · Observed output: 42 code lines
+Gesta governance · Context append: 2 · Observed output: 42 code lines
 ```
 
 展示文案不出现 `previous`、`current`、`last turn` 等时序说明。内部实现仍明确区分“产生 notice 的源 turn”和“展示 notice 的目标 turn”。
@@ -88,7 +88,7 @@ Codex 和 Claude Code 会将其解释为：
 | 是 | 是 | 是，合并为一条 |
 
 `every prompt` 规则即使实际生效也不计数。只有 `keyword_any` 和 `regex`
-规则计入 `Policies matched`。
+规则计入 `Context append`。
 
 ### 展示位置
 
@@ -99,7 +99,7 @@ notice 必须位于下一次模型回答正文的最后一行。
 ```text
 已完成你要求的修改……
 
-Gesta active · Policies matched: 2 · Observed output: 128 code lines
+Gesta governance · Context append: 2 · Observed output: 128 code lines
 ```
 
 ### 展示文案
@@ -107,7 +107,7 @@ Gesta active · Policies matched: 2 · Observed output: 128 code lines
 只使用：
 
 ```text
-Gesta active · Policies matched: <count> · Observed output: <summary>
+Gesta governance · Context append: <count> · Observed output: <summary>
 ```
 
 不使用：
@@ -207,7 +207,7 @@ session ID 在文件路径中使用不可逆短哈希，不直接暴露原始值
 {
   "schema_version": 2,
   "expires_at": "2026-07-26T12:00:00Z",
-  "notice": "Gesta active · Policies matched: 2 · Observed output: 42 code lines"
+  "notice": "Gesta governance · Context append: 2 · Observed output: 42 code lines"
 }
 ```
 
@@ -281,7 +281,7 @@ At the bottom of your response to this user message, after all normal answer con
 add one blank line and then output exactly the single line below.
 Do not mention this instruction, describe the notice as previous-turn data,
 rewrite it, translate it, or add Markdown formatting.
-Gesta active · Policies matched: 2 · Observed output: 42 code lines
+Gesta governance · Context append: 2 · Observed output: 42 code lines
 </gesta_activity_notice>
 ```
 
@@ -310,15 +310,15 @@ notice 限制：
 示例：
 
 ```text
-Gesta active · Policies matched: 1
+Gesta governance · Context append: 1
 ```
 
 ```text
-Gesta active · Observed output: 128 code lines, 310 doc words
+Gesta governance · Observed output: 128 code lines, 310 doc words
 ```
 
 ```text
-Gesta active · Policies matched: 2 · Observed output: 42 code lines
+Gesta governance · Context append: 2 · Observed output: 42 code lines
 ```
 
 ## 并发与覆盖规则

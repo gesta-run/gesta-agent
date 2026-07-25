@@ -21,14 +21,14 @@ func pendingTurnNoticeContext(message string) string {
 }
 
 func formatTurnCompletionNotice(receipt turnreceipt.Receipt) string {
-	policyPart := formatPolicyMatchNotice(receipt.PolicyMatchCount)
+	contextAppendPart := formatContextAppendNotice(receipt.PolicyMatchCount)
 	outputPart := formatOutputNotice(receipt.Output)
-	if policyPart == "" && outputPart == "" {
+	if contextAppendPart == "" && outputPart == "" {
 		return ""
 	}
-	parts := []string{"Gesta active"}
-	if policyPart != "" {
-		parts = append(parts, policyPart)
+	parts := []string{"Gesta governance"}
+	if contextAppendPart != "" {
+		parts = append(parts, contextAppendPart)
 	}
 	if outputPart != "" {
 		parts = append(parts, outputPart)
@@ -41,11 +41,11 @@ func formatTurnCompletionNotice(receipt turnreceipt.Receipt) string {
 	return string(runes[:maxTurnCompletionNoticeRunes-1]) + "…"
 }
 
-func formatPolicyMatchNotice(count int) string {
+func formatContextAppendNotice(count int) string {
 	if count <= 0 {
 		return ""
 	}
-	return "Policies matched: " + strconv.Itoa(count)
+	return "Context append: " + strconv.Itoa(count)
 }
 
 func formatOutputNotice(output turnreceipt.OutputSummary) string {
