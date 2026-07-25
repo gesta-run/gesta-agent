@@ -23,6 +23,7 @@ func processOrganizationContext(cfg daemon.Config, event agentHookEvent, agentTy
 		return map[string]interface{}{}
 	}
 	recordContextRuleMatchBestEffort(cfg, agentType, source, cache.Version, result)
+	recordTurnPolicyMatchesBestEffort(cfg, event, agentType, result)
 	return map[string]interface{}{
 		"hookSpecificOutput": map[string]interface{}{
 			"hookEventName":     "UserPromptSubmit",

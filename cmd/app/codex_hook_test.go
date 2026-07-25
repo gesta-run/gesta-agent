@@ -125,6 +125,17 @@ func TestCodexHookMeasuresOnlyCompletedThreadItems(t *testing.T) {
 	}
 	t.Cleanup(func() { readCodexTurn = originalReadCodexTurn })
 
+	promptInput, err := json.Marshal(agentHookEvent{
+		HookEventName: "UserPromptSubmit",
+		Prompt:        "Update the release plan",
+		SessionID:     "session-meter-1",
+		TurnID:        "turn-meter-1",
+	})
+	if err != nil {
+		t.Fatalf("marshal UserPromptSubmit hook: %v", err)
+	}
+	processAgentHook(context.Background(), promptInput, "codex", "codex")
+
 	stopInput, err := json.Marshal(agentHookEvent{
 		HookEventName: "Stop",
 		SessionID:     "session-meter-1",
@@ -133,7 +144,29 @@ func TestCodexHookMeasuresOnlyCompletedThreadItems(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal Stop hook: %v", err)
 	}
-	processAgentHook(context.Background(), stopInput, "codex", "codex")
+	stopResponse := processAgentHook(context.Background(), stopInput, "codex", "codex")
+	if len(stopResponse) != 0 {
+		t.Fatalf("Stop response = %#v, want empty", stopResponse)
+	}
+	wantNotice := "Gesta active · Observed output: 1 code line, 2 doc words"
+	nextPromptInput, err := json.Marshal(agentHookEvent{
+		HookEventName: "UserPromptSubmit",
+		Prompt:        "Continue",
+		SessionID:     "session-meter-1",
+		TurnID:        "turn-meter-2",
+	})
+	if err != nil {
+		t.Fatalf("marshal next UserPromptSubmit hook: %v", err)
+	}
+	nextPromptResponse := processAgentHook(
+		context.Background(),
+		nextPromptInput,
+		"codex",
+		"codex",
+	)
+	if got := hookAdditionalContext(nextPromptResponse); got != pendingTurnNoticeContext(wantNotice) {
+		t.Fatalf("next prompt context = %q, want %q", got, pendingTurnNoticeContext(wantNotice))
+	}
 	events, err = daemon.NewQueue(cfg.DataDir).ReadAll()
 	if err != nil {
 		t.Fatalf("read after Stop hook: %v", err)
@@ -163,7 +196,7 @@ func TestGrossInkEventPreservesEfficiencyExclusionMetadata(t *testing.T) {
 		DeviceID:     "device-1",
 		DataDir:      t.TempDir(),
 	}
-	err := appendGrossMeasurements(cfg, grossObservation{
+	_, err := appendGrossMeasurementsWithSummary(cfg, grossObservation{
 		CallID:     "call-1",
 		SessionID:  "session-1",
 		TurnID:     "turn-1",
