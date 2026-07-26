@@ -287,21 +287,29 @@ func TestCodexToolCallEventsFromTranscriptKeepMetadataOnly(t *testing.T) {
 	}
 	first := events[0]
 	if first.EventType != "tool.call" || first.Payload["tool_type"] != "mcp" ||
-		first.Payload["mcp_server"] != "github" || first.Payload["mcp_tool"] != "delete_repo" {
+		first.Payload["mcp_server_id"] != "github" ||
+		first.Payload["mcp_server_name"] != "github" ||
+		first.Payload["mcp_tool"] != "delete_repo" {
 		t.Fatalf("unexpected MCP tool event: %+v", first)
 	}
 	if first.CreatedAt.Format(time.RFC3339) != "2026-06-12T00:01:00Z" {
 		t.Fatalf("created_at = %s", first.CreatedAt.Format(time.RFC3339))
 	}
 	second := events[1]
-	if second.Payload["tool_type"] != "mcp" || second.Payload["mcp_server"] != "anysearch" || second.Payload["mcp_tool"] != "search" {
+	if second.Payload["tool_type"] != "mcp" ||
+		second.Payload["mcp_server_id"] != "anysearch" ||
+		second.Payload["mcp_server_name"] != "anysearch" ||
+		second.Payload["mcp_tool"] != "search" {
 		t.Fatalf("unexpected MCP end event: %+v", second)
 	}
 	if second.CreatedAt.Format(time.RFC3339) != "2026-06-12T00:01:31Z" {
 		t.Fatalf("created_at = %s", second.CreatedAt.Format(time.RFC3339))
 	}
 	third := events[2]
-	if third.Payload["tool_type"] != "mcp" || third.Payload["mcp_server"] != "notion" || third.Payload["mcp_tool"] != "notion_search" {
+	if third.Payload["tool_type"] != "mcp" ||
+		third.Payload["mcp_server_id"] != "notion" ||
+		third.Payload["mcp_server_name"] != "notion" ||
+		third.Payload["mcp_tool"] != "notion_search" {
 		t.Fatalf("unexpected namespace MCP event: %+v", third)
 	}
 	fourth := events[3]
@@ -309,7 +317,10 @@ func TestCodexToolCallEventsFromTranscriptKeepMetadataOnly(t *testing.T) {
 		t.Fatalf("unexpected agent tool event: %+v", fourth)
 	}
 	for _, event := range events[4:] {
-		if event.Payload["tool_type"] != "agent_tool" || event.Payload["mcp_server"] != nil || event.Payload["mcp_tool"] != nil {
+		if event.Payload["tool_type"] != "agent_tool" ||
+			event.Payload["mcp_server_id"] != nil ||
+			event.Payload["mcp_server_name"] != nil ||
+			event.Payload["mcp_tool"] != nil {
 			t.Fatalf("codex app should be an agent tool, not MCP: %+v", event)
 		}
 	}
