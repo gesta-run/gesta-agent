@@ -4,6 +4,11 @@
 
 已确认并实现，创建于 2026-07-25。
 
+本设计的单行 notice 和跨 turn 状态机保持有效。本地可点击详情能力由
+[`local-activity-content-details.zh-CN.md`](./local-activity-content-details.zh-CN.md)
+扩展；该扩展增加的是 daemon loopback 只读页面，不恢复已否决的 Stop HTTP
+finalizer 方案。
+
 本文档取代以下方案作为推荐实现：
 
 - 使用阻塞式 `Stop` 触发第二次模型回答；
@@ -60,7 +65,8 @@ Codex 和 Claude Code 会将其解释为：
 - `every prompt` Context 正常注入，但不计入 notice。
 - 定向 policy 命中数量和产出合并为同一条 notice。
 - 每个 session 最多保留一条 pending notice。
-- 不引入 HTTP Server、固定端口、鉴权 token 或额外工具调用。
+- 基础 notice 不依赖 HTTP finalizer 或远程服务；可选详情由 daemon 的固定
+  loopback 只读页面承载。
 - 不污染 Organization Context 规则列表和匹配统计。
 - Codex 和 Claude Code 使用一致的产品语义。
 - 保持本地状态有界，支持多个并发 session。
@@ -136,6 +142,7 @@ Gesta governance · Context append: <count> · Observed output: <summary>
 - Codex `UserPromptSubmit` 处理；
 - Claude Code `UserPromptSubmit` 处理；
 - 本地 pending notice store；
+- 可选本地 activity detail store 和 daemon loopback 只读页面；
 - notice 格式化；
 - Hook 安装测试和行为测试；
 - README 与设计文档。
@@ -459,7 +466,7 @@ pkg/turnreceipt/
 
 - `cmd/app/turn_completion_notice.go`：Hook 流程编排；
 - `cmd/app/turn_completion_format.go`：notice 和模型协议格式；
-- `pkg/turnreceipt/pending_notice.go`：复用 turn receipt 的锁、TTL 和清理边界管理 pending 状态；
+- `pkg/turnreceipt/pending_notice.go`：复用 turn receipt 的锁、TTL 和清理边界管理结构化 pending activity；
 - `types.go`：持久化结构和 schema version。
 
 单个文件目标控制在 500 行以内，单个函数目标控制在 80 行以内。
@@ -562,8 +569,6 @@ Claude Code：
 
 以下机制应删除或不实现：
 
-- 本地 HTTP Server；
-- 固定 3333 端口；
 - token 或本地鉴权；
 - MCP finalizer；
 - 模型主动调用 curl；
@@ -581,10 +586,11 @@ Claude Code：
 
 最小实现只需要：
 
-1. Stop 将格式化字符串写入一个 session-scoped JSON 文件；
-2. 下一次允许的 UserPromptSubmit 读取并删除；
-3. 将字符串合并进 existing `additionalContext`；
-4. Stop 永远不为 notice block。
+1. Stop 将结构化 activity 写入一个 session-scoped JSON 文件；
+2. 下一次允许的 UserPromptSubmit 原子消费该文件；
+3. 存在定向 Context 且 loopback UI 健康时，创建不可变本地详情；
+4. 格式化 notice 并合并进 existing `additionalContext`；
+5. Stop 永远不为 notice block。
 
 不需要通用状态机框架。`Empty` 和 `Pending` 由文件是否存在自然表达。
 

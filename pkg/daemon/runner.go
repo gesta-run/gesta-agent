@@ -9,17 +9,21 @@ import (
 	"sort"
 	"time"
 
+	"github.com/gesta-run/gesta-agent/pkg/activitydetail"
 	"github.com/gesta-run/gesta-agent/pkg/model"
 )
 
 var ErrUpgradeApplied = errors.New("agent upgrade applied")
 
+const localActivityCleanupInterval = time.Hour
+
 type Runner struct {
-	cfg          Config
-	client       *Client
-	queue        Queue
-	logger       *slog.Logger
-	applyUpgrade func(model.HeartbeatResponse) error
+	cfg                        Config
+	client                     *Client
+	queue                      Queue
+	logger                     *slog.Logger
+	applyUpgrade               func(model.HeartbeatResponse) error
+	nextLocalActivityCleanupAt time.Time
 }
 
 func NewRunner(cfg Config) (*Runner, error) {
@@ -40,6 +44,7 @@ func NewRunner(cfg Config) (*Runner, error) {
 func (r *Runner) RunOnce(ctx context.Context) error {
 	startedAt := time.Now()
 	r.logCollectionStarted()
+	r.cleanupLocalActivityDetails(startedAt)
 	if err := r.SyncRules(); err != nil {
 		r.logger.Warn("rule sync failed", "error", err)
 	}
@@ -52,6 +57,16 @@ func (r *Runner) RunOnce(ctx context.Context) error {
 	}
 	r.logger.Info("agent collection finished", "elapsed_ms", time.Since(startedAt).Milliseconds(), "queue_size", r.queue.Size())
 	return nil
+}
+
+func (r *Runner) cleanupLocalActivityDetails(now time.Time) {
+	if now.Before(r.nextLocalActivityCleanupAt) {
+		return
+	}
+	r.nextLocalActivityCleanupAt = now.Add(localActivityCleanupInterval)
+	if err := activitydetail.NewStore(r.cfg.DataDir).Cleanup(); err != nil {
+		r.logger.Warn("local activity detail cleanup failed", "error", err)
+	}
 }
 
 func (r *Runner) logCollectionStarted() {

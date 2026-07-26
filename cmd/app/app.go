@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 	"syscall"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/gesta-run/gesta-agent/cmd/app/options"
 	"github.com/gesta-run/gesta-agent/pkg/daemon"
+	"github.com/gesta-run/gesta-agent/pkg/localactivity"
 	"github.com/gesta-run/gesta-agent/pkg/model"
 )
 
@@ -73,6 +75,18 @@ func run(ctx context.Context, args []string) error {
 	runner, err := daemon.NewRunner(cfg)
 	if err != nil {
 		return err
+	}
+	localActivityServer, localActivityErr := localactivity.Start(cfg.DataDir, slog.Default())
+	if localActivityErr != nil {
+		slog.Warn("local activity server unavailable", "error", localActivityErr)
+	} else {
+		defer func() {
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			if shutdownErr := localActivityServer.Close(shutdownCtx); shutdownErr != nil {
+				slog.Warn("local activity server shutdown failed", "error", shutdownErr)
+			}
+		}()
 	}
 	if err := runner.RunLoop(ctx, opts.Interval); errors.Is(err, daemon.ErrUpgradeApplied) {
 		return reexecAgent()

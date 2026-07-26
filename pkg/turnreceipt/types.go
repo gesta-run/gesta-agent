@@ -7,13 +7,14 @@ import (
 )
 
 const (
-	schemaVersion           = 1
-	pendingSchemaVersion    = 2
-	maxPolicyMatches        = 10
+	schemaVersion           = 3
+	pendingSchemaVersion    = 5
+	maxContextMatches       = 10
+	maxContextRuleIDBytes   = 128
+	maxContextRuleNameBytes = 160
 	maxOutputFragments      = 256
 	maxReceiptBytes         = 64 * 1024
-	maxPendingNoticeBytes   = 1024
-	maxPendingRecordBytes   = 1024
+	maxPendingRecordBytes   = 64 * 1024
 	maxCleanupVisits        = 512
 	maxCleanupRemovals      = 128
 	receiptTTL              = 24 * time.Hour
@@ -49,16 +50,25 @@ func (s *OutputSummary) Add(other OutputSummary) {
 }
 
 type Receipt struct {
-	SchemaVersion    int           `json:"schema_version"`
-	ExpiresAt        time.Time     `json:"expires_at"`
-	PolicyMatchCount int           `json:"policy_match_count,omitempty"`
-	Output           OutputSummary `json:"-"`
+	SchemaVersion  int                `json:"schema_version"`
+	ExpiresAt      time.Time          `json:"expires_at"`
+	ContextMatches []ContextRuleMatch `json:"context_matches,omitempty"`
+	Output         OutputSummary      `json:"-"`
+}
+
+type ContextRuleMatch struct {
+	RuleID    string `json:"rule_id"`
+	Name      string `json:"name"`
+	MatchType string `json:"match_type"`
+	Priority  int    `json:"priority"`
+	Content   string `json:"content"`
 }
 
 type PendingNotice struct {
-	SchemaVersion int       `json:"schema_version"`
-	ExpiresAt     time.Time `json:"expires_at"`
-	Notice        string    `json:"notice"`
+	SchemaVersion  int                `json:"schema_version"`
+	ExpiresAt      time.Time          `json:"expires_at"`
+	ContextMatches []ContextRuleMatch `json:"context_matches,omitempty"`
+	Output         OutputSummary      `json:"output,omitempty"`
 }
 
 type outputFragment struct {
