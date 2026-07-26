@@ -146,8 +146,15 @@ func codexToolCallEventsFromTranscript(cfg Config, transcript map[string]interfa
 			tool = ""
 		}
 		if server != "" {
+			serverID, serverName := mcpServerIdentity(server)
+			if serverID == "" {
+				continue
+			}
 			payload["tool_type"] = "mcp"
-			payload["mcp_server"] = server
+			payload["mcp_server_id"] = serverID
+			if serverName != "" {
+				payload["mcp_server_name"] = serverName
+			}
 			payload["mcp_tool"] = tool
 		}
 		event := baseEvent(cfg, "tool.call", "codex", "codex", payload)

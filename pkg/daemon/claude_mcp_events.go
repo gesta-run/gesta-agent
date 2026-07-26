@@ -20,26 +20,29 @@ func claudeMCPToolCallEvents(cfg Config, session claudeSessionUsage) []model.Eve
 		if !ok {
 			continue
 		}
-		server := normalizeMCPServerName(call.MCPServer)
+		serverID, serverName := mcpServerIdentity(call.MCPServer)
 		tool := strings.TrimSpace(call.MCPTool)
 		name := strings.TrimSpace(call.Name)
-		if server == "" || tool == "" {
+		if serverID == "" || tool == "" {
 			continue
 		}
 		if name == "" {
-			name = "mcp__" + server + "__" + tool
+			name = "mcp__" + serverID + "__" + tool
 		}
 		payload := map[string]interface{}{
 			"agent_type":           claudeCodeAgentType,
 			"metadata_only":        true,
 			"tool_name":            name,
 			"tool_type":            "mcp",
-			"mcp_server":           server,
+			"mcp_server_id":        serverID,
 			"mcp_tool":             tool,
 			"session_id":           sessionID,
 			"session_id_hash":      sessionID,
 			"session_id_is_hashed": true,
 			"observed_at":          observedAt.Format(time.RFC3339Nano),
+		}
+		if serverName != "" {
+			payload["mcp_server_name"] = serverName
 		}
 		if callID := strings.TrimSpace(call.CallID); callID != "" {
 			payload["call_id_hash"] = util.ShortHash(callID)

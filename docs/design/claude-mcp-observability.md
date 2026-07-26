@@ -25,8 +25,8 @@ neither reliable Claude Code MCP inventory nor actual Claude Code MCP calls.
 - Report configured Claude Code MCP server names without starting or
   health-checking MCP servers.
 - Report actual Claude Code MCP tool calls from transcripts.
-- Reuse the existing `MCPInventoryStatus` heartbeat field and `tool.call` event
-  contract so the current control plane and console require no schema change.
+- Reuse the existing `MCPInventoryStatus` heartbeat field and emit the
+  identity-aware `tool.call` contract consumed by the control plane.
 - Upload metadata only. Never upload MCP configuration values, environment
   variables, commands, URLs, headers, tool inputs, tool results, or transcript
   text as part of MCP telemetry.
@@ -39,7 +39,7 @@ neither reliable Claude Code MCP inventory nor actual Claude Code MCP calls.
 - Do not search for, open, or parse project `.mcp.json` files.
 - Do not infer MCP inventory by walking project directories.
 - Do not test MCP connectivity or report MCP health.
-- Do not change the control-plane schema or API.
+- Do not add Claude-specific control-plane storage or API behavior.
 - Do not add a general transcript ingestion framework in this change.
 
 ## Proposed design
@@ -106,9 +106,9 @@ identity before events are built.
 No second transcript read is introduced. Usage, session text, and MCP metadata
 are fanned out from the same parsed session objects.
 
-### 3. Existing wire contract and idempotency
+### 3. Identity-aware wire contract and idempotency
 
-For each observed MCP call, emit the existing event shape:
+For each observed MCP call, emit:
 
 ```text
 event_type: tool.call
@@ -118,7 +118,8 @@ payload:
   metadata_only: true
   tool_type: mcp
   tool_name: mcp__server__tool
-  mcp_server: server
+  mcp_server_id: normalized server namespace
+  mcp_server_name: trusted configured name, omitted for UUID-shaped IDs
   mcp_tool: tool
   session_id: hashed session ID
   session_id_hash: hashed session ID
@@ -194,10 +195,11 @@ configuration secrets, inputs, results, and local paths are absent.
 Backward and forward compatibility with existing agent versions is explicitly
 not required. No compatibility shim or data migration will be added.
 
-The existing heartbeat inventory and `tool.call` contracts already express the
-required data, so changing the control-plane API would add work without
-improving the result. The implementation therefore keeps the current wire shape
-as the simplest design, not as a compatibility guarantee.
+The heartbeat inventory remains unchanged. The `tool.call` payload intentionally
+replaces `mcp_server` with a required `mcp_server_id` and optional
+`mcp_server_name`. This is a coordinated Agent, Control, and Console upgrade.
+Old queued events remain generic session events but do not repopulate MCP
+analytics after its planned reset.
 
 ## Performance and limits
 

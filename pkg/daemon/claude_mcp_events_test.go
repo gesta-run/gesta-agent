@@ -110,7 +110,8 @@ func TestClaudeMCPToolCallEventsAreMetadataOnlyAndDeterministic(t *testing.T) {
 		t.Fatalf("event envelope = %#v", event)
 	}
 	if event.Payload["tool_type"] != "mcp" ||
-		event.Payload["mcp_server"] != "github" ||
+		event.Payload["mcp_server_id"] != "github" ||
+		event.Payload["mcp_server_name"] != "github" ||
 		event.Payload["mcp_tool"] != "search_repositories" {
 		t.Fatalf("event payload = %#v", event.Payload)
 	}
@@ -152,6 +153,35 @@ func TestClaudeMCPToolCallEventsAreMetadataOnlyAndDeterministic(t *testing.T) {
 	}
 }
 
+func TestClaudeMCPToolCallEventsKeepOpaqueServerIDOutOfDisplayName(t *testing.T) {
+	const opaqueID = "03acf4c5-efa1-4ae6-9653-f1eda698c57c"
+	cfg := NewDirectRuntimeConfig("http://127.0.0.1:1", "dtok_claude_mcp")
+	session := claudeSessionUsage{
+		SessionID: "session",
+		MCPToolCalls: []claudeTranscriptToolCall{{
+			Name:      "mcp__" + opaqueID + "__save_issue",
+			CallID:    "toolu_opaque",
+			Timestamp: "2026-07-24T08:01:00Z",
+			MCPServer: opaqueID,
+			MCPTool:   "save_issue",
+		}},
+	}
+	events := claudeMCPToolCallEvents(cfg, session)
+	if len(events) != 1 {
+		t.Fatalf("events = %#v, want one", events)
+	}
+	payload := events[0].Payload
+	if payload["mcp_server_id"] != opaqueID {
+		t.Fatalf("server ID = %#v, want %q", payload["mcp_server_id"], opaqueID)
+	}
+	if _, exists := payload["mcp_server_name"]; exists {
+		t.Fatalf("opaque server ID leaked into display name: %#v", payload)
+	}
+	if _, exists := payload["mcp_server"]; exists {
+		t.Fatalf("legacy server field exists: %#v", payload)
+	}
+}
+
 func TestClaudeMCPEventsRespectInitialBaselineCutoff(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -189,7 +219,7 @@ func TestClaudeMCPEventsRespectInitialBaselineCutoff(t *testing.T) {
 		t.Fatalf("post-baseline cycle should emit only the new call: %#v", second)
 	}
 	for _, event := range second {
-		if event.EventType == "tool.call" && event.Payload["mcp_server"] != "notion" {
+		if event.EventType == "tool.call" && event.Payload["mcp_server_id"] != "notion" {
 			t.Fatalf("historical call escaped cutoff: %#v", event)
 		}
 	}
