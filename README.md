@@ -98,14 +98,24 @@ At the end of a primary-agent turn, Codex and Claude Code prepare one concise
 `Gesta governance` line when a keyword or regex Organization Context rule matched,
 or measurable output was durably queued. Every-prompt context remains active but
 does not count toward the notice. The notice includes only the targeted context
-append count and output summary, never rule names. `Stop` stores that line
-locally without blocking or starting another model response. The next allowed
-prompt in the same session receives an internal instruction to place the line at
-the bottom of its normal response, then the pending notice is consumed. Turns
+append count and output summary, never rule names. `Stop` stores bounded
+structured activity locally without blocking or starting another
+model response. The next allowed prompt in the same session consumes that state,
+creates a local detail only when the loopback UI is healthy, and receives an
+internal instruction to place the formatted line at the bottom of its normal
+response. Turns
 with neither a targeted match nor output remain silent. Blocked prompts do not
 consume pending notices. Local turn state contains only hashed identities,
-aggregate counts, and at most one pending notice per agent and session; all
-expire after 24 hours.
+bounded targeted-rule snapshots, aggregate counts, and at most one pending notice
+per agent and session; all expire after 24 hours. When targeted context matched
+and the daemon's loopback activity UI is available at notice consumption time,
+the notice includes a `Details` link to
+`127.0.0.1:3333`. The branded, server-rendered page shows rule names, match
+types, priorities, the exact targeted context appended for that turn, and
+aggregate output. It never stores or renders prompt text, keywords, regular
+expressions, file paths, or file contents. Context snapshots stay on the local
+machine and are never added to the Control event payload. The detail store is
+capped at 256 records with a 24-hour TTL.
 
 ## Checks
 

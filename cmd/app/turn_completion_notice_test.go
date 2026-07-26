@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gesta-run/gesta-agent/pkg/activitydetail"
 	"github.com/gesta-run/gesta-agent/pkg/codexapp"
 	"github.com/gesta-run/gesta-agent/pkg/daemon"
 	"github.com/gesta-run/gesta-agent/pkg/model"
@@ -18,7 +19,7 @@ import (
 
 func TestFormatTurnCompletionNoticeCombinesContextAppendAndOutput(t *testing.T) {
 	receipt := turnreceipt.Receipt{
-		PolicyMatchCount: 3,
+		ContextMatches: testReceiptContextMatches(3),
 		Output: turnreceipt.OutputSummary{
 			CodeLines:   1280,
 			TestLines:   42,
@@ -27,7 +28,7 @@ func TestFormatTurnCompletionNoticeCombinesContextAppendAndOutput(t *testing.T) 
 			OtherLines:  2,
 		},
 	}
-	got := formatTurnCompletionNotice(receipt)
+	got := formatTurnCompletionNoticeWithDetails(receipt, "")
 	want := "Gesta governance · Context append: 3 · " +
 		"Observed output: 1,280 code lines, 42 test lines, 310 doc words, +2 categories"
 	if got != want {
@@ -37,9 +38,9 @@ func TestFormatTurnCompletionNoticeCombinesContextAppendAndOutput(t *testing.T) 
 
 func TestFormatTurnCompletionNoticeReportsContextAppendOnly(t *testing.T) {
 	receipt := turnreceipt.Receipt{
-		PolicyMatchCount: 2,
+		ContextMatches: testReceiptContextMatches(2),
 	}
-	got := formatTurnCompletionNotice(receipt)
+	got := formatTurnCompletionNoticeWithDetails(receipt, "")
 	want := "Gesta governance · Context append: 2"
 	if got != want {
 		t.Fatalf("notice = %q, want %q", got, want)
@@ -49,8 +50,41 @@ func TestFormatTurnCompletionNoticeReportsContextAppendOnly(t *testing.T) {
 	}
 }
 
+func TestFormatTurnCompletionNoticeAddsDetailsOnlyForContextMatches(t *testing.T) {
+	detailURL := "http://127.0.0.1:3333/activity/activity_0123456789abcdef0123456789abcdef"
+	withContext := formatTurnCompletionNoticeWithDetails(turnreceipt.Receipt{
+		ContextMatches: testReceiptContextMatches(1),
+		Output:         turnreceipt.OutputSummary{CodeLines: 2},
+	}, detailURL)
+	want := "Gesta governance · Context append: 1 · Observed output: 2 code lines · " +
+		"[Details](" + detailURL + ")"
+	if withContext != want {
+		t.Fatalf("notice = %q, want %q", withContext, want)
+	}
+	outputOnly := formatTurnCompletionNoticeWithDetails(turnreceipt.Receipt{
+		Output: turnreceipt.OutputSummary{CodeLines: 2},
+	}, detailURL)
+	if strings.Contains(outputOnly, "Details") {
+		t.Fatalf("output-only notice contains Details: %q", outputOnly)
+	}
+}
+
+func testReceiptContextMatches(count int) []turnreceipt.ContextRuleMatch {
+	matches := make([]turnreceipt.ContextRuleMatch, 0, count)
+	for index := 0; index < count; index++ {
+		matches = append(matches, turnreceipt.ContextRuleMatch{
+			RuleID:    "rule-" + string(rune('a'+index)),
+			Name:      "Rule",
+			MatchType: "keyword_any",
+			Priority:  100,
+			Content:   "Follow the organization rule.",
+		})
+	}
+	return matches
+}
+
 func TestFormatTurnCompletionNoticeIsSilentWithoutMaterialAction(t *testing.T) {
-	if got := formatTurnCompletionNotice(turnreceipt.Receipt{}); got != "" {
+	if got := formatTurnCompletionNoticeWithDetails(turnreceipt.Receipt{}, ""); got != "" {
 		t.Fatalf("notice = %q, want empty", got)
 	}
 }
@@ -59,7 +93,7 @@ func TestFormatTurnCompletionNoticeReportsOutputWithoutContextAppend(t *testing.
 	receipt := turnreceipt.Receipt{
 		Output: turnreceipt.OutputSummary{DocWords: 23},
 	}
-	got := formatTurnCompletionNotice(receipt)
+	got := formatTurnCompletionNoticeWithDetails(receipt, "")
 	want := "Gesta governance · Observed output: 23 doc words"
 	if got != want {
 		t.Fatalf("notice = %q, want %q", got, want)
@@ -67,6 +101,7 @@ func TestFormatTurnCompletionNoticeReportsOutputWithoutContextAppend(t *testing.
 }
 
 func TestClaudeStopQueuesOneShotNoticeForNextPrompt(t *testing.T) {
+	stubLocalActivityHealth(t, false)
 	home := filepath.Join(t.TempDir(), "home")
 	if err := os.MkdirAll(home, 0o700); err != nil {
 		t.Fatalf("mkdir home: %v", err)
@@ -138,6 +173,9 @@ func TestClaudeStopQueuesOneShotNoticeForNextPrompt(t *testing.T) {
 		!strings.Contains(gotContext, pendingTurnNoticeContext(wantNotice)) {
 		t.Fatalf("next prompt context = %q", gotContext)
 	}
+	if _, err := os.Stat(filepath.Join(cfg.DataDir, "activity-details")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("unhealthy local UI created activity details: %v", err)
+	}
 
 	thirdPrompt := runAgentHook(t, agentHookEvent{
 		HookEventName: "UserPromptSubmit",
@@ -146,6 +184,77 @@ func TestClaudeStopQueuesOneShotNoticeForNextPrompt(t *testing.T) {
 	}, "claude_code")
 	if strings.Contains(hookAdditionalContext(thirdPrompt), "gesta_activity_notice") {
 		t.Fatalf("third prompt repeated pending notice: %#v", thirdPrompt)
+	}
+}
+
+func TestClaudeStopCreatesLinkedLocalActivityDetailWhenUIIsHealthy(t *testing.T) {
+	stubLocalActivityHealth(t, true)
+	home := filepath.Join(t.TempDir(), "home")
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		t.Fatalf("mkdir home: %v", err)
+	}
+	t.Setenv("HOME", home)
+	cfg := daemon.NewDirectRuntimeConfig("http://127.0.0.1:1", "dtok_claude_linked_notice")
+	if err := daemon.SaveConfig("", cfg); err != nil {
+		t.Fatalf("SaveConfig: %v", err)
+	}
+	if err := daemon.SaveSensitiveRuleCache(cfg.DataDir, []model.SensitiveRule{}, time.Now()); err != nil {
+		t.Fatalf("SaveSensitiveRuleCache: %v", err)
+	}
+	if err := daemon.SaveContextRuleCache(cfg.DataDir, model.ContextRuleBundle{
+		Version: "bundle-linked-notice",
+		Rules: []model.ContextRule{{
+			RuleID: "rule-linked", Name: "Linked Rule",
+			Status: "active", MatchType: "regex", Pattern: "review",
+			AgentType: "claude_code", Priority: 80, ContextContent: "Review carefully.",
+		}},
+	}, time.Now()); err != nil {
+		t.Fatalf("SaveContextRuleCache: %v", err)
+	}
+	runAgentHook(t, agentHookEvent{
+		HookEventName: "UserPromptSubmit",
+		Prompt:        "review this",
+		SessionID:     "claude-linked-session",
+	}, "claude_code")
+	runAgentHook(t, agentHookEvent{
+		HookEventName: "Stop",
+		SessionID:     "claude-linked-session",
+	}, "claude_code")
+	if _, err := os.Stat(filepath.Join(cfg.DataDir, "activity-details")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("Stop created activity detail before notice consumption: %v", err)
+	}
+	if err := daemon.SaveContextRuleCache(cfg.DataDir, model.ContextRuleBundle{
+		Version: "bundle-linked-notice-updated",
+		Rules: []model.ContextRule{{
+			RuleID: "rule-linked", Name: "Linked Rule",
+			Status: "active", MatchType: "regex", Pattern: "never-match",
+			AgentType: "claude_code", Priority: 80, ContextContent: "Updated guidance.",
+		}},
+	}, time.Now()); err != nil {
+		t.Fatalf("Save updated context cache: %v", err)
+	}
+
+	nextPrompt := runAgentHook(t, agentHookEvent{
+		HookEventName: "UserPromptSubmit",
+		Prompt:        "continue",
+		SessionID:     "claude-linked-session",
+	}, "claude_code")
+	noticeContext := hookAdditionalContext(nextPrompt)
+	const prefix = "[Details](http://127.0.0.1:3333/activity/"
+	index := strings.Index(noticeContext, prefix)
+	if index < 0 {
+		t.Fatalf("linked notice context = %q", noticeContext)
+	}
+	activityID := strings.SplitN(noticeContext[index+len(prefix):], ")", 2)[0]
+	detail, err := activitydetail.NewStore(cfg.DataDir).Get(activityID)
+	if err != nil {
+		t.Fatalf("Get activity detail: %v", err)
+	}
+	if len(detail.ContextMatches) != 1 ||
+		detail.ContextMatches[0].Name != "Linked Rule" ||
+		detail.ContextMatches[0].MatchType != "regex" ||
+		detail.ContextMatches[0].Content != "Review carefully." {
+		t.Fatalf("activity detail = %#v", detail)
 	}
 }
 
@@ -277,7 +386,7 @@ func TestPendingNoticeMergesWithCurrentOrganizationContext(t *testing.T) {
 	if err := store.SavePending(
 		"claude_code",
 		"merge-session",
-		"Gesta governance · Observed output: 4 code lines",
+		turnreceipt.Receipt{Output: turnreceipt.OutputSummary{CodeLines: 4}},
 	); err != nil {
 		t.Fatalf("SavePending: %v", err)
 	}
@@ -315,7 +424,7 @@ func TestBlockedPromptDoesNotConsumePendingNotice(t *testing.T) {
 	if err := turnreceipt.NewStore(cfg.DataDir).SavePending(
 		"codex",
 		"blocked-notice-session",
-		"Gesta governance · Context append: 1",
+		turnreceipt.Receipt{ContextMatches: testReceiptContextMatches(1)},
 	); err != nil {
 		t.Fatalf("SavePending: %v", err)
 	}
@@ -335,8 +444,8 @@ func TestBlockedPromptDoesNotConsumePendingNotice(t *testing.T) {
 	if err != nil || !found {
 		t.Fatalf("pending after blocked prompt found = %v, err = %v", found, err)
 	}
-	if pending.Notice != "Gesta governance · Context append: 1" {
-		t.Fatalf("pending notice = %q", pending.Notice)
+	if len(pending.ContextMatches) != 1 {
+		t.Fatalf("pending context matches = %#v", pending.ContextMatches)
 	}
 }
 
@@ -413,4 +522,11 @@ func hookAdditionalContext(response map[string]interface{}) string {
 	output, _ := response["hookSpecificOutput"].(map[string]interface{})
 	context, _ := output["additionalContext"].(string)
 	return context
+}
+
+func stubLocalActivityHealth(t *testing.T, healthy bool) {
+	t.Helper()
+	original := localActivityUIHealthy
+	localActivityUIHealthy = func(context.Context) bool { return healthy }
+	t.Cleanup(func() { localActivityUIHealthy = original })
 }

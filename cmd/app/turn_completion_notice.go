@@ -6,10 +6,14 @@ import (
 	"os"
 	"strings"
 
+	"github.com/gesta-run/gesta-agent/pkg/activitydetail"
 	"github.com/gesta-run/gesta-agent/pkg/contextmatch"
 	"github.com/gesta-run/gesta-agent/pkg/daemon"
+	"github.com/gesta-run/gesta-agent/pkg/localactivity"
 	"github.com/gesta-run/gesta-agent/pkg/turnreceipt"
 )
+
+var localActivityUIHealthy = localactivity.Healthy
 
 func beginTurnReceiptBestEffort(cfg daemon.Config, event agentHookEvent, agentType string) {
 	sessionID, turnID := turnReceiptIdentity(event)
@@ -18,29 +22,36 @@ func beginTurnReceiptBestEffort(cfg daemon.Config, event agentHookEvent, agentTy
 	}
 }
 
-func recordTurnPolicyMatchesBestEffort(
+func recordTurnContextMatchesBestEffort(
 	cfg daemon.Config,
 	event agentHookEvent,
 	agentType string,
 	result contextmatch.Result,
 ) {
-	count := 0
+	matches := make([]turnreceipt.ContextRuleMatch, 0, len(result.Rules))
 	for _, rule := range result.Rules {
-		if !strings.EqualFold(strings.TrimSpace(rule.MatchType), "always") {
-			count++
+		if strings.EqualFold(strings.TrimSpace(rule.MatchType), "always") {
+			continue
 		}
+		matches = append(matches, turnreceipt.ContextRuleMatch{
+			RuleID:    rule.RuleID,
+			Name:      rule.Name,
+			MatchType: rule.MatchType,
+			Priority:  rule.Priority,
+			Content:   strings.TrimSpace(rule.ContextContent),
+		})
 	}
-	if count == 0 {
+	if len(matches) == 0 {
 		return
 	}
 	sessionID, turnID := turnReceiptIdentity(event)
-	if err := turnreceipt.NewStore(cfg.DataDir).RecordPolicyMatches(
+	if err := turnreceipt.NewStore(cfg.DataDir).RecordContextMatches(
 		agentType,
 		sessionID,
 		turnID,
-		count,
+		matches,
 	); err != nil {
-		fmt.Fprintf(os.Stderr, "gesta-agent hook: policy match receipt was not recorded: %v\n", err)
+		fmt.Fprintf(os.Stderr, "gesta-agent hook: context match receipt was not recorded: %v\n", err)
 	}
 }
 
@@ -66,6 +77,9 @@ func cleanupTurnReceiptsBestEffort(cfg daemon.Config) {
 	if err := turnreceipt.NewStore(cfg.DataDir).CleanupExpired(); err != nil {
 		fmt.Fprintf(os.Stderr, "gesta-agent hook: expired turn receipts were not cleaned: %v\n", err)
 	}
+	if err := activitydetail.NewStore(cfg.DataDir).Cleanup(); err != nil {
+		fmt.Fprintf(os.Stderr, "gesta-agent hook: expired activity details were not cleaned: %v\n", err)
+	}
 }
 
 func processTurnStop(
@@ -89,14 +103,10 @@ func processTurnStop(
 		return map[string]interface{}{}
 	}
 	receipt.Output.Add(output)
-	message := formatTurnCompletionNotice(receipt)
-	if message == "" {
-		return map[string]interface{}{}
-	}
 	if err := turnreceipt.NewStore(cfg.DataDir).SavePending(
 		agentType,
 		sessionID,
-		message,
+		receipt,
 	); err != nil {
 		fmt.Fprintf(os.Stderr, "gesta-agent hook: pending turn notice was not saved: %v\n", err)
 	}
@@ -104,6 +114,7 @@ func processTurnStop(
 }
 
 func injectPendingTurnNoticeBestEffort(
+	ctx context.Context,
 	cfg daemon.Config,
 	event agentHookEvent,
 	agentType string,
@@ -118,7 +129,28 @@ func injectPendingTurnNoticeBestEffort(
 	if !found {
 		return response
 	}
-	return mergeUserPromptAdditionalContext(response, pendingTurnNoticeContext(pending.Notice))
+	receipt := turnreceipt.Receipt{
+		ContextMatches: pending.ContextMatches,
+		Output:         pending.Output,
+	}
+	detailURL := ""
+	if len(receipt.ContextMatches) > 0 && localActivityUIHealthy(ctx) {
+		detail, detailErr := activitydetail.NewStore(cfg.DataDir).Create(
+			agentType,
+			receipt.ContextMatches,
+			receipt.Output,
+		)
+		if detailErr != nil {
+			fmt.Fprintf(os.Stderr, "gesta-agent hook: local activity detail was not saved: %v\n", detailErr)
+		} else {
+			detailURL = localactivity.ActivityURL(detail.ActivityID)
+		}
+	}
+	message := formatTurnCompletionNoticeWithDetails(receipt, detailURL)
+	if message == "" {
+		return response
+	}
+	return mergeUserPromptAdditionalContext(response, pendingTurnNoticeContext(message))
 }
 
 func mergeUserPromptAdditionalContext(

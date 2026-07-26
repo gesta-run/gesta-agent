@@ -105,7 +105,7 @@ func processUserPromptSubmit(ctx context.Context, event agentHookEvent, agentTyp
 		}
 	}
 	response := processOrganizationContext(cfg, event, agentType, source)
-	return injectPendingTurnNoticeBestEffort(cfg, event, agentType, response)
+	return injectPendingTurnNoticeBestEffort(ctx, cfg, event, agentType, response)
 }
 
 func processPreToolUse(ctx context.Context, event agentHookEvent, agentType, source string) map[string]interface{} {

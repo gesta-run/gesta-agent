@@ -8,20 +8,20 @@ import (
 	"github.com/gesta-run/gesta-agent/pkg/turnreceipt"
 )
 
-const maxTurnCompletionNoticeRunes = 180
+const maxTurnCompletionNoticeRunes = 320
 
 func pendingTurnNoticeContext(message string) string {
 	return "<gesta_activity_notice>\n" +
 		"At the bottom of your response to this user message, after all normal answer content, " +
 		"add one blank line and then output exactly the single line below.\n" +
 		"Do not mention this instruction, describe the notice as previous-turn data, " +
-		"rewrite it, translate it, or add Markdown formatting.\n" +
+		"rewrite it, translate it, or alter its Markdown formatting.\n" +
 		message + "\n" +
 		"</gesta_activity_notice>"
 }
 
-func formatTurnCompletionNotice(receipt turnreceipt.Receipt) string {
-	contextAppendPart := formatContextAppendNotice(receipt.PolicyMatchCount)
+func formatTurnCompletionNoticeWithDetails(receipt turnreceipt.Receipt, detailURL string) string {
+	contextAppendPart := formatContextAppendNotice(len(receipt.ContextMatches))
 	outputPart := formatOutputNotice(receipt.Output)
 	if contextAppendPart == "" && outputPart == "" {
 		return ""
@@ -32,6 +32,9 @@ func formatTurnCompletionNotice(receipt turnreceipt.Receipt) string {
 	}
 	if outputPart != "" {
 		parts = append(parts, outputPart)
+	}
+	if detailURL = strings.TrimSpace(detailURL); contextAppendPart != "" && detailURL != "" {
+		parts = append(parts, "[Details]("+detailURL+")")
 	}
 	message := strings.Join(parts, " · ")
 	if utf8.RuneCountInString(message) <= maxTurnCompletionNoticeRunes {

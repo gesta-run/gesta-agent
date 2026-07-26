@@ -1,7 +1,6 @@
 package turnreceipt
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -12,24 +11,23 @@ import (
 )
 
 func (s Store) SavePending(
-	agentType, sessionID, notice string,
+	agentType, sessionID string,
+	receipt Receipt,
 ) error {
 	path, ok := s.pendingPath(agentType, sessionID)
-	notice = strings.TrimSpace(notice)
-	if !ok || notice == "" {
+	receipt.ContextMatches = NormalizeContextMatches(receipt.ContextMatches)
+	if !ok || (len(receipt.ContextMatches) == 0 && receipt.Output.Empty()) {
 		return nil
-	}
-	if len(notice) > maxPendingNoticeBytes {
-		return fmt.Errorf("pending turn notice exceeds %d bytes", maxPendingNoticeBytes)
 	}
 	return s.withReceiptLock(path, func() error {
 		if err := os.RemoveAll(path); err != nil {
 			return fmt.Errorf("replace pending turn notice: %w", err)
 		}
 		pending := PendingNotice{
-			SchemaVersion: pendingSchemaVersion,
-			ExpiresAt:     s.now().Add(receiptTTL),
-			Notice:        notice,
+			SchemaVersion:  pendingSchemaVersion,
+			ExpiresAt:      s.now().Add(receiptTTL),
+			ContextMatches: receipt.ContextMatches,
+			Output:         receipt.Output,
 		}
 		return s.writePendingNotice(path, pending)
 	})
@@ -76,17 +74,15 @@ func (s Store) ConsumePending(
 }
 
 func (s Store) writePendingNotice(path string, pending PendingNotice) error {
-	data, err := json.Marshal(pending)
-	if err != nil {
-		return fmt.Errorf("marshal pending turn notice: %w", err)
-	}
-	if len(data)+1 > maxPendingRecordBytes {
-		return fmt.Errorf("pending turn notice record exceeds %d bytes", maxPendingRecordBytes)
-	}
 	if err := os.MkdirAll(path, 0o700); err != nil {
 		return fmt.Errorf("create pending turn notice directory: %w", err)
 	}
-	return atomicWriteJSON(filepath.Join(path, "receipt.json"), pending)
+	return atomicWriteBoundedJSON(
+		filepath.Join(path, "receipt.json"),
+		pending,
+		maxPendingRecordBytes,
+		"pending turn notice record",
+	)
 }
 
 func (s Store) pendingPath(agentType, sessionID string) (string, bool) {
@@ -119,15 +115,9 @@ func readPendingNotice(path string) (PendingNotice, error) {
 			pending.SchemaVersion,
 		)
 	}
-	pending.Notice = strings.TrimSpace(pending.Notice)
-	if pending.Notice == "" {
-		return PendingNotice{}, errors.New("pending turn notice is empty")
-	}
-	if len(pending.Notice) > maxPendingNoticeBytes {
-		return PendingNotice{}, fmt.Errorf(
-			"pending turn notice exceeds %d bytes",
-			maxPendingNoticeBytes,
-		)
+	pending.ContextMatches = NormalizeContextMatches(pending.ContextMatches)
+	if len(pending.ContextMatches) == 0 && pending.Output.Empty() {
+		return PendingNotice{}, errors.New("pending turn notice has no activity")
 	}
 	return pending, nil
 }

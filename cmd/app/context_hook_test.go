@@ -68,7 +68,13 @@ func TestCodexHookInjectsOrganizationContextWithoutUploadingPrompt(t *testing.T)
 	if err != nil {
 		t.Fatalf("marshal uploaded events: %v", err)
 	}
-	for _, raw := range []string{prompt, "session-raw", "turn-raw"} {
+	for _, raw := range []string{
+		prompt,
+		"session-raw",
+		"turn-raw",
+		"Keep files focused and functions small.",
+		"Use verified sources.",
+	} {
 		if strings.Contains(string(queuedData), raw) {
 			t.Fatalf("queued event leaked %q: %s", raw, queuedData)
 		}

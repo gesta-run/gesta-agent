@@ -1,0 +1,107 @@
+package localactivity
+
+import (
+	"fmt"
+	"strings"
+
+	"github.com/gesta-run/gesta-agent/pkg/activitydetail"
+)
+
+type activityView struct {
+	AgentLabel string
+	CreatedAt  string
+	ExpiresAt  string
+	RuleCount  int
+	Rules      []ruleView
+	Output     []metricView
+	HasOutput  bool
+	ActivityID string
+}
+
+type ruleView struct {
+	Name       string
+	MatchLabel string
+	MatchClass string
+	Priority   int
+	Content    string
+	Open       bool
+}
+
+type metricView struct {
+	Value string
+	Label string
+}
+
+func newActivityView(detail activitydetail.Detail) activityView {
+	rules := make([]ruleView, 0, len(detail.ContextMatches))
+	for index, match := range detail.ContextMatches {
+		rules = append(rules, ruleView{
+			Name:       match.Name,
+			MatchLabel: matchTypeLabel(match.MatchType),
+			MatchClass: matchTypeClass(match.MatchType),
+			Priority:   match.Priority,
+			Content:    match.Content,
+			Open:       index == 0,
+		})
+	}
+	output := make([]metricView, 0, 5)
+	appendMetric := func(value int64, label string) {
+		if value > 0 {
+			output = append(output, metricView{Value: formatNumber(value), Label: label})
+		}
+	}
+	appendMetric(detail.Output.CodeLines, "code lines")
+	appendMetric(detail.Output.TestLines, "test lines")
+	appendMetric(detail.Output.DocWords, "doc words")
+	appendMetric(detail.Output.ConfigLines, "config lines")
+	appendMetric(detail.Output.OtherLines, "other lines")
+	return activityView{
+		AgentLabel: agentLabel(detail.AgentType),
+		CreatedAt:  detail.CreatedAt.Local().Format("Jan 2, 2006 · 15:04:05 MST"),
+		ExpiresAt:  detail.ExpiresAt.Local().Format("Jan 2, 2006 · 15:04 MST"),
+		RuleCount:  len(rules),
+		Rules:      rules,
+		Output:     output,
+		HasOutput:  len(output) > 0,
+		ActivityID: detail.ActivityID,
+	}
+}
+
+func agentLabel(agentType string) string {
+	if agentType == "claude_code" {
+		return "Claude Code"
+	}
+	return "Codex"
+}
+
+func matchTypeLabel(matchType string) string {
+	if matchType == "regex" {
+		return "Regex match"
+	}
+	return "Keyword match"
+}
+
+func matchTypeClass(matchType string) string {
+	if matchType == "regex" {
+		return "regex"
+	}
+	return "keyword"
+}
+
+func formatNumber(value int64) string {
+	raw := fmt.Sprintf("%d", value)
+	if len(raw) <= 3 {
+		return raw
+	}
+	first := len(raw) % 3
+	if first == 0 {
+		first = 3
+	}
+	var builder strings.Builder
+	builder.WriteString(raw[:first])
+	for index := first; index < len(raw); index += 3 {
+		builder.WriteByte(',')
+		builder.WriteString(raw[index : index+3])
+	}
+	return builder.String()
+}

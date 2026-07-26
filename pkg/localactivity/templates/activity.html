@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Gesta · Local activity detail</title>
+  <style>{{pageStyles}}</style>
+</head>
+<body>
+  <main class="activity-main">
+    <div class="brand-bar">
+      <div class="brand">{{brandLogo}}</div>
+      <span class="local-status">Local only</span>
+    </div>
+
+    <header class="page-header">
+      <p class="eyebrow">Governance / Local activity</p>
+      <h1>Activity detail</h1>
+      <p class="subtitle">Review the targeted organization context applied to this turn and the output observed on this machine.</p>
+      <div class="meta" aria-label="Activity metadata">
+        <span>{{.AgentLabel}}</span>
+        <span>Captured {{.CreatedAt}}</span>
+        <span>Retention 24h</span>
+      </div>
+    </header>
+
+    <section class="panel" aria-labelledby="context-heading">
+      <header class="panel-header">
+        <div>
+          <div class="panel-title-row">
+            <h2 id="context-heading">Applied context</h2>
+            <span class="count">{{.RuleCount}}</span>
+          </div>
+          <p>Context appended to the model from targeted organization rules.</p>
+        </div>
+      </header>
+      <div class="rule-list">
+        {{range .Rules}}
+        <details class="rule"{{if .Open}} open{{end}}>
+          <summary>
+            <span class="rule-main">
+              <span class="rule-dot {{.MatchClass}}" aria-hidden="true"></span>
+              <span class="rule-copy">
+                <span class="rule-name">{{.Name}}</span>
+                <span class="rule-meta">{{.MatchLabel}} · Priority {{.Priority}}</span>
+              </span>
+            </span>
+          </summary>
+          <div class="content-wrap">
+            <div class="content-card">
+              <div class="content-label">Appended content</div>
+              <pre>{{.Content}}</pre>
+            </div>
+          </div>
+        </details>
+        {{end}}
+      </div>
+    </section>
+
+    <section class="output-panel" aria-labelledby="output-heading">
+      <h2 id="output-heading">Observed output</h2>
+      {{if .HasOutput}}
+      <div class="metrics">
+        {{range .Output}}
+        <div class="metric">
+          <strong>{{.Value}}</strong>
+          <span>{{.Label}}</span>
+        </div>
+        {{end}}
+      </div>
+      {{else}}
+      <div class="empty-output">No measurable file output was observed.</div>
+      {{end}}
+    </section>
+
+    <footer>
+      <span>Stored only on this machine · Expires {{.ExpiresAt}}</span>
+      <span class="activity-id">{{.ActivityID}}</span>
+    </footer>
+  </main>
+</body>
+</html>
