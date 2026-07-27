@@ -13,6 +13,7 @@ import (
 	"github.com/gesta-run/gesta-agent/pkg/daemon"
 	"github.com/gesta-run/gesta-agent/pkg/model"
 	"github.com/gesta-run/gesta-agent/pkg/policy"
+	"github.com/gesta-run/gesta-agent/pkg/promptscope"
 )
 
 const gestaSensitivePromptDeniedMessage = "Gesta blocked this prompt because it appears to contain secret material. Remove secrets or replace them with placeholders, then retry."
@@ -104,7 +105,8 @@ func processUserPromptSubmit(ctx context.Context, event agentHookEvent, agentTyp
 			}
 		}
 	}
-	response := processOrganizationContext(cfg, event, agentType, source)
+	matchPrompt := promptscope.Extract(agentType, event.Prompt)
+	response := processOrganizationContext(cfg, event, matchPrompt, agentType, source)
 	return injectPendingTurnNoticeBestEffort(ctx, cfg, event, agentType, response)
 }
 

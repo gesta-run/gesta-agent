@@ -13,12 +13,16 @@ import (
 	"github.com/gesta-run/gesta-agent/pkg/util"
 )
 
-func processOrganizationContext(cfg daemon.Config, event agentHookEvent, agentType, source string) map[string]interface{} {
+func processOrganizationContext(
+	cfg daemon.Config,
+	event agentHookEvent,
+	matchPrompt, agentType, source string,
+) map[string]interface{} {
 	cache, ok := hookContextRules(cfg)
 	if !ok {
 		return map[string]interface{}{}
 	}
-	result := contextmatch.Match(event.Prompt, agentType, cache.Rules)
+	result := contextmatch.Match(matchPrompt, agentType, cache.Rules)
 	if len(result.Rules) == 0 || strings.TrimSpace(result.AdditionalContext) == "" {
 		return map[string]interface{}{}
 	}

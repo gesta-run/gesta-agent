@@ -16,29 +16,10 @@ import (
 )
 
 func TestCodexHookInjectsOrganizationContextWithoutUploadingPrompt(t *testing.T) {
-	tmp := t.TempDir()
-	home := filepath.Join(tmp, "home")
-	if err := os.MkdirAll(home, 0o700); err != nil {
-		t.Fatalf("mkdir home: %v", err)
-	}
-	t.Setenv("HOME", home)
-
-	cfg := daemon.NewDirectRuntimeConfig("http://127.0.0.1:1", "dtok_codex_context")
-	if err := daemon.SaveConfig("", cfg); err != nil {
-		t.Fatalf("SaveConfig: %v", err)
-	}
-	if err := daemon.SaveSensitiveRuleCache(cfg.DataDir, []model.SensitiveRule{}, time.Now()); err != nil {
-		t.Fatalf("SaveSensitiveRuleCache: %v", err)
-	}
-	if err := daemon.SaveContextRuleCache(cfg.DataDir, model.ContextRuleBundle{
-		Version: "bundle-v1",
-		Rules: []model.ContextRule{
-			{RuleID: "crule_always", Name: "Always", Status: "active", MatchType: "always", AgentType: "all", Priority: 10, ContextContent: "Use verified sources."},
-			{RuleID: "crule_code", Name: "Code quality", Status: "active", MatchType: "keyword_any", Keywords: []string{"refactor"}, AgentType: "codex", Priority: 100, ContextContent: "Keep files focused and functions small."},
-		},
-	}, time.Now()); err != nil {
-		t.Fatalf("SaveContextRuleCache: %v", err)
-	}
+	cfg := setupContextHookTest(t, []model.ContextRule{
+		{RuleID: "crule_always", Name: "Always", Status: "active", MatchType: "always", AgentType: "all", Priority: 10, ContextContent: "Use verified sources."},
+		{RuleID: "crule_code", Name: "Code quality", Status: "active", MatchType: "keyword_any", Keywords: []string{"refactor"}, AgentType: "codex", Priority: 100, ContextContent: "Keep files focused and functions small."},
+	})
 
 	prompt := "Please refactor the billing package"
 	input, err := json.Marshal(agentHookEvent{
@@ -106,6 +87,128 @@ func TestCodexHookInjectsOrganizationContextWithoutUploadingPrompt(t *testing.T)
 	}
 }
 
+func TestCodexHookMatchesOnlyRequestBodyInFileEnvelope(t *testing.T) {
+	cfg := setupContextHookTest(t, []model.ContextRule{
+		{RuleID: "crule_path", Name: "Path only", Status: "active", MatchType: "keyword_any", Keywords: []string{"refactor"}, AgentType: "codex", Priority: 100, ContextContent: "PATH CONTEXT MUST NOT APPEAR"},
+		{RuleID: "crule_body", Name: "Layout", Status: "active", MatchType: "keyword_any", Keywords: []string{"layout"}, AgentType: "codex", Priority: 90, ContextContent: "Apply the layout standard."},
+		{RuleID: "crule_always", Name: "Always", Status: "active", MatchType: "always", AgentType: "all", Priority: 10, ContextContent: "Use verified sources."},
+	})
+	const prompt = `# Files mentioned by the user:
+
+## refactor-notes.png: /tmp/refactor-notes.png
+
+## My request for Codex:
+
+Please review this layout.
+
+<image name=[Image #1] path="/tmp/refactor-notes.png">
+</image>`
+	input, err := json.Marshal(agentHookEvent{
+		HookEventName: "UserPromptSubmit",
+		Prompt:        prompt,
+		SessionID:     "session-envelope",
+		TurnID:        "turn-envelope",
+	})
+	if err != nil {
+		t.Fatalf("marshal hook input: %v", err)
+	}
+	response := processAgentHook(context.Background(), input, "codex", "codex")
+	data, err := json.Marshal(response)
+	if err != nil {
+		t.Fatalf("marshal hook response: %v", err)
+	}
+	text := string(data)
+	if !strings.Contains(text, "Apply the layout standard.\\n\\nUse verified sources.") {
+		t.Fatalf("request context missing from response: %s", text)
+	}
+	if strings.Contains(text, "PATH CONTEXT MUST NOT APPEAR") {
+		t.Fatalf("attachment metadata matched context rule: %s", text)
+	}
+
+	queued, err := daemon.NewQueue(cfg.DataDir).ReadAll()
+	if err != nil {
+		t.Fatalf("read queued events: %v", err)
+	}
+	if len(queued) != 1 {
+		t.Fatalf("queued events = %#v, want one context match", queued)
+	}
+	matches, ok := queued[0].Payload["rule_matches"].([]interface{})
+	if !ok || len(matches) != 2 {
+		t.Fatalf("rule matches = %#v, want body and always rules", queued[0].Payload["rule_matches"])
+	}
+	for _, rawMatch := range matches {
+		match, ok := rawMatch.(map[string]interface{})
+		if ok && match["rule_id"] == "crule_path" {
+			t.Fatalf("path-only rule was recorded: %#v", matches)
+		}
+	}
+}
+
+func TestCodexHookSkipsContextForMalformedFileEnvelope(t *testing.T) {
+	cfg := setupContextHookTest(t, []model.ContextRule{
+		{RuleID: "crule_path", Name: "Path only", Status: "active", MatchType: "keyword_any", Keywords: []string{"refactor"}, AgentType: "codex", Priority: 100, ContextContent: "must not appear"},
+		{RuleID: "crule_always", Name: "Always", Status: "active", MatchType: "always", AgentType: "all", Priority: 10, ContextContent: "must not appear"},
+	})
+	const prompt = `# Files mentioned by the user:
+
+## refactor-notes.png: /tmp/refactor-notes.png`
+	input, err := json.Marshal(agentHookEvent{
+		HookEventName: "UserPromptSubmit",
+		Prompt:        prompt,
+		SessionID:     "session-malformed",
+		TurnID:        "turn-malformed",
+	})
+	if err != nil {
+		t.Fatalf("marshal hook input: %v", err)
+	}
+	response := processAgentHook(context.Background(), input, "codex", "codex")
+	if len(response) != 0 {
+		t.Fatalf("malformed envelope response = %#v, want no context", response)
+	}
+	queued, err := daemon.NewQueue(cfg.DataDir).ReadAll()
+	if err != nil {
+		t.Fatalf("read queued events: %v", err)
+	}
+	if len(queued) != 0 {
+		t.Fatalf("malformed envelope queued context events: %#v", queued)
+	}
+}
+
+func TestCodexHookScansRawEnvelopeForSensitiveData(t *testing.T) {
+	cfg := setupContextHookTest(t, []model.ContextRule{{
+		RuleID: "crule_always", Name: "Always", Status: "active", MatchType: "always",
+		AgentType: "all", Priority: 10, ContextContent: "must not appear",
+	}})
+	if err := daemon.SaveSensitiveRuleCache(cfg.DataDir, []model.SensitiveRule{openAIKeySensitiveRule()}, time.Now()); err != nil {
+		t.Fatalf("SaveSensitiveRuleCache: %v", err)
+	}
+	secret := "sk-" + strings.Repeat("a", 32)
+	prompt := `# Files mentioned by the user:
+
+## screenshot.png: /tmp/` + secret + `/screenshot.png
+
+## My request for Codex:
+
+Review this image.`
+	input, err := json.Marshal(agentHookEvent{
+		HookEventName: "UserPromptSubmit",
+		Prompt:        prompt,
+		SessionID:     "session-sensitive-envelope",
+		TurnID:        "turn-sensitive-envelope",
+	})
+	if err != nil {
+		t.Fatalf("marshal hook input: %v", err)
+	}
+	response := processAgentHook(context.Background(), input, "codex", "codex")
+	data, err := json.Marshal(response)
+	if err != nil {
+		t.Fatalf("marshal response: %v", err)
+	}
+	if !strings.Contains(string(data), `"decision":"block"`) || strings.Contains(string(data), "must not appear") {
+		t.Fatalf("unexpected sensitive envelope response: %s", data)
+	}
+}
+
 func TestHookContextRulesUsesOnlyDaemonCache(t *testing.T) {
 	dataDir := t.TempDir()
 	cfg := daemon.NewDirectRuntimeConfig("http://127.0.0.1:1", "dtok_install_only")
@@ -126,6 +229,30 @@ func TestHookContextRulesUsesOnlyDaemonCache(t *testing.T) {
 	if !ok || cache.Version != "bundle-daemon" || len(cache.Rules) != 1 {
 		t.Fatalf("daemon cache = %+v, ok = %v", cache, ok)
 	}
+}
+
+func setupContextHookTest(t *testing.T, rules []model.ContextRule) daemon.Config {
+	t.Helper()
+	home := filepath.Join(t.TempDir(), "home")
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		t.Fatalf("mkdir home: %v", err)
+	}
+	t.Setenv("HOME", home)
+
+	cfg := daemon.NewDirectRuntimeConfig("http://127.0.0.1:1", "dtok_codex_context")
+	if err := daemon.SaveConfig("", cfg); err != nil {
+		t.Fatalf("SaveConfig: %v", err)
+	}
+	if err := daemon.SaveSensitiveRuleCache(cfg.DataDir, []model.SensitiveRule{}, time.Now()); err != nil {
+		t.Fatalf("SaveSensitiveRuleCache: %v", err)
+	}
+	if err := daemon.SaveContextRuleCache(cfg.DataDir, model.ContextRuleBundle{
+		Version: "bundle-v1",
+		Rules:   rules,
+	}, time.Now()); err != nil {
+		t.Fatalf("SaveContextRuleCache: %v", err)
+	}
+	return cfg
 }
 
 func TestCodexHookDoesNotInjectContextWhenSensitivePromptIsBlocked(t *testing.T) {
