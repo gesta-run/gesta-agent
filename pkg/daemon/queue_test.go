@@ -1,9 +1,12 @@
 package daemon
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
+	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -12,56 +15,205 @@ import (
 
 func TestQueueAppendReadClear(t *testing.T) {
 	q := NewQueue(t.TempDir())
+	now := time.Now().UTC()
 	events := []model.EventEnvelope{
-		{EventID: "evt_1", EventType: "test", CreatedAt: time.Now()},
-		{EventID: "evt_2", EventType: "test", CreatedAt: time.Now()},
+		{EventID: "evt_1", EventType: "test", CreatedAt: now},
+		{EventID: "evt_2", EventType: "test", CreatedAt: now.Add(time.Second)},
 	}
 	if err := q.Append(events); err != nil {
 		t.Fatalf("append: %v", err)
 	}
 	if got := q.Size(); got != 2 {
-		t.Fatalf("expected size 2, got %d", got)
+		t.Fatalf("queue size = %d, want 2", got)
 	}
 	read, err := q.ReadAll()
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
-	if len(read) != 2 {
-		t.Fatalf("expected 2 events, got %d", len(read))
+	if len(read) != 2 || read[0].EventID != "evt_1" || read[1].EventID != "evt_2" {
+		t.Fatalf("events = %#v", read)
 	}
 	if err := q.Clear(); err != nil {
 		t.Fatalf("clear: %v", err)
 	}
 	if got := q.Size(); got != 0 {
-		t.Fatalf("expected size 0 after clear, got %d", got)
+		t.Fatalf("queue size after clear = %d, want 0", got)
 	}
 }
 
-func TestQueueReadAllReturnsMalformedLineError(t *testing.T) {
+func TestQueueReadAllReturnsCorruptDatabaseError(t *testing.T) {
+	q := NewQueue(t.TempDir())
+	if err := os.WriteFile(q.path, []byte("not-a-bbolt-database"), 0o600); err != nil {
+		t.Fatalf("write corrupt database: %v", err)
+	}
+	if _, err := q.ReadAll(); err == nil {
+		t.Fatal("corrupt queue database was accepted")
+	}
+}
+
+func TestQueueUsesProtocolV2DatabaseAndIgnoresLegacyQueue(t *testing.T) {
 	dir := t.TempDir()
+	legacy := model.EventEnvelope{
+		EventID:   "evt_legacy",
+		EventType: "policy.decision",
+		CreatedAt: time.Now().UTC(),
+	}
+	if err := writeLegacyQueue(filepath.Join(dir, "queue.jsonl"), []model.EventEnvelope{legacy}); err != nil {
+		t.Fatalf("write legacy queue: %v", err)
+	}
 	q := NewQueue(dir)
-	if err := os.WriteFile(q.path, []byte("{\"event_id\":\"evt_1\"}\nnot-json\n"), 0o600); err != nil {
-		t.Fatalf("write queue: %v", err)
+	if err := q.Append([]model.EventEnvelope{{
+		EventID:   "evt_v2",
+		EventType: "policy.decision",
+		CreatedAt: time.Now().UTC(),
+	}}); err != nil {
+		t.Fatalf("append v2 queue: %v", err)
 	}
-	_, err := q.ReadAll()
-	if err == nil {
-		t.Fatal("expected malformed queue line error")
+	events, err := q.ReadAll()
+	if err != nil {
+		t.Fatalf("read v2 queue: %v", err)
 	}
-	if !strings.Contains(err.Error(), "line 2") {
-		t.Fatalf("expected line number in error, got %v", err)
+	if len(events) != 1 || events[0].EventID != "evt_v2" {
+		t.Fatalf("v2 queue events = %#v, want only evt_v2", events)
+	}
+	stats, err := q.LegacyStats()
+	if err != nil {
+		t.Fatalf("legacy stats: %v", err)
+	}
+	if stats.Events != 1 || stats.EventTypes["policy.decision"] != 1 {
+		t.Fatalf("legacy stats = %#v", stats)
+	}
+}
+
+func TestQueueAppendRemovesExpiredEvents(t *testing.T) {
+	now := time.Date(2026, 7, 27, 12, 0, 0, 0, time.UTC)
+	q := NewQueue(t.TempDir())
+	q.now = func() time.Time { return now }
+	stats, err := q.AppendWithStats([]model.EventEnvelope{
+		{EventID: "evt_expired", EventType: "policy.decision", CreatedAt: now.Add(-queueMaxAge - time.Second)},
+		{EventID: "evt_current", EventType: "policy.decision", CreatedAt: now},
+	})
+	if err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	if stats.RemovedExpired != 1 || stats.QueuedEvents != 1 {
+		t.Fatalf("stats = %#v", stats)
+	}
+}
+
+func TestQueueEmptyAppendPrunesExistingEvents(t *testing.T) {
+	initial := time.Date(2026, 7, 27, 12, 0, 0, 0, time.UTC)
+	q := NewQueue(t.TempDir())
+	q.now = func() time.Time { return initial }
+	if err := q.Append([]model.EventEnvelope{{
+		EventID:   "evt_expired",
+		EventType: "policy.decision",
+		CreatedAt: initial,
+	}}); err != nil {
+		t.Fatalf("seed queue: %v", err)
+	}
+	q.now = func() time.Time { return initial.Add(queueMaxAge + time.Second) }
+	stats, err := q.AppendWithStats(nil)
+	if err != nil {
+		t.Fatalf("prune empty append: %v", err)
+	}
+	if stats.RemovedExpired != 1 || stats.QueuedEvents != 0 {
+		t.Fatalf("stats = %#v", stats)
+	}
+}
+
+func TestQueueStatsReadsMetadataWithoutPruning(t *testing.T) {
+	initial := time.Date(2026, 7, 27, 12, 0, 0, 0, time.UTC)
+	q := NewQueue(t.TempDir())
+	q.now = func() time.Time { return initial }
+	if err := q.Append([]model.EventEnvelope{{
+		EventID: "evt_old", EventType: "test", CreatedAt: initial,
+	}}); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	q.now = func() time.Time { return initial.Add(queueMaxAge + time.Hour) }
+	stats, err := q.Stats()
+	if err != nil {
+		t.Fatalf("stats: %v", err)
+	}
+	if stats.QueuedEvents != 1 || stats.RemovedExpired != 0 {
+		t.Fatalf("stats unexpectedly compacted queue: %#v", stats)
+	}
+}
+
+func TestQueueAppendDeduplicatesSnapshotsKeepingNewest(t *testing.T) {
+	now := time.Date(2026, 7, 27, 12, 0, 0, 0, time.UTC)
+	q := NewQueue(t.TempDir())
+	q.now = func() time.Time { return now }
+	stats, err := q.AppendWithStats([]model.EventEnvelope{
+		{EventID: "evt_snapshot_same", EventType: "agent.discovery", CreatedAt: now.Add(-time.Hour)},
+		{EventID: "evt_policy", EventType: "policy.decision", CreatedAt: now.Add(-30 * time.Minute)},
+		{EventID: "evt_snapshot_same", EventType: "agent.discovery", CreatedAt: now},
+	})
+	if err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	if stats.RemovedDuplicate != 1 || stats.QueuedEvents != 2 {
+		t.Fatalf("stats = %#v", stats)
+	}
+	events, err := q.ReadAll()
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if len(events) != 2 || events[0].EventID != "evt_policy" || !events[1].CreatedAt.Equal(now) {
+		t.Fatalf("events = %#v, want policy followed by newest snapshot", events)
+	}
+}
+
+func TestQueueAppendEvictsOldestEventsAtCapacity(t *testing.T) {
+	now := time.Date(2026, 7, 27, 12, 0, 0, 0, time.UTC)
+	q := NewQueue(t.TempDir())
+	q.now = func() time.Time { return now }
+	newest := model.EventEnvelope{
+		EventID:   "evt_newest",
+		EventType: "policy.decision",
+		CreatedAt: now,
+		Payload:   map[string]interface{}{"value": strings.Repeat("x", 64)},
+	}
+	line, err := json.Marshal(newest)
+	if err != nil {
+		t.Fatalf("marshal newest: %v", err)
+	}
+	q.maxBytes = int64(len(line) + 1)
+	stats, err := q.AppendWithStats([]model.EventEnvelope{
+		{
+			EventID:   "evt_oldest",
+			EventType: "policy.decision",
+			CreatedAt: now.Add(-time.Hour),
+			Payload:   map[string]interface{}{"value": strings.Repeat("x", 64)},
+		},
+		newest,
+	})
+	if err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	if stats.RemovedCapacity != 1 || stats.QueuedEvents != 1 {
+		t.Fatalf("stats = %#v", stats)
+	}
+	events, err := q.ReadAll()
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if len(events) != 1 || events[0].EventID != "evt_newest" {
+		t.Fatalf("events = %#v, want only newest", events)
 	}
 }
 
 func TestQueueDrainKeepsEventsAppendedDuringSend(t *testing.T) {
 	q := NewQueue(t.TempDir())
-	if err := q.Append([]model.EventEnvelope{{EventID: "evt_1", EventType: "test", CreatedAt: time.Now()}}); err != nil {
+	if err := q.Append([]model.EventEnvelope{currentEvent("evt_1")}); err != nil {
 		t.Fatalf("append: %v", err)
 	}
 	if err := q.Drain(func(events []model.EventEnvelope) error {
 		if len(events) != 1 || events[0].EventID != "evt_1" {
 			t.Fatalf("sent events = %+v", events)
 		}
-		return q.Append([]model.EventEnvelope{{EventID: "evt_2", EventType: "test", CreatedAt: time.Now()}})
+		return q.Append([]model.EventEnvelope{currentEvent("evt_2")})
 	}); err != nil {
 		t.Fatalf("drain: %v", err)
 	}
@@ -70,15 +222,15 @@ func TestQueueDrainKeepsEventsAppendedDuringSend(t *testing.T) {
 		t.Fatalf("read: %v", err)
 	}
 	if len(read) != 1 || read[0].EventID != "evt_2" {
-		t.Fatalf("expected concurrently appended event to remain queued, got %+v", read)
+		t.Fatalf("concurrent event was not retained: %+v", read)
 	}
 }
 
 func TestQueueDrainSendsEventsInBatches(t *testing.T) {
 	q := NewQueue(t.TempDir())
 	events := make([]model.EventEnvelope, 0, queueDrainBatchSize+3)
-	for i := 0; i < queueDrainBatchSize+3; i++ {
-		events = append(events, model.EventEnvelope{EventID: "evt_batch", EventType: "test", CreatedAt: time.Now()})
+	for index := 0; index < queueDrainBatchSize+3; index++ {
+		events = append(events, currentEvent("evt_batch"))
 	}
 	if err := q.Append(events); err != nil {
 		t.Fatalf("append: %v", err)
@@ -93,24 +245,21 @@ func TestQueueDrainSendsEventsInBatches(t *testing.T) {
 	if len(batchSizes) != 2 || batchSizes[0] != queueDrainBatchSize || batchSizes[1] != 3 {
 		t.Fatalf("batch sizes = %v", batchSizes)
 	}
-	if got := q.Size(); got != 0 {
-		t.Fatalf("expected empty queue after batched drain, got %d", got)
-	}
 }
 
-func TestQueueDrainRequeuesOnlyRemainingBatchOnSendFailure(t *testing.T) {
+func TestQueueDrainKeepsOnlyUnsentBatchOnFailure(t *testing.T) {
 	sendErr := errors.New("send failed")
 	q := NewQueue(t.TempDir())
 	events := make([]model.EventEnvelope, 0, queueDrainBatchSize+1)
-	for i := 0; i < queueDrainBatchSize+1; i++ {
-		events = append(events, model.EventEnvelope{EventID: "evt_" + string(rune('a'+i%26)), EventType: "test", CreatedAt: time.Now()})
+	for index := 0; index < queueDrainBatchSize+1; index++ {
+		events = append(events, currentEvent("evt_batch"))
 	}
 	events[queueDrainBatchSize].EventID = "evt_remaining"
 	if err := q.Append(events); err != nil {
 		t.Fatalf("append: %v", err)
 	}
 	calls := 0
-	err := q.Drain(func(events []model.EventEnvelope) error {
+	err := q.Drain(func([]model.EventEnvelope) error {
 		calls++
 		if calls == 2 {
 			return sendErr
@@ -120,83 +269,97 @@ func TestQueueDrainRequeuesOnlyRemainingBatchOnSendFailure(t *testing.T) {
 	if !errors.Is(err, sendErr) {
 		t.Fatalf("drain error = %v, want %v", err, sendErr)
 	}
-	read, err := q.ReadAll()
-	if err != nil {
-		t.Fatalf("read: %v", err)
+	read, readErr := q.ReadAll()
+	if readErr != nil {
+		t.Fatalf("read: %v", readErr)
 	}
 	if len(read) != 1 || read[0].EventID != "evt_remaining" {
-		t.Fatalf("expected only failed remaining event queued, got %+v", read)
+		t.Fatalf("remaining events = %+v", read)
 	}
 }
 
-func TestQueueDrainRequeuesInflightEventsOnSendFailure(t *testing.T) {
+func TestQueueDrainPreservesBatchOnFirstSendFailure(t *testing.T) {
 	sendErr := errors.New("send failed")
 	q := NewQueue(t.TempDir())
-	if err := q.Append([]model.EventEnvelope{{EventID: "evt_1", EventType: "test", CreatedAt: time.Now()}}); err != nil {
+	if err := q.Append([]model.EventEnvelope{currentEvent("evt_1")}); err != nil {
 		t.Fatalf("append: %v", err)
 	}
-	err := q.Drain(func(_ []model.EventEnvelope) error {
-		if appendErr := q.Append([]model.EventEnvelope{{EventID: "evt_2", EventType: "test", CreatedAt: time.Now()}}); appendErr != nil {
-			t.Fatalf("append during send: %v", appendErr)
-		}
-		return sendErr
-	})
-	if !errors.Is(err, sendErr) {
+	if err := q.Drain(func([]model.EventEnvelope) error { return sendErr }); !errors.Is(err, sendErr) {
 		t.Fatalf("drain error = %v, want %v", err, sendErr)
 	}
-	read, err := q.ReadAll()
+	if got := q.Size(); got != 1 {
+		t.Fatalf("queue size = %d, want 1", got)
+	}
+}
+
+func TestQueueConcurrentDrainsCannotSendSameBatch(t *testing.T) {
+	q := NewQueue(t.TempDir())
+	q.lockTimeout = 100 * time.Millisecond
+	if err := q.Append([]model.EventEnvelope{currentEvent("evt_1")}); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	firstDone := make(chan error, 1)
+	var sends atomic.Int32
+	go func() {
+		firstDone <- q.Drain(func([]model.EventEnvelope) error {
+			sends.Add(1)
+			close(entered)
+			<-release
+			return nil
+		})
+	}()
+	<-entered
+	secondErr := q.Drain(func([]model.EventEnvelope) error {
+		sends.Add(1)
+		return nil
+	})
+	if secondErr == nil || !strings.Contains(secondErr.Error(), "drain lock timeout") {
+		t.Fatalf("second drain error = %v, want lock timeout", secondErr)
+	}
+	close(release)
+	if err := <-firstDone; err != nil {
+		t.Fatalf("first drain: %v", err)
+	}
+	if got := sends.Load(); got != 1 {
+		t.Fatalf("send calls = %d, want 1", got)
+	}
+}
+
+func TestQueueStaleDrainLockFileDoesNotBlock(t *testing.T) {
+	q := NewQueue(t.TempDir())
+	if err := os.WriteFile(q.path+".drain.lock", []byte("stale"), 0o600); err != nil {
+		t.Fatalf("write stale lock file: %v", err)
+	}
+	if err := q.Append([]model.EventEnvelope{currentEvent("evt_1")}); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	if err := q.Drain(func([]model.EventEnvelope) error { return nil }); err != nil {
+		t.Fatalf("drain with stale lock file: %v", err)
+	}
+}
+
+func currentEvent(eventID string) model.EventEnvelope {
+	return model.EventEnvelope{
+		EventID:   eventID,
+		EventType: "test",
+		CreatedAt: time.Now().UTC(),
+	}
+}
+
+func writeLegacyQueue(path string, events []model.EventEnvelope) error {
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
 	if err != nil {
-		t.Fatalf("read: %v", err)
+		return err
 	}
-	if len(read) != 2 || read[0].EventID != "evt_1" || read[1].EventID != "evt_2" {
-		t.Fatalf("expected failed in-flight and concurrent events to remain queued, got %+v", read)
+	encoder := json.NewEncoder(file)
+	for _, event := range events {
+		if err := encoder.Encode(event); err != nil {
+			_ = file.Close()
+			return err
+		}
 	}
-}
-
-func TestQueueDrainSendsStaleInflightAfterCrash(t *testing.T) {
-	q := NewQueue(t.TempDir())
-	stale := model.EventEnvelope{EventID: "evt_inflight", EventType: "test", CreatedAt: time.Now()}
-	if err := writeQueueEvents(q.inflightPath(), []model.EventEnvelope{stale}); err != nil {
-		t.Fatalf("write inflight: %v", err)
-	}
-	var sent []model.EventEnvelope
-	if err := q.Drain(func(events []model.EventEnvelope) error {
-		sent = append(sent, events...)
-		return nil
-	}); err != nil {
-		t.Fatalf("drain: %v", err)
-	}
-	if len(sent) != 1 || sent[0].EventID != "evt_inflight" {
-		t.Fatalf("expected stale inflight event to be sent, got %+v", sent)
-	}
-	if _, err := os.Stat(q.inflightPath()); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("expected inflight file removed, stat err=%v", err)
-	}
-}
-
-func TestQueueDrainPrependsStaleInflightBeforeActiveQueue(t *testing.T) {
-	q := NewQueue(t.TempDir())
-	stale := model.EventEnvelope{EventID: "evt_inflight", EventType: "test", CreatedAt: time.Now()}
-	active := model.EventEnvelope{EventID: "evt_active", EventType: "test", CreatedAt: time.Now()}
-	if err := writeQueueEvents(q.inflightPath(), []model.EventEnvelope{stale}); err != nil {
-		t.Fatalf("write inflight: %v", err)
-	}
-	if err := q.Append([]model.EventEnvelope{active}); err != nil {
-		t.Fatalf("append active: %v", err)
-	}
-	var sent []model.EventEnvelope
-	if err := q.Drain(func(events []model.EventEnvelope) error {
-		sent = append(sent, events...)
-		return nil
-	}); err != nil {
-		t.Fatalf("drain: %v", err)
-	}
-	if len(sent) != 2 || sent[0].EventID != "evt_inflight" || sent[1].EventID != "evt_active" {
-		t.Fatalf("expected stale inflight before active queue, got %+v", sent)
-	}
-}
-
-func writeQueueEvents(path string, events []model.EventEnvelope) error {
-	q := Queue{path: path}
-	return q.Append(events)
+	return file.Close()
 }

@@ -25,6 +25,15 @@ state live under `~/.gesta` by default. Each run loop also syncs active
 control-plane policies into `~/.gesta/policies.json` for guard enforcement and
 offline fallback.
 
+Protocol-v2 events use the transactional bbolt database
+`~/.gesta/queue-v2.db`. The queue retains at most 30 days and 512 MiB of encoded
+events, replaces duplicate machine-state snapshots, and evicts the oldest
+remaining events when it reaches the byte limit. OS-backed locking prevents
+concurrent runners from sending the same batch and is released automatically
+after a crash. Upgrades intentionally do not replay the former `queue.jsonl`;
+the daemon reports only aggregate metadata about that legacy file and leaves it
+untouched for manual inspection.
+
 ## Commands
 
 ```bash
