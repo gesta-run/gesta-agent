@@ -77,8 +77,15 @@ type AgentUpgradePolicy struct {
 }
 
 type HeartbeatResponse struct {
-	Daemon  map[string]interface{} `json:"daemon,omitempty"`
-	Upgrade *AgentUpgradePolicy    `json:"upgrade,omitempty"`
+	Daemon               map[string]interface{}        `json:"daemon,omitempty"`
+	Upgrade              *AgentUpgradePolicy           `json:"upgrade,omitempty"`
+	OutputClassification *OutputClassificationSettings `json:"output_classification,omitempty"`
+}
+
+type OutputClassificationSettings struct {
+	Revision      int64    `json:"revision"`
+	CodeSuffixes  []string `json:"code_suffixes"`
+	CodeFilenames []string `json:"code_filenames"`
 }
 
 type EventEnvelope struct {

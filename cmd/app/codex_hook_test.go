@@ -30,6 +30,7 @@ func TestCodexHookMeasuresOnlyCompletedThreadItems(t *testing.T) {
 	if err := daemon.SaveConfig("", cfg); err != nil {
 		t.Fatalf("SaveConfig: %v", err)
 	}
+	saveTestOutputClassification(t, cfg)
 
 	mcpInput := map[string]interface{}{"title": "Release plan"}
 	input, err := json.Marshal(agentHookEvent{

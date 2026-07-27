@@ -34,9 +34,10 @@ func recordGrossToolUseWithConfig(
 	agentType, source string,
 ) (turnreceipt.OutputSummary, error) {
 	var measurements []toolinput.Measurement
+	classifier := outputClassifier(cfg)
 	switch agentType {
 	case "claude_code":
-		measurements = toolinput.MeasureClaudeToolUse(event.ToolName, event.ToolInput)
+		measurements = toolinput.MeasureClaudeToolUse(event.ToolName, event.ToolInput, classifier)
 	default:
 		return turnreceipt.OutputSummary{}, nil
 	}
@@ -87,6 +88,7 @@ func recordCodexTurn(
 		observedAt = time.Unix(*turn.CompletedAt, 0).UTC()
 	}
 	var output turnreceipt.OutputSummary
+	classifier := outputClassifier(cfg)
 	for _, item := range turn.Items {
 		if item.Status != "completed" {
 			continue
@@ -106,7 +108,7 @@ func recordCodexTurn(
 				Source:       "codex",
 				Origin:       "thread_read_file_change",
 				ObservedAt:   observedAt,
-				Measurements: toolinput.MeasureCodexFileChanges(changes),
+				Measurements: toolinput.MeasureCodexFileChanges(changes, classifier),
 			})
 			if err != nil {
 				return output, err
@@ -123,7 +125,7 @@ func recordCodexTurn(
 				Source:       "codex",
 				Origin:       "thread_read_mcp_reconciliation",
 				ObservedAt:   observedAt,
-				Measurements: toolinput.MeasureCodexMCP(toolName, item.Arguments),
+				Measurements: toolinput.MeasureCodexMCP(toolName, item.Arguments, classifier),
 			})
 			if err != nil {
 				return output, err
@@ -132,6 +134,14 @@ func recordCodexTurn(
 		}
 	}
 	return output, nil
+}
+
+func outputClassifier(cfg daemon.Config) toolinput.Classifier {
+	cache, err := daemon.LoadOutputClassificationCache(cfg.DataDir)
+	if err != nil {
+		return toolinput.NewClassifier(nil, nil)
+	}
+	return toolinput.NewClassifier(cache.CodeSuffixes, cache.CodeFilenames)
 }
 
 type grossObservation struct {

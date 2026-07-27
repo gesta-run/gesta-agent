@@ -112,6 +112,7 @@ func TestClaudeStopQueuesOneShotNoticeForNextPrompt(t *testing.T) {
 	if err := daemon.SaveConfig("", cfg); err != nil {
 		t.Fatalf("SaveConfig: %v", err)
 	}
+	saveTestOutputClassification(t, cfg)
 	if err := daemon.SaveSensitiveRuleCache(cfg.DataDir, []model.SensitiveRule{}, time.Now()); err != nil {
 		t.Fatalf("SaveSensitiveRuleCache: %v", err)
 	}
@@ -198,6 +199,7 @@ func TestClaudeStopCreatesLinkedLocalActivityDetailWhenUIIsHealthy(t *testing.T)
 	if err := daemon.SaveConfig("", cfg); err != nil {
 		t.Fatalf("SaveConfig: %v", err)
 	}
+	saveTestOutputClassification(t, cfg)
 	if err := daemon.SaveSensitiveRuleCache(cfg.DataDir, []model.SensitiveRule{}, time.Now()); err != nil {
 		t.Fatalf("SaveSensitiveRuleCache: %v", err)
 	}
@@ -459,6 +461,7 @@ func TestCodexStopRecordsOutputWithoutNoticeReceipt(t *testing.T) {
 	if err := daemon.SaveConfig("", cfg); err != nil {
 		t.Fatalf("SaveConfig: %v", err)
 	}
+	saveTestOutputClassification(t, cfg)
 
 	originalReadCodexTurn := readCodexTurn
 	readCodexTurn = func(context.Context, string, string) (codexapp.Turn, error) {

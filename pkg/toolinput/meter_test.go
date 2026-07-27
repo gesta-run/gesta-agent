@@ -2,11 +2,17 @@ package toolinput
 
 import "testing"
 
+func configuredClassifier() Classifier {
+	return NewClassifier([]string{
+		".go", ".css", ".scss", ".sass", ".less", ".pcss", ".styl", ".html", ".ts",
+	}, []string{"Dockerfile", "Makefile"})
+}
+
 func TestMeasureCodexFileChangesByTargetCategory(t *testing.T) {
 	measurements := MeasureCodexFileChanges([]FileChange{
 		{Path: "src/app.go", Kind: "update", Diff: "@@\n-old\n+new code\n+second line\n"},
 		{Path: "docs/design.md", Kind: "add", Diff: "hello docs\n"},
-	})
+	}, configuredClassifier())
 	if len(measurements) != 2 {
 		t.Fatalf("measurements = %#v, want two categories", measurements)
 	}
@@ -78,7 +84,7 @@ func TestMeasureCodexFileChangesClassifiesStylesAsCode(t *testing.T) {
 				Path: path,
 				Kind: "add",
 				Diff: ".card { color: red; }\n",
-			}})
+			}}, configuredClassifier())
 			if len(measurements) != 1 || measurements[0].Category != CategoryCode {
 				t.Fatalf("measurements = %#v, want code", measurements)
 			}
@@ -87,18 +93,18 @@ func TestMeasureCodexFileChangesClassifiesStylesAsCode(t *testing.T) {
 }
 
 func TestMeasureClaudeWriteAndEditUseOnlyModelText(t *testing.T) {
-	write := MeasureClaudeToolUse("Write", map[string]interface{}{"file_path": "/tmp/readme.md", "content": "hello\nworld\n"})
+	write := MeasureClaudeToolUse("Write", map[string]interface{}{"file_path": "/tmp/readme.md", "content": "hello\nworld\n"}, configuredClassifier())
 	if len(write) != 1 || write[0].Category != CategoryDocs || write[0].Counts.Characters != 10 || write[0].Counts.Lines != 2 {
 		t.Fatalf("write = %#v", write)
 	}
-	edit := MeasureClaudeToolUse("Edit", map[string]interface{}{"file_path": "main.go", "old_string": "old text", "new_string": "new"})
+	edit := MeasureClaudeToolUse("Edit", map[string]interface{}{"file_path": "main.go", "old_string": "old text", "new_string": "new"}, configuredClassifier())
 	if len(edit) != 1 || edit[0].Counts.Characters != 3 {
 		t.Fatalf("edit = %#v", edit)
 	}
 }
 
 func TestMeasureCodexFileChangesCountContentStartingWithPlus(t *testing.T) {
-	measurements := MeasureCodexFileChanges([]FileChange{{Path: "src/app.go", Kind: "update", Diff: "@@\n-value\n+++value\n"}})
+	measurements := MeasureCodexFileChanges([]FileChange{{Path: "src/app.go", Kind: "update", Diff: "@@\n-value\n+++value\n"}}, configuredClassifier())
 	if len(measurements) != 1 {
 		t.Fatalf("measurements = %#v, want one", measurements)
 	}
@@ -108,7 +114,7 @@ func TestMeasureCodexFileChangesCountContentStartingWithPlus(t *testing.T) {
 }
 
 func TestMeasureCodexFileChangesSkipsDeletes(t *testing.T) {
-	measurements := MeasureCodexFileChanges([]FileChange{{Path: "src/old.go", Kind: "delete", Diff: "removed code\n"}})
+	measurements := MeasureCodexFileChanges([]FileChange{{Path: "src/old.go", Kind: "delete", Diff: "removed code\n"}}, configuredClassifier())
 	if len(measurements) != 0 {
 		t.Fatalf("delete measurements = %#v, want none", measurements)
 	}
@@ -123,7 +129,7 @@ func TestMeasureMCPClassifiesDocumentToolsAndFiltersIdentifiers(t *testing.T) {
 		"title":     "Release plan",
 		"content":   "Ship the Gross Ink meter",
 		"count":     10,
-	})
+	}, configuredClassifier())
 	if len(measurements) != 1 {
 		t.Fatalf("measurements = %#v", measurements)
 	}
@@ -137,16 +143,24 @@ func TestMeasureMCPClassifiesPathsAndFallsBackToOther(t *testing.T) {
 	code := MeasureCodexMCP("mcp__github__create_or_update_file", map[string]interface{}{
 		"path":    "src/main.go",
 		"content": "package main",
-	})
+	}, configuredClassifier())
 	if len(code) != 1 || code[0].Category != CategoryCode {
 		t.Fatalf("code measurement = %#v", code)
 	}
 
 	other := MeasureCodexMCP("mcp__custom__submit", map[string]interface{}{
 		"content": "unclassified external output",
-	})
+	}, configuredClassifier())
 	if len(other) != 1 || other[0].Category != CategoryOther {
 		t.Fatalf("other measurement = %#v", other)
+	}
+
+	unconfiguredPath := MeasureCodexMCP("mcp__github__create_or_update_file", map[string]interface{}{
+		"path":    "src/main.go",
+		"content": "package main",
+	}, NewClassifier(nil, nil))
+	if len(unconfiguredPath) != 1 || unconfiguredPath[0].Category != CategoryOther {
+		t.Fatalf("unconfigured path measurement = %#v", unconfiguredPath)
 	}
 }
 
@@ -164,7 +178,7 @@ func TestMeasureMCPUsesExactOperationAndArtifactTokens(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			measurements := MeasureCodexMCP(test.toolName, map[string]interface{}{"content": "measured text"})
+			measurements := MeasureCodexMCP(test.toolName, map[string]interface{}{"content": "measured text"}, configuredClassifier())
 			if len(measurements) != 1 || measurements[0].Category != test.want {
 				t.Fatalf("measurement = %#v, want category %q", measurements, test.want)
 			}
@@ -174,7 +188,7 @@ func TestMeasureMCPUsesExactOperationAndArtifactTokens(t *testing.T) {
 
 func TestMeasureIgnoresShellReplAndUnknownTools(t *testing.T) {
 	for _, tool := range []string{"functions.exec_command", "Bash", "Node REPL", "update_plan"} {
-		if got := MeasureCodexMCP(tool, map[string]interface{}{"cmd": "go test ./...", "text": "not product output"}); len(got) != 0 {
+		if got := MeasureCodexMCP(tool, map[string]interface{}{"cmd": "go test ./...", "text": "not product output"}, configuredClassifier()); len(got) != 0 {
 			t.Fatalf("%s measurement = %#v, want none", tool, got)
 		}
 	}
@@ -182,8 +196,56 @@ func TestMeasureIgnoresShellReplAndUnknownTools(t *testing.T) {
 
 func TestCodexPreToolUseDoesNotMeasureFileWrites(t *testing.T) {
 	for _, tool := range []string{"apply_patch", "Write", "Edit", "write_file"} {
-		if got := MeasureCodexMCP(tool, map[string]interface{}{"file_path": "main.go", "content": "new code"}); len(got) != 0 {
+		if got := MeasureCodexMCP(tool, map[string]interface{}{"file_path": "main.go", "content": "new code"}, configuredClassifier()); len(got) != 0 {
 			t.Fatalf("%s measurement = %#v, want file changes to come from thread/read", tool, got)
+		}
+	}
+}
+
+func TestClassifierUsesOnlyConfiguredCodeRules(t *testing.T) {
+	classifier := NewClassifier([]string{".ts", ".html"}, []string{"Dockerfile"})
+	for _, path := range []string{"src/app.ts", "public/index.HTML", "Dockerfile", `src\Dockerfile`} {
+		if got := classifier.classifyPath(path); got != CategoryCode {
+			t.Fatalf("classifyPath(%q) = %q, want code", path, got)
+		}
+	}
+	for _, path := range []string{"src/main.go", "Makefile", "assets/data.csv"} {
+		if got := classifier.classifyPath(path); got != CategoryOther {
+			t.Fatalf("classifyPath(%q) = %q, want other", path, got)
+		}
+	}
+}
+
+func TestClassifierNormalizesWindowsPathsBeforeTestDetection(t *testing.T) {
+	classifier := NewClassifier([]string{".ts"}, nil)
+
+	if got := classifier.classifyPath(`C:\repo\tests\fixture.ts`); got != CategoryTests {
+		t.Fatalf("Windows test path category = %q, want %q", got, CategoryTests)
+	}
+	if got := classifier.classifyPath(`C:\repo\src\fixture.ts`); got != CategoryCode {
+		t.Fatalf("Windows source path category = %q, want %q", got, CategoryCode)
+	}
+}
+
+func TestClassifierPreservesNonCodeCategories(t *testing.T) {
+	classifier := NewClassifier([]string{".ts"}, nil)
+	tests := map[string]string{
+		"docs/readme.md":       CategoryDocs,
+		"config/settings.json": CategoryConfig,
+		"src/app.test.ts":      CategoryTests,
+	}
+	for path, want := range tests {
+		if got := classifier.classifyPath(path); got != want {
+			t.Fatalf("classifyPath(%q) = %q, want %q", path, got, want)
+		}
+	}
+}
+
+func TestClassifierLetsConfiguredCodeOverrideDocumentAndConfigSuffixes(t *testing.T) {
+	classifier := NewClassifier([]string{".md", ".json"}, nil)
+	for _, path := range []string{"docs/readme.md", "config/settings.json"} {
+		if got := classifier.classifyPath(path); got != CategoryCode {
+			t.Fatalf("classifyPath(%q) = %q, want code", path, got)
 		}
 	}
 }

@@ -105,6 +105,10 @@ func TestClientHeartbeatSendsDaemonTokenAndHostType(t *testing.T) {
 				URL:           "https://example.com/gesta-agent",
 				SHA256:        "abc123",
 			},
+			OutputClassification: &model.OutputClassificationSettings{
+				Revision:     4,
+				CodeSuffixes: []string{".html"},
+			},
 		})
 	}))
 	defer server.Close()
@@ -131,6 +135,9 @@ func TestClientHeartbeatSendsDaemonTokenAndHostType(t *testing.T) {
 	}
 	if resp.Upgrade == nil || resp.Upgrade.Mode != "auto" || resp.Upgrade.TargetVersion != "9.9.9" {
 		t.Fatalf("heartbeat upgrade response = %#v", resp.Upgrade)
+	}
+	if resp.OutputClassification == nil || resp.OutputClassification.Revision != 4 {
+		t.Fatalf("heartbeat classification response = %#v", resp.OutputClassification)
 	}
 }
 

@@ -57,30 +57,30 @@ type FileChange struct {
 	Diff string
 }
 
-func MeasureCodexFileChanges(changes []FileChange) []Measurement {
+func MeasureCodexFileChanges(changes []FileChange, classifier Classifier) []Measurement {
 	acc := map[accumulatorKey]Counts{}
 	for _, change := range changes {
 		switch change.Kind {
 		case "add":
-			addText(acc, "file_write", classifyPath(change.Path), change.Path, change.Diff)
+			addText(acc, "file_write", classifier.classifyPath(change.Path), change.Path, change.Diff)
 		case "update":
-			measureUnifiedDiff(acc, change.Path, change.Diff)
+			measureUnifiedDiff(acc, change.Path, change.Diff, classifier)
 		}
 	}
 	return measurementsFrom(acc)
 }
 
-func MeasureCodexMCP(toolName string, input interface{}) []Measurement {
+func MeasureCodexMCP(toolName string, input interface{}, classifier Classifier) []Measurement {
 	name := normalizeToolName(toolName)
 	if !isMCPTool(name) {
 		return nil
 	}
 	acc := map[accumulatorKey]Counts{}
-	measureMCPInput(acc, name, input)
+	measureMCPInput(acc, name, input, classifier)
 	return measurementsFrom(acc)
 }
 
-func MeasureClaudeToolUse(toolName string, input interface{}) []Measurement {
+func MeasureClaudeToolUse(toolName string, input interface{}, classifier Classifier) []Measurement {
 	name := normalizeToolName(toolName)
 	values, _ := input.(map[string]interface{})
 	acc := map[accumulatorKey]Counts{}
@@ -91,28 +91,28 @@ func MeasureClaudeToolUse(toolName string, input interface{}) []Measurement {
 		if patch == "" {
 			patch = firstRawString(values, "patch", "command", "input")
 		}
-		measurePatch(acc, patch)
+		measurePatch(acc, patch, classifier)
 	case "write", "write_file", "writefile":
 		path := firstRawString(values, "file_path", "path")
-		addText(acc, "file_write", classifyPath(path), path, firstRawString(values, "content"))
+		addText(acc, "file_write", classifier.classifyPath(path), path, firstRawString(values, "content"))
 	case "edit", "edit_file", "editfile":
 		path := firstRawString(values, "file_path", "path")
-		addText(acc, "file_write", classifyPath(path), path, firstRawString(values, "new_string", "replacement"))
+		addText(acc, "file_write", classifier.classifyPath(path), path, firstRawString(values, "new_string", "replacement"))
 	case "multiedit", "multi_edit":
-		measureMultiEdit(acc, values)
+		measureMultiEdit(acc, values, classifier)
 	case "notebookedit", "notebook_edit":
 		path := firstRawString(values, "notebook_path", "file_path", "path")
-		addText(acc, "file_write", classifyPath(path), path, firstRawString(values, "new_source", "source", "content", "new_string"))
+		addText(acc, "file_write", classifier.classifyPath(path), path, firstRawString(values, "new_source", "source", "content", "new_string"))
 	default:
 		if isMCPTool(name) {
-			measureMCPInput(acc, name, input)
+			measureMCPInput(acc, name, input, classifier)
 		}
 	}
 
 	return measurementsFrom(acc)
 }
 
-func measureUnifiedDiff(acc map[accumulatorKey]Counts, path, diff string) {
+func measureUnifiedDiff(acc map[accumulatorKey]Counts, path, diff string, classifier Classifier) {
 	path = strings.TrimSpace(path)
 	if path == "" || strings.TrimSpace(diff) == "" {
 		return
@@ -121,7 +121,7 @@ func measureUnifiedDiff(acc map[accumulatorKey]Counts, path, diff string) {
 		if !strings.HasPrefix(line, "+") || strings.HasPrefix(line, "+++ ") {
 			continue
 		}
-		addLine(acc, "file_write", classifyPath(path), path, strings.TrimPrefix(line, "+"))
+		addLine(acc, "file_write", classifier.classifyPath(path), path, strings.TrimPrefix(line, "+"))
 	}
 }
 
@@ -148,7 +148,7 @@ func inputString(input interface{}) string {
 	return ""
 }
 
-func measureMultiEdit(acc map[accumulatorKey]Counts, values map[string]interface{}) {
+func measureMultiEdit(acc map[accumulatorKey]Counts, values map[string]interface{}, classifier Classifier) {
 	path := firstRawString(values, "file_path", "path")
 	edits, _ := values["edits"].([]interface{})
 	for _, raw := range edits {
@@ -157,11 +157,11 @@ func measureMultiEdit(acc map[accumulatorKey]Counts, values map[string]interface
 		if editPath == "" {
 			editPath = path
 		}
-		addText(acc, "file_write", classifyPath(editPath), editPath, firstRawString(edit, "new_string", "replacement"))
+		addText(acc, "file_write", classifier.classifyPath(editPath), editPath, firstRawString(edit, "new_string", "replacement"))
 	}
 }
 
-func measurePatch(acc map[accumulatorKey]Counts, patch string) {
+func measurePatch(acc map[accumulatorKey]Counts, patch string, classifier Classifier) {
 	if strings.TrimSpace(patch) == "" {
 		return
 	}
@@ -185,12 +185,12 @@ func measurePatch(acc map[accumulatorKey]Counts, patch string) {
 		if !strings.HasPrefix(line, "+") || path == "" {
 			continue
 		}
-		addLine(acc, "file_write", classifyPath(path), path, strings.TrimPrefix(line, "+"))
+		addLine(acc, "file_write", classifier.classifyPath(path), path, strings.TrimPrefix(line, "+"))
 	}
 }
 
-func measureMCPInput(acc map[accumulatorKey]Counts, toolName string, input interface{}) {
-	category := classifyMCPInput(toolName, input)
+func measureMCPInput(acc map[accumulatorKey]Counts, toolName string, input interface{}, classifier Classifier) {
+	category := classifyMCPInput(toolName, input, classifier)
 	var walk func(string, interface{})
 	walk = func(key string, value interface{}) {
 		switch typed := value.(type) {
@@ -216,8 +216,9 @@ func measureMCPInput(acc map[accumulatorKey]Counts, toolName string, input inter
 	walk("", input)
 }
 
-func classifyMCPInput(toolName string, input interface{}) string {
+func classifyMCPInput(toolName string, input interface{}, classifier Classifier) string {
 	pathCategories := map[string]struct{}{}
+	sawPath := false
 	var inspect func(string, interface{})
 	inspect = func(key string, value interface{}) {
 		switch typed := value.(type) {
@@ -237,7 +238,8 @@ func classifyMCPInput(toolName string, input interface{}) string {
 				strings.HasSuffix(lowerKey, "_path") ||
 				strings.HasSuffix(lowerKey, "_file") ||
 				strings.HasSuffix(lowerKey, "_filename") {
-				if category := classifyPath(typed); category != CategoryOther {
+				sawPath = true
+				if category := classifier.classifyPath(typed); category != CategoryOther {
 					pathCategories[category] = struct{}{}
 				}
 			}
@@ -250,6 +252,9 @@ func classifyMCPInput(toolName string, input interface{}) string {
 		}
 	}
 	if len(pathCategories) > 1 {
+		return CategoryOther
+	}
+	if sawPath {
 		return CategoryOther
 	}
 
@@ -320,36 +325,6 @@ func firstRawString(values map[string]interface{}, keys ...string) string {
 		}
 	}
 	return ""
-}
-
-func classifyPath(path string) string {
-	lower := strings.ToLower(strings.TrimSpace(path))
-	if lower == "" {
-		return CategoryOther
-	}
-	if strings.Contains(lower, "/tests/") || strings.Contains(lower, "/__tests__/") || strings.HasPrefix(lower, "tests/") || strings.HasPrefix(lower, "__tests__/") || strings.Contains(lower, ".test.") || strings.Contains(lower, ".spec.") || strings.HasSuffix(lower, "_test.go") {
-		return CategoryTests
-	}
-	for _, suffix := range []string{".md", ".mdx", ".txt", ".rst", ".adoc"} {
-		if strings.HasSuffix(lower, suffix) {
-			return CategoryDocs
-		}
-	}
-	for _, suffix := range []string{".json", ".yaml", ".yml", ".toml", ".ini", ".conf", ".env"} {
-		if strings.HasSuffix(lower, suffix) {
-			return CategoryConfig
-		}
-	}
-	for _, suffix := range []string{
-		".go", ".ts", ".tsx", ".js", ".jsx", ".py", ".rs", ".java", ".kt", ".kts",
-		".c", ".cc", ".cpp", ".h", ".hpp", ".cs", ".rb", ".php", ".swift", ".scala",
-		".sh", ".sql", ".css", ".scss", ".sass", ".less", ".pcss", ".styl",
-	} {
-		if strings.HasSuffix(lower, suffix) {
-			return CategoryCode
-		}
-	}
-	return CategoryOther
 }
 
 func addText(acc map[accumulatorKey]Counts, toolClass, category, target, text string) {
