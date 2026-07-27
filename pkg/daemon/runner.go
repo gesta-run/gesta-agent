@@ -25,6 +25,7 @@ type Runner struct {
 	applyUpgrade               func(model.HeartbeatResponse) error
 	nextLocalActivityCleanupAt time.Time
 	legacyQueueReported        bool
+	runtimeSettingsSynced      bool
 }
 
 func NewRunner(cfg Config) (*Runner, error) {
@@ -34,12 +35,18 @@ func NewRunner(cfg Config) (*Runner, error) {
 	if cfg.DataDir == "" {
 		cfg.DataDir = DefaultDataDir()
 	}
-	return &Runner{
+	runner := &Runner{
 		cfg:    cfg,
 		client: NewClient(cfg.EffectiveServerURL(), cfg.Token),
 		queue:  NewQueue(cfg.DataDir),
 		logger: slog.Default(),
-	}, nil
+	}
+	if removedBytes, err := cleanupDeprecatedState(cfg.DataDir); err != nil {
+		runner.logger.Warn("deprecated local state cleanup failed", "error", err)
+	} else if removedBytes > 0 {
+		runner.logger.Info("deprecated local state removed", "bytes", removedBytes)
+	}
+	return runner, nil
 }
 
 func (r *Runner) RunOnce(ctx context.Context) error {
@@ -47,6 +54,9 @@ func (r *Runner) RunOnce(ctx context.Context) error {
 	r.logCollectionStarted()
 	r.reportLegacyQueue()
 	r.cleanupLocalActivityDetails(startedAt)
+	if err := r.ensureRuntimeSettings(); err != nil {
+		return err
+	}
 	if err := r.SyncRules(); err != nil {
 		r.logger.Warn("rule sync failed", "error", err)
 	}
@@ -59,6 +69,18 @@ func (r *Runner) RunOnce(ctx context.Context) error {
 	}
 	r.logger.Info("agent collection finished", "elapsed_ms", time.Since(startedAt).Milliseconds(), "queue_size", r.queue.Size())
 	return nil
+}
+
+func (r *Runner) ensureRuntimeSettings() error {
+	if r.runtimeSettingsSynced {
+		return nil
+	}
+	response, err := r.sendHeartbeat("collecting", nil)
+	if err != nil {
+		r.logger.Warn("initial runtime settings sync failed", "error", err)
+		return nil
+	}
+	return r.applyActionableUpgradeFromHeartbeat(response)
 }
 
 func (r *Runner) cleanupLocalActivityDetails(now time.Time) {
@@ -252,7 +274,7 @@ func (r *Runner) SendHeartbeat() error {
 
 func (r *Runner) sendHeartbeat(health string, adapters []model.AdapterStatus) (model.HeartbeatResponse, error) {
 	hostname, _ := os.Hostname()
-	return r.client.Heartbeat(model.HeartbeatRequest{
+	response, err := r.client.Heartbeat(model.HeartbeatRequest{
 		DaemonID:      r.cfg.DaemonID,
 		DeviceID:      r.cfg.DeviceID,
 		TeamID:        r.cfg.TeamID,
@@ -266,6 +288,22 @@ func (r *Runner) sendHeartbeat(health string, adapters []model.AdapterStatus) (m
 		HealthStatus:  health,
 		Adapters:      adapters,
 	})
+	if err != nil {
+		return model.HeartbeatResponse{}, err
+	}
+	if response.OutputClassification == nil {
+		return response, nil
+	}
+	if response.OutputClassification.Revision <= 0 {
+		return model.HeartbeatResponse{}, fmt.Errorf(
+			"save output classification settings: revision must be positive",
+		)
+	}
+	if err := SaveOutputClassificationCache(r.cfg.DataDir, *response.OutputClassification, time.Now().UTC()); err != nil {
+		return model.HeartbeatResponse{}, fmt.Errorf("save output classification settings: %w", err)
+	}
+	r.runtimeSettingsSynced = true
+	return response, nil
 }
 
 func (r *Runner) RunLoop(ctx context.Context, interval time.Duration) error {

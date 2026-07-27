@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/gesta-run/gesta-agent/pkg/daemon"
 	"github.com/gesta-run/gesta-agent/pkg/model"
@@ -16,6 +17,17 @@ import (
 type hookRuleServer struct {
 	Server        *httptest.Server
 	EventRequests atomic.Int32
+}
+
+func saveTestOutputClassification(t *testing.T, cfg daemon.Config) {
+	t.Helper()
+	if err := daemon.SaveOutputClassificationCache(cfg.DataDir, model.OutputClassificationSettings{
+		Revision:      1,
+		CodeSuffixes:  []string{".go", ".html", ".ts", ".tsx"},
+		CodeFilenames: []string{"Dockerfile", "Makefile"},
+	}, time.Now().UTC()); err != nil {
+		t.Fatalf("SaveOutputClassificationCache: %v", err)
+	}
 }
 
 func readSingleQueuedEvent(t *testing.T, cfg daemon.Config) model.EventEnvelope {

@@ -34,6 +34,11 @@ func TestFlushWithHeartbeatAppliesUpgradeBeforeFlush(t *testing.T) {
 					TargetVersion: "0.0.1-rc99",
 					URL:           "https://updates.example/gesta-agent-darwin-arm64",
 				},
+				OutputClassification: &model.OutputClassificationSettings{
+					Revision:      2,
+					CodeSuffixes:  []string{".html"},
+					CodeFilenames: []string{"Dockerfile"},
+				},
 			})
 		case "/api/v1/events":
 			eventFlushes++
@@ -73,5 +78,99 @@ func TestFlushWithHeartbeatAppliesUpgradeBeforeFlush(t *testing.T) {
 	}
 	if eventFlushes != 0 {
 		t.Fatalf("event flushes = %d, want 0", eventFlushes)
+	}
+	cache, cacheErr := LoadOutputClassificationCache(dir)
+	if cacheErr != nil || cache.Revision != 2 {
+		t.Fatalf("output classification cache = (%+v, %v)", cache, cacheErr)
+	}
+}
+
+func TestEnsureRuntimeSettingsSyncsClassificationOnce(t *testing.T) {
+	var heartbeats int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/heartbeat" {
+			http.NotFound(w, r)
+			return
+		}
+		heartbeats++
+		_ = json.NewEncoder(w).Encode(model.HeartbeatResponse{
+			OutputClassification: &model.OutputClassificationSettings{
+				Revision:      5,
+				CodeSuffixes:  []string{".html"},
+				CodeFilenames: []string{"Dockerfile"},
+			},
+		})
+	}))
+	defer server.Close()
+
+	dataDir := t.TempDir()
+	runner := &Runner{
+		cfg: Config{
+			DaemonID:      "daemon_settings",
+			DeviceID:      "device_settings",
+			PolicyVersion: model.DefaultPolicyVersion,
+			DataDir:       dataDir,
+		},
+		client: NewClient(server.URL, "dtok_settings"),
+		queue:  NewQueue(dataDir),
+		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	if err := runner.ensureRuntimeSettings(); err != nil {
+		t.Fatalf("ensureRuntimeSettings: %v", err)
+	}
+	if err := runner.ensureRuntimeSettings(); err != nil {
+		t.Fatalf("ensureRuntimeSettings repeat: %v", err)
+	}
+	if heartbeats != 1 {
+		t.Fatalf("heartbeats = %d, want 1", heartbeats)
+	}
+	cache, err := LoadOutputClassificationCache(dataDir)
+	if err != nil || cache.Revision != 5 {
+		t.Fatalf("output classification cache = (%+v, %v)", cache, err)
+	}
+}
+
+func TestHeartbeatWithoutClassificationPreservesLastValidCache(t *testing.T) {
+	dataDir := t.TempDir()
+	if err := SaveOutputClassificationCache(dataDir, model.OutputClassificationSettings{
+		Revision:      7,
+		CodeSuffixes:  []string{".html"},
+		CodeFilenames: []string{"Dockerfile"},
+	}, time.Now().UTC()); err != nil {
+		t.Fatalf("save initial output classification cache: %v", err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/heartbeat" {
+			http.NotFound(w, r)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(model.HeartbeatResponse{})
+	}))
+	defer server.Close()
+
+	runner := &Runner{
+		cfg: Config{
+			DaemonID:      "daemon_settings",
+			DeviceID:      "device_settings",
+			PolicyVersion: model.DefaultPolicyVersion,
+			DataDir:       dataDir,
+		},
+		client: NewClient(server.URL, "dtok_settings"),
+		queue:  NewQueue(dataDir),
+		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	if _, err := runner.sendHeartbeat("ok", nil); err != nil {
+		t.Fatalf("sendHeartbeat: %v", err)
+	}
+	cache, err := LoadOutputClassificationCache(dataDir)
+	if err != nil {
+		t.Fatalf("load output classification cache: %v", err)
+	}
+	if cache.Revision != 7 || len(cache.CodeSuffixes) != 1 || cache.CodeSuffixes[0] != ".html" {
+		t.Fatalf("output classification cache = %+v", cache)
+	}
+	if runner.runtimeSettingsSynced {
+		t.Fatal("runtime settings should remain eligible for retry")
 	}
 }
