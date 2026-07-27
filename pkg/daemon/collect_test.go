@@ -55,6 +55,18 @@ func TestSnapshotEventIsStableForUnchangedPayload(t *testing.T) {
 	}
 }
 
+func TestSnapshotEventMatchesControlPlaneCanonicalIdentity(t *testing.T) {
+	cfg := Config{DaemonID: "daemon_1"}
+	event := snapshotEvent(cfg, "agent.discovery", "daemon", "codex", map[string]interface{}{
+		"version":          "1.2.3",
+		"binary_path_hash": "abc",
+	})
+	const want = "evt_snapshot_7d6a2c6e5cecb150c1984cee1f13384f2a790fd3a32e45b96a9799b7f5cdf6d2"
+	if event.EventID != want {
+		t.Fatalf("snapshot event ID = %q, want %q", event.EventID, want)
+	}
+}
+
 func TestSnapshotEventChangesWithPayload(t *testing.T) {
 	cfg := Config{DaemonID: "daemon_test"}
 	first := snapshotEvent(cfg, "agent.discovery", "daemon", "codex", map[string]interface{}{"version": "1.2.3"})

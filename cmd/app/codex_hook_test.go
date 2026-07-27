@@ -78,7 +78,7 @@ func TestCodexHookMeasuresOnlyCompletedThreadItems(t *testing.T) {
 
 	originalReadCodexTurn := readCodexTurn
 	readCodexTurn = func(context.Context, string, string) (codexapp.Turn, error) {
-		completedAt := int64(1_700_000_000)
+		completedAt := time.Now().Unix()
 		return codexapp.Turn{
 			ID:          "turn-meter-1",
 			Status:      "completed",
@@ -202,7 +202,7 @@ func TestGrossInkEventPreservesEfficiencyExclusionMetadata(t *testing.T) {
 		TurnID:     "turn-1",
 		AgentType:  "codex",
 		Source:     "codex",
-		ObservedAt: time.Unix(1_700_000_000, 0),
+		ObservedAt: time.Now().UTC(),
 		Measurements: []toolinput.Measurement{{
 			ToolClass:                 "file_write",
 			Category:                  toolinput.CategoryCode,

@@ -141,6 +141,9 @@ func TestClientSendEventsDropsUnmatchedPolicyDecisions(t *testing.T) {
 		if r.URL.Path != "/api/v1/events" {
 			t.Fatalf("unexpected path: %s", r.URL.Path)
 		}
+		if got := r.Header.Get(model.EventProtocolHeader); got != model.EventProtocolVersion {
+			t.Fatalf("%s = %q, want %q", model.EventProtocolHeader, got, model.EventProtocolVersion)
+		}
 		var batch struct {
 			Events []map[string]interface{} `json:"events"`
 		}

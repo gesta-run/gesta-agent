@@ -63,7 +63,13 @@ func (c *Client) SendEvents(events []model.EventEnvelope) error {
 		events[i].UserName = ""
 	}
 	var resp map[string]interface{}
-	return c.post("/api/v1/events", c.token, model.EventBatch{Events: events}, &resp)
+	headers := map[string]string{
+		model.EventProtocolHeader: model.EventProtocolVersion,
+	}
+	if c.token != "" {
+		headers["Authorization"] = "Bearer " + c.token
+	}
+	return c.postWithHeaders("/api/v1/events", headers, model.EventBatch{Events: events}, &resp)
 }
 
 func filterUploadEvents(events []model.EventEnvelope) []model.EventEnvelope {

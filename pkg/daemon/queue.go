@@ -1,235 +1,252 @@
 package daemon
 
 import (
-	"bufio"
-	"bytes"
-	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"time"
 
 	"github.com/gesta-run/gesta-agent/pkg/model"
+	bolt "go.etcd.io/bbolt"
 )
 
-const queueDrainBatchSize = 500
+const (
+	queueDrainBatchSize           = 500
+	queueMaxAge                   = 30 * 24 * time.Hour
+	queueMaxBytes           int64 = 512 * 1024 * 1024
+	defaultQueueLockTimeout       = 5 * time.Second
+)
+
+var compactableSnapshotEventTypes = map[string]struct{}{
+	"adapter.warning":             {},
+	"agent.discovery":             {},
+	"claude_code.config_snapshot": {},
+	"claude_code.usage_summary":   {},
+	"codex.usage_summary":         {},
+	"daemon.system_snapshot":      {},
+}
 
 type Queue struct {
-	path string
+	path        string
+	legacyPath  string
+	now         func() time.Time
+	maxAge      time.Duration
+	maxBytes    int64
+	lockTimeout time.Duration
+}
+
+type QueueStats struct {
+	QueuedEvents     int
+	QueuedBytes      int64
+	RemovedExpired   int
+	RemovedDuplicate int
+	RemovedCapacity  int
+	OldestQueuedAt   time.Time
+}
+
+type LegacyQueueStats struct {
+	Events         int
+	Bytes          int64
+	OldestQueuedAt time.Time
+	NewestQueuedAt time.Time
+	EventTypes     map[string]int
 }
 
 func NewQueue(dataDir string) Queue {
-	return Queue{path: filepath.Join(dataDir, "queue.jsonl")}
+	return Queue{
+		path:        filepath.Join(dataDir, "queue-v2.db"),
+		legacyPath:  filepath.Join(dataDir, "queue.jsonl"),
+		now:         time.Now,
+		maxAge:      queueMaxAge,
+		maxBytes:    queueMaxBytes,
+		lockTimeout: defaultQueueLockTimeout,
+	}
 }
 
 func (q Queue) Append(events []model.EventEnvelope) error {
-	if len(events) == 0 {
-		return nil
+	_, err := q.AppendWithStats(events)
+	return err
+}
+
+func (q Queue) AppendWithStats(events []model.EventEnvelope) (QueueStats, error) {
+	db, err := q.open()
+	if err != nil {
+		return QueueStats{}, err
 	}
-	return q.withLock(func() error {
-		file, err := os.OpenFile(q.path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	defer db.Close()
+
+	var stats QueueStats
+	err = db.Update(func(tx *bolt.Tx) error {
+		if err := initializeQueueBuckets(tx); err != nil {
+			return err
+		}
+		stats.RemovedExpired, err = q.pruneExpired(tx)
 		if err != nil {
 			return err
 		}
-		defer file.Close()
-		enc := json.NewEncoder(file)
 		for _, event := range events {
-			if err := enc.Encode(event); err != nil {
-				return err
+			if event.CreatedAt.IsZero() || event.CreatedAt.Before(q.cutoff()) {
+				stats.RemovedExpired++
+				continue
+			}
+			removedDuplicate, insertErr := insertQueuedEvent(tx, event)
+			if insertErr != nil {
+				return insertErr
+			}
+			if removedDuplicate {
+				stats.RemovedDuplicate++
 			}
 		}
+		stats.RemovedCapacity, err = q.evictOverCapacity(tx)
+		if err != nil {
+			return err
+		}
+		stats = mergeQueueStats(stats, queueStatsFromTx(tx))
 		return nil
 	})
+	return stats, err
 }
 
 func (q Queue) ReadAll() ([]model.EventEnvelope, error) {
-	return readQueueFile(q.path)
-}
-
-func (q Queue) Drain(send func([]model.EventEnvelope) error) error {
-	rotated := false
-	if err := q.withLock(func() error {
-		if err := q.restoreInflightLocked(); err != nil {
-			return err
-		}
-		if err := os.Rename(q.path, q.inflightPath()); err != nil {
-			if errors.Is(err, os.ErrNotExist) {
-				return nil
-			}
-			return err
-		}
-		rotated = true
-		return nil
-	}); err != nil {
-		return err
-	}
-	if !rotated {
-		return nil
-	}
-
-	events, err := readQueueFile(q.inflightPath())
-	if err != nil {
-		_ = q.requeueInflight()
-		return err
-	}
-	if len(events) == 0 {
-		return removeIfExists(q.inflightPath())
-	}
-	for len(events) > 0 {
-		batchSize := queueDrainBatchSize
-		if len(events) < batchSize {
-			batchSize = len(events)
-		}
-		if err := send(events[:batchSize]); err != nil {
-			if requeueErr := q.requeueInflight(); requeueErr != nil {
-				return fmt.Errorf("%w; failed to requeue in-flight events: %v", err, requeueErr)
-			}
-			return err
-		}
-		events = events[batchSize:]
-		if len(events) == 0 {
-			break
-		}
-		if err := writeQueueFile(q.inflightPath(), events); err != nil {
-			return err
-		}
-	}
-	return removeIfExists(q.inflightPath())
-}
-
-func readQueueFile(path string) ([]model.EventEnvelope, error) {
-	file, err := os.Open(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return []model.EventEnvelope{}, nil
-	}
+	db, err := q.open()
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
+	defer db.Close()
+
 	var events []model.EventEnvelope
-	scanner := bufio.NewScanner(file)
-	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
-	line := 0
-	for scanner.Scan() {
-		line++
-		var event model.EventEnvelope
-		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
-			return nil, fmt.Errorf("read queue %s line %d: %w", path, line, err)
+	err = db.View(func(tx *bolt.Tx) error {
+		bucket := tx.Bucket(queueEventsBucket)
+		if bucket == nil {
+			return nil
 		}
-		events = append(events, event)
-	}
-	return events, scanner.Err()
+		return bucket.ForEach(func(_, value []byte) error {
+			event, _, err := decodeQueuedEvent(value)
+			if err != nil {
+				return err
+			}
+			events = append(events, event)
+			return nil
+		})
+	})
+	return events, err
 }
 
-func writeQueueFile(path string, events []model.EventEnvelope) error {
-	if len(events) == 0 {
-		return os.WriteFile(path, nil, 0o600)
+func (q Queue) Stats() (QueueStats, error) {
+	db, err := q.open()
+	if err != nil {
+		return QueueStats{}, err
 	}
-	tmpPath := path + ".tmp"
-	file, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+	defer db.Close()
+
+	var stats QueueStats
+	err = db.View(func(tx *bolt.Tx) error {
+		stats = queueStatsFromTx(tx)
+		return nil
+	})
+	return stats, err
+}
+
+func (q Queue) Drain(send func([]model.EventEnvelope) error) error {
+	unlock, err := q.acquireDrainLock()
 	if err != nil {
 		return err
 	}
-	enc := json.NewEncoder(file)
-	for _, event := range events {
-		if err := enc.Encode(event); err != nil {
-			_ = file.Close()
-			_ = os.Remove(tmpPath)
-			return err
-		}
-	}
-	if err := file.Close(); err != nil {
-		_ = os.Remove(tmpPath)
+	defer unlock()
+
+	watermark, err := q.drainWatermark()
+	if err != nil {
 		return err
 	}
-	return os.Rename(tmpPath, path)
+	if watermark == nil {
+		return nil
+	}
+	for {
+		batch, err := q.nextDrainBatch(watermark)
+		if err != nil {
+			return err
+		}
+		if len(batch) == 0 {
+			return nil
+		}
+		events := make([]model.EventEnvelope, len(batch))
+		for index := range batch {
+			events[index] = batch[index].event
+		}
+		if err := send(events); err != nil {
+			return err
+		}
+		if err := q.acknowledge(batch); err != nil {
+			return fmt.Errorf("acknowledge queue batch: %w", err)
+		}
+	}
 }
 
 func (q Queue) Clear() error {
-	return q.withLock(func() error {
-		if err := os.WriteFile(q.path, nil, 0o600); err != nil {
-			return err
-		}
-		return removeIfExists(q.inflightPath())
-	})
+	db, err := q.open()
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	return db.Update(resetQueueBuckets)
 }
 
 func (q Queue) Size() int {
-	events, err := q.ReadAll()
+	stats, err := q.Stats()
 	if err != nil {
 		return 0
 	}
-	return len(events)
+	return stats.QueuedEvents
 }
 
-func (q Queue) inflightPath() string {
-	return q.path + ".inflight"
-}
-
-func (q Queue) lockPath() string {
-	return q.path + ".lock"
-}
-
-func (q Queue) withLock(fn func() error) error {
-	if err := os.MkdirAll(filepath.Dir(q.path), 0o700); err != nil {
-		return err
+func (q Queue) open() (*bolt.DB, error) {
+	if err := ensurePrivateDirectory(filepath.Dir(q.path)); err != nil {
+		return nil, err
 	}
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		lock, err := os.OpenFile(q.lockPath(), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
-		if err == nil {
-			_ = lock.Close()
-			defer os.Remove(q.lockPath())
-			return fn()
-		}
-		if !errors.Is(err, os.ErrExist) {
-			return err
-		}
-		if time.Now().After(deadline) {
-			return fmt.Errorf("queue lock timeout: %s", q.lockPath())
-		}
-		time.Sleep(25 * time.Millisecond)
-	}
-}
-
-func (q Queue) requeueInflight() error {
-	return q.withLock(func() error {
-		return q.restoreInflightLocked()
-	})
-}
-
-func (q Queue) restoreInflightLocked() error {
-	inflight, err := os.ReadFile(q.inflightPath())
+	db, err := bolt.Open(q.path, 0o600, &bolt.Options{Timeout: q.effectiveLockTimeout()})
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil
-		}
-		return err
+		return nil, fmt.Errorf("open queue database %s: %w", q.path, err)
 	}
-	active, err := os.ReadFile(q.path)
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
+	if err := db.Update(initializeQueueBuckets); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("initialize queue database %s: %w", q.path, err)
 	}
-	var restored bytes.Buffer
-	restored.Write(inflight)
-	if len(inflight) > 0 && !bytes.HasSuffix(inflight, []byte("\n")) {
-		restored.WriteByte('\n')
-	}
-	restored.Write(active)
-	tmpPath := q.path + ".restore"
-	if err := os.WriteFile(tmpPath, restored.Bytes(), 0o600); err != nil {
-		return err
-	}
-	if err := os.Rename(tmpPath, q.path); err != nil {
-		return err
-	}
-	return removeIfExists(q.inflightPath())
+	return db, nil
 }
 
-func removeIfExists(path string) error {
-	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
+func (q Queue) effectiveLockTimeout() time.Duration {
+	if q.lockTimeout > 0 {
+		return q.lockTimeout
 	}
-	return nil
+	return defaultQueueLockTimeout
+}
+
+func (q Queue) cutoff() time.Time {
+	now := time.Now()
+	if q.now != nil {
+		now = q.now()
+	}
+	maxAge := q.maxAge
+	if maxAge <= 0 {
+		maxAge = queueMaxAge
+	}
+	return now.UTC().Add(-maxAge)
+}
+
+func (q Queue) effectiveMaxBytes() int64 {
+	if q.maxBytes > 0 {
+		return q.maxBytes
+	}
+	return queueMaxBytes
+}
+
+func mergeQueueStats(changes, current QueueStats) QueueStats {
+	current.RemovedExpired = changes.RemovedExpired
+	current.RemovedDuplicate = changes.RemovedDuplicate
+	current.RemovedCapacity = changes.RemovedCapacity
+	return current
+}
+
+func ensurePrivateDirectory(path string) error {
+	return os.MkdirAll(path, 0o700)
 }

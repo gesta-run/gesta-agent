@@ -24,6 +24,7 @@ type Runner struct {
 	logger                     *slog.Logger
 	applyUpgrade               func(model.HeartbeatResponse) error
 	nextLocalActivityCleanupAt time.Time
+	legacyQueueReported        bool
 }
 
 func NewRunner(cfg Config) (*Runner, error) {
@@ -44,6 +45,7 @@ func NewRunner(cfg Config) (*Runner, error) {
 func (r *Runner) RunOnce(ctx context.Context) error {
 	startedAt := time.Now()
 	r.logCollectionStarted()
+	r.reportLegacyQueue()
 	r.cleanupLocalActivityDetails(startedAt)
 	if err := r.SyncRules(); err != nil {
 		r.logger.Warn("rule sync failed", "error", err)
@@ -98,10 +100,19 @@ func (r *Runner) collectAndQueue(ctx context.Context) ([]model.AdapterStatus, er
 	if internalEvents > 0 {
 		r.logger.Info("internal cursor events filtered", "events", internalEvents)
 	}
-	if err := r.queue.Append(queueEvents); err != nil {
+	queueStats, err := r.queue.AppendWithStats(queueEvents)
+	if err != nil {
 		return nil, fmt.Errorf("queue events: %w", err)
 	}
-	r.logger.Info("events queued", "events", len(queueEvents), "queue_size", r.queue.Size())
+	r.logger.Info("events queued",
+		"events", len(queueEvents),
+		"queue_size", queueStats.QueuedEvents,
+		"queue_bytes", queueStats.QueuedBytes,
+		"oldest_created_at", queueStats.OldestQueuedAt,
+		"removed_expired", queueStats.RemovedExpired,
+		"removed_duplicate", queueStats.RemovedDuplicate,
+		"removed_capacity", queueStats.RemovedCapacity,
+	)
 	if commitAdapters != nil {
 		if err := commitAdapters(); err != nil {
 			return nil, fmt.Errorf("commit adapter cursors: %w", err)
@@ -117,6 +128,28 @@ func (r *Runner) collectAndQueue(ctx context.Context) ([]model.AdapterStatus, er
 	return adapters, nil
 }
 
+func (r *Runner) reportLegacyQueue() {
+	if r.legacyQueueReported {
+		return
+	}
+	r.legacyQueueReported = true
+	stats, err := r.queue.LegacyStats()
+	if err != nil {
+		r.logger.Warn("legacy event queue inspection failed", "error", err)
+		return
+	}
+	if stats.Bytes == 0 {
+		return
+	}
+	r.logger.Warn("legacy event queue ignored",
+		"events", stats.Events,
+		"bytes", stats.Bytes,
+		"oldest_created_at", stats.OldestQueuedAt,
+		"newest_created_at", stats.NewestQueuedAt,
+		"event_types", stats.EventTypes,
+	)
+}
+
 func (r *Runner) flushWithHeartbeat(adapters []model.AdapterStatus) error {
 	if resp, err := r.sendHeartbeat("collecting", adapters); err != nil {
 		r.logger.Warn("heartbeat failed", "health", "collecting", "error", err)
@@ -127,7 +160,18 @@ func (r *Runner) flushWithHeartbeat(adapters []model.AdapterStatus) error {
 		}
 	}
 	if err := r.Flush(); err != nil {
-		r.logger.Warn("event flush failed", "error", err, "queue_size", r.queue.Size())
+		queueStats, statsErr := r.queue.Stats()
+		if statsErr != nil {
+			r.logger.Warn("event flush failed", "error", err, "queue_inspection_error", statsErr)
+		} else {
+			r.logger.Warn("event flush failed",
+				"error", err,
+				"queue_size", queueStats.QueuedEvents,
+				"queue_bytes", queueStats.QueuedBytes,
+				"oldest_created_at", queueStats.OldestQueuedAt,
+				"oldest_age", time.Since(queueStats.OldestQueuedAt).Round(time.Second),
+			)
+		}
 		if resp, heartbeatErr := r.sendHeartbeat("degraded", adapters); heartbeatErr != nil {
 			r.logger.Warn("heartbeat failed", "health", "degraded", "error", heartbeatErr)
 		} else {
@@ -254,18 +298,26 @@ func (r *Runner) RunLoop(ctx context.Context, interval time.Duration) error {
 }
 
 func (r *Runner) Flush() error {
-	queuedBefore := r.queue.Size()
-	if queuedBefore == 0 {
+	stats, err := r.queue.Stats()
+	if err != nil {
+		return fmt.Errorf("inspect event queue: %w", err)
+	}
+	if stats.QueuedEvents == 0 {
 		r.logger.Info("event queue empty")
 		return nil
 	}
-	r.logger.Info("flushing event queue", "queued_events", queuedBefore)
+	r.logger.Info("flushing event queue",
+		"queued_events", stats.QueuedEvents,
+		"queue_bytes", stats.QueuedBytes,
+		"oldest_created_at", stats.OldestQueuedAt,
+		"oldest_age", time.Since(stats.OldestQueuedAt).Round(time.Second),
+	)
 	startedAt := time.Now()
-	err := r.queue.Drain(r.client.SendEvents)
+	err = r.queue.Drain(r.client.SendEvents)
 	if err != nil {
 		return err
 	}
-	r.logger.Info("event queue flushed", "sent_events", queuedBefore, "elapsed_ms", time.Since(startedAt).Milliseconds())
+	r.logger.Info("event queue flushed", "sent_events", stats.QueuedEvents, "elapsed_ms", time.Since(startedAt).Milliseconds())
 	return nil
 }
 
