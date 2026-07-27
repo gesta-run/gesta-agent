@@ -232,11 +232,19 @@ func (s Store) ensureCapacityLocked(limit int, protectedName string) error {
 		name    string
 		modTime time.Time
 	}
-	candidates := make([]candidate, 0, len(entries))
+	detailEntries := make([]os.DirEntry, 0, len(entries))
 	for _, entry := range entries {
 		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
 			continue
 		}
+		detailEntries = append(detailEntries, entry)
+	}
+	if len(detailEntries) <= limit {
+		return nil
+	}
+
+	candidates := make([]candidate, 0, len(detailEntries))
+	for _, entry := range detailEntries {
 		info, err := entry.Info()
 		if err != nil {
 			continue
