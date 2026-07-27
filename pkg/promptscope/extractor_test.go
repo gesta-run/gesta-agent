@@ -32,6 +32,19 @@ Please review this layout.
 	}
 }
 
+func TestExtractCodexRequestWithoutAttachments(t *testing.T) {
+	const prompt = `<in-app-browser-context source="ambient-ui-state">
+Current URL: http://127.0.0.1:3333/activity/example
+</in-app-browser-context>
+
+## My request for Codex:
+
+提PR`
+	if got := Extract("codex", prompt); got != "提PR" {
+		t.Fatalf("Extract() = %q, want %q", got, "提PR")
+	}
+}
+
 func TestExtractCodexEnvelopeWithCRLFAndMultipleImages(t *testing.T) {
 	const prompt = "# Files mentioned by the user:\r\n\r\n" +
 		"## first.png: /tmp/first.png\r\n" +
@@ -65,8 +78,7 @@ Keep this example:
 
 func TestExtractRejectsMalformedCodexEnvelopes(t *testing.T) {
 	tests := map[string]string{
-		"request heading only": "## My request for Codex:\n\nhello",
-		"files heading only":   "# Files mentioned by the user:\n\n## file.go: /tmp/file.go",
+		"files heading only": "# Files mentioned by the user:\n\n## file.go: /tmp/file.go",
 		"wrong order": `## My request for Codex:
 hello
 # Files mentioned by the user:
@@ -79,6 +91,10 @@ hello`,
 		"duplicate request heading": `# Files mentioned by the user:
 ## file.go: /tmp/file.go
 ## My request for Codex:
+hello
+## My request for Codex:
+again`,
+		"duplicate request heading without files": `## My request for Codex:
 hello
 ## My request for Codex:
 again`,

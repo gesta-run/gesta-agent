@@ -13,6 +13,7 @@ import (
 
 	"github.com/gesta-run/gesta-agent/pkg/daemon"
 	"github.com/gesta-run/gesta-agent/pkg/model"
+	"github.com/gesta-run/gesta-agent/pkg/turnreceipt"
 )
 
 func TestCodexHookInjectsOrganizationContextWithoutUploadingPrompt(t *testing.T) {
@@ -141,6 +142,55 @@ Please review this layout.
 		if ok && match["rule_id"] == "crule_path" {
 			t.Fatalf("path-only rule was recorded: %#v", matches)
 		}
+	}
+}
+
+func TestCodexHookMatchesRequestWithoutFileEnvelope(t *testing.T) {
+	cfg := setupContextHookTest(t, []model.ContextRule{
+		{RuleID: "crule_ambient", Name: "Ambient only", Status: "active", MatchType: "keyword_any", Keywords: []string{"activity"}, AgentType: "codex", Priority: 100, ContextContent: "AMBIENT CONTEXT MUST NOT APPEAR"},
+		{RuleID: "crule_pr", Name: "PR Standards", Status: "active", MatchType: "keyword_any", Keywords: []string{"PR"}, AgentType: "codex", Priority: 90, ContextContent: "Apply the PR standard."},
+	})
+	const prompt = `<in-app-browser-context source="ambient-ui-state">
+Current URL: http://127.0.0.1:3333/activity/example
+</in-app-browser-context>
+
+## My request for Codex:
+
+提PR`
+	const sessionID = "session-request-only"
+	const turnID = "turn-request-only"
+	input, err := json.Marshal(agentHookEvent{
+		HookEventName: "UserPromptSubmit",
+		Prompt:        prompt,
+		SessionID:     sessionID,
+		TurnID:        turnID,
+	})
+	if err != nil {
+		t.Fatalf("marshal hook input: %v", err)
+	}
+	response := processAgentHook(context.Background(), input, "codex", "codex")
+	data, err := json.Marshal(response)
+	if err != nil {
+		t.Fatalf("marshal hook response: %v", err)
+	}
+	if !strings.Contains(string(data), "Apply the PR standard.") {
+		t.Fatalf("PR context missing from response: %s", data)
+	}
+	if strings.Contains(string(data), "AMBIENT CONTEXT MUST NOT APPEAR") {
+		t.Fatalf("ambient UI context matched a rule: %s", data)
+	}
+
+	receipt, found, err := turnreceipt.NewStore(cfg.DataDir).Consume(
+		"codex",
+		sessionID,
+		turnID,
+	)
+	if err != nil || !found {
+		t.Fatalf("turn receipt found = %v, err = %v", found, err)
+	}
+	if len(receipt.ContextMatches) != 1 ||
+		receipt.ContextMatches[0].RuleID != "crule_pr" {
+		t.Fatalf("turn receipt context matches = %#v", receipt.ContextMatches)
 	}
 }
 

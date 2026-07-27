@@ -35,6 +35,10 @@ func extractCodexPrompt(rawPrompt string) string {
 	if filesCount == 0 && requestCount == 0 {
 		return rawPrompt
 	}
+	if filesCount == 0 && requestCount == 1 {
+		bodyStart := lines[requestIndex].next
+		return strings.TrimSpace(rawPrompt[bodyStart:])
+	}
 	if filesCount != 1 || requestCount != 1 || filesIndex >= requestIndex {
 		return ""
 	}
@@ -44,9 +48,6 @@ func extractCodexPrompt(rawPrompt string) string {
 		return ""
 	}
 	bodyStart := lines[requestIndex].next
-	if bodyStart > len(rawPrompt) {
-		return ""
-	}
 	return stripGeneratedImageBlocks(rawPrompt[bodyStart:], attachments)
 }
 
