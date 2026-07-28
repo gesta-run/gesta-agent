@@ -38,8 +38,15 @@ func Match(prompt, agentType string, rules []model.ContextRule) Result {
 	result := Result{Rules: []model.ContextRule{}}
 	contents := make([]string, 0, MaxMatchedRules)
 	contentLength := 0
+	lowerPrompt := ""
 	for _, rule := range candidates {
-		if rule.Status != "active" || !supportsAgent(rule.AgentType, agentType) || !matchesPrompt(rule, prompt) {
+		if rule.Status != "active" || !supportsAgent(rule.AgentType, agentType) {
+			continue
+		}
+		if rule.MatchType == "keyword_any" && lowerPrompt == "" {
+			lowerPrompt = strings.ToLower(prompt)
+		}
+		if !matchesPrompt(rule, prompt, lowerPrompt) {
 			continue
 		}
 		content := strings.TrimSpace(rule.ContextContent)
@@ -100,14 +107,13 @@ func supportsAgent(ruleAgentType, agentType string) bool {
 	return ruleAgentType == "all" || ruleAgentType == agentType
 }
 
-func matchesPrompt(rule model.ContextRule, prompt string) bool {
+func matchesPrompt(rule model.ContextRule, prompt, lowerPrompt string) bool {
 	switch rule.MatchType {
 	case "always":
 		return true
 	case "keyword_any":
-		lowerPrompt := strings.ToLower(prompt)
 		for _, keyword := range rule.Keywords {
-			if strings.Contains(lowerPrompt, strings.ToLower(strings.TrimSpace(keyword))) {
+			if containsBoundedKeyword(lowerPrompt, keyword) {
 				return true
 			}
 		}
@@ -116,4 +122,42 @@ func matchesPrompt(rule model.ContextRule, prompt string) bool {
 		return err == nil && re.MatchString(prompt)
 	}
 	return false
+}
+
+func containsBoundedKeyword(lowerPrompt, keyword string) bool {
+	keyword = strings.ToLower(strings.TrimSpace(keyword))
+	if keyword == "" {
+		return false
+	}
+	for offset := 0; offset <= len(lowerPrompt)-len(keyword); {
+		index := strings.Index(lowerPrompt[offset:], keyword)
+		if index < 0 {
+			return false
+		}
+		index += offset
+		end := index + len(keyword)
+		if keywordBoundaryMatches(lowerPrompt, keyword, index, end) {
+			return true
+		}
+		offset = index + 1
+	}
+	return false
+}
+
+func keywordBoundaryMatches(prompt, keyword string, start, end int) bool {
+	if isASCIIWordByte(keyword[0]) && start > 0 && isASCIIWordByte(prompt[start-1]) {
+		return false
+	}
+	if isASCIIWordByte(keyword[len(keyword)-1]) &&
+		end < len(prompt) &&
+		isASCIIWordByte(prompt[end]) {
+		return false
+	}
+	return true
+}
+
+func isASCIIWordByte(value byte) bool {
+	return value >= 'a' && value <= 'z' ||
+		value >= '0' && value <= '9' ||
+		value == '_'
 }
