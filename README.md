@@ -96,6 +96,13 @@ policy and sensitive-rule caches first, then falls back to the control plane or
 built-in defaults. Restart Codex Desktop or open a new Codex thread after
 installing the hook so the runtime reloads hook configuration.
 
+Organization Context `keyword_any` rules match case-insensitively. Keywords
+whose edges use ASCII letters, digits, or underscores match only at word
+boundaries, so `PR` matches `PR #42` but not `prompt`, and `deploy` does not
+match `deployment`. Non-ASCII keywords such as Chinese text continue to match
+within continuous text. Use a regular-expression rule when partial-word
+matching is intentional.
+
 Output measurement uses agent-owned records rather than workspace or Git
 inference. Codex `Stop` reads the completed turn through the official App Server
 and counts added text from completed `fileChange` and `mcpToolCall` items.

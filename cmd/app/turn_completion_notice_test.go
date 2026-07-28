@@ -188,6 +188,79 @@ func TestClaudeStopQueuesOneShotNoticeForNextPrompt(t *testing.T) {
 	}
 }
 
+func TestCodexKeywordNoticeAppearsOnlyOnImmediatelyFollowingPrompt(t *testing.T) {
+	stubLocalActivityHealth(t, false)
+	home := filepath.Join(t.TempDir(), "home")
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		t.Fatalf("mkdir home: %v", err)
+	}
+	t.Setenv("HOME", home)
+
+	cfg := daemon.NewDirectRuntimeConfig("http://127.0.0.1:1", "dtok_codex_keyword_notice")
+	if err := daemon.SaveConfig("", cfg); err != nil {
+		t.Fatalf("SaveConfig: %v", err)
+	}
+	if err := daemon.SaveSensitiveRuleCache(cfg.DataDir, []model.SensitiveRule{}, time.Now()); err != nil {
+		t.Fatalf("SaveSensitiveRuleCache: %v", err)
+	}
+	if err := daemon.SaveContextRuleCache(cfg.DataDir, model.ContextRuleBundle{
+		Version: "bundle-codex-keyword-notice",
+		Rules: []model.ContextRule{{
+			RuleID: "rule-pr", Name: "PR Standards",
+			Status: "active", MatchType: "keyword_any", Keywords: []string{"PR"},
+			AgentType: "codex", ContextContent: "Apply PR standards.",
+		}},
+	}, time.Now()); err != nil {
+		t.Fatalf("SaveContextRuleCache: %v", err)
+	}
+	originalReadCodexTurn := readCodexTurn
+	readCodexTurn = func(_ context.Context, _ string, turnID string) (codexapp.Turn, error) {
+		return codexapp.Turn{ID: turnID, Status: "completed"}, nil
+	}
+	t.Cleanup(func() { readCodexTurn = originalReadCodexTurn })
+
+	firstPrompt := runAgentHook(t, agentHookEvent{
+		HookEventName: "UserPromptSubmit",
+		Prompt:        "提PR",
+		SessionID:     "codex-keyword-notice-session",
+		TurnID:        "turn-1",
+	}, "codex")
+	if !strings.Contains(hookAdditionalContext(firstPrompt), "Apply PR standards.") {
+		t.Fatalf("first prompt context = %q", hookAdditionalContext(firstPrompt))
+	}
+	runAgentHook(t, agentHookEvent{
+		HookEventName: "Stop",
+		SessionID:     "codex-keyword-notice-session",
+		TurnID:        "turn-1",
+	}, "codex")
+
+	secondPrompt := runAgentHook(t, agentHookEvent{
+		HookEventName: "UserPromptSubmit",
+		Prompt:        "continue",
+		SessionID:     "codex-keyword-notice-session",
+		TurnID:        "turn-2",
+	}, "codex")
+	const wantNotice = "Gesta governance · Context append: 1"
+	if !strings.Contains(hookAdditionalContext(secondPrompt), pendingTurnNoticeContext(wantNotice)) {
+		t.Fatalf("second prompt context = %q", hookAdditionalContext(secondPrompt))
+	}
+	runAgentHook(t, agentHookEvent{
+		HookEventName: "Stop",
+		SessionID:     "codex-keyword-notice-session",
+		TurnID:        "turn-2",
+	}, "codex")
+
+	thirdPrompt := runAgentHook(t, agentHookEvent{
+		HookEventName: "UserPromptSubmit",
+		Prompt:        "continue again",
+		SessionID:     "codex-keyword-notice-session",
+		TurnID:        "turn-3",
+	}, "codex")
+	if strings.Contains(hookAdditionalContext(thirdPrompt), "gesta_activity_notice") {
+		t.Fatalf("third prompt repeated pending notice: %#v", thirdPrompt)
+	}
+}
+
 func TestClaudeStopCreatesLinkedLocalActivityDetailWhenUIIsHealthy(t *testing.T) {
 	stubLocalActivityHealth(t, true)
 	home := filepath.Join(t.TempDir(), "home")
