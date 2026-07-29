@@ -36,6 +36,6 @@ for target in $targets; do
   (
     cd "$repo_root"
     CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" \
-      go build -trimpath -ldflags "-s -w -X github.com/gesta-run/gesta-agent/pkg/model.DaemonVersion=$version" -o "$out" ./cmd
+      go build -trimpath -ldflags "-s -w -X github.com/gesta-run/gesta-agent/pkg/model.DaemonVersion=$version" -o "$out" ./cmd/gesta-agent
   )
 done

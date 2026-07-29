@@ -1,0 +1,277 @@
+package cli
+
+import (
+	"context"
+	"fmt"
+	"math"
+	"os"
+	"strings"
+	"time"
+
+	"github.com/gesta-run/gesta-agent/pkg/codexapp"
+	"github.com/gesta-run/gesta-agent/pkg/daemon"
+	"github.com/gesta-run/gesta-agent/pkg/eventqueue"
+	"github.com/gesta-run/gesta-agent/pkg/model"
+	"github.com/gesta-run/gesta-agent/pkg/privacy"
+	"github.com/gesta-run/gesta-agent/pkg/rulecache"
+	"github.com/gesta-run/gesta-agent/pkg/toolinput"
+	"github.com/gesta-run/gesta-agent/pkg/turnreceipt"
+	"github.com/gesta-run/gesta-agent/pkg/util"
+)
+
+var readCodexTurn = codexapp.ReadTurn
+
+func recordGrossToolUseBestEffortWithConfig(cfg daemon.Config, event agentHookEvent, agentType, source string) {
+	output, err := recordGrossToolUseWithConfig(cfg, event, agentType, source)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "gesta-agent hook: output was not recorded: %v\n", err)
+		return
+	}
+	recordTurnOutputBestEffort(cfg, event, agentType, output)
+}
+
+func recordGrossToolUseWithConfig(
+	cfg daemon.Config,
+	event agentHookEvent,
+	agentType, source string,
+) (turnreceipt.OutputSummary, error) {
+	var measurements []toolinput.Measurement
+	classifier := outputClassifier(cfg)
+	switch agentType {
+	case "claude_code":
+		measurements = toolinput.MeasureClaudeToolUse(event.ToolName, event.ToolInput, classifier)
+	default:
+		return turnreceipt.OutputSummary{}, nil
+	}
+	if len(measurements) == 0 {
+		return turnreceipt.OutputSummary{}, nil
+	}
+	return appendGrossMeasurementsWithSummary(cfg, grossObservation{
+		CallID:       event.ToolUseID,
+		SessionID:    firstNonEmpty(event.SessionID, event.ConversationID),
+		TurnID:       event.TurnID,
+		ToolName:     event.ToolName,
+		AgentType:    agentType,
+		Source:       source,
+		Origin:       "post_tool_use",
+		ObservedAt:   time.Now().UTC(),
+		Measurements: measurements,
+	})
+}
+
+func recordCodexTurnBestEffort(
+	ctx context.Context,
+	cfg daemon.Config,
+	event agentHookEvent,
+) turnreceipt.OutputSummary {
+	output, err := recordCodexTurn(ctx, cfg, event)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "gesta-agent hook: Codex turn output was not recorded: %v\n", err)
+	}
+	return output
+}
+
+func recordCodexTurn(
+	ctx context.Context,
+	cfg daemon.Config,
+	event agentHookEvent,
+) (turnreceipt.OutputSummary, error) {
+	sessionID := firstNonEmpty(event.SessionID, event.ConversationID)
+	turnID := strings.TrimSpace(event.TurnID)
+	if strings.TrimSpace(sessionID) == "" || turnID == "" {
+		return turnreceipt.OutputSummary{}, nil
+	}
+	turn, err := readCodexTurn(ctx, sessionID, turnID)
+	if err != nil {
+		return turnreceipt.OutputSummary{}, err
+	}
+	observedAt := time.Now().UTC()
+	if turn.CompletedAt != nil && *turn.CompletedAt > 0 {
+		observedAt = time.Unix(*turn.CompletedAt, 0).UTC()
+	}
+	var output turnreceipt.OutputSummary
+	classifier := outputClassifier(cfg)
+	for _, item := range turn.Items {
+		if item.Status != "completed" {
+			continue
+		}
+		switch item.Type {
+		case "fileChange":
+			changes := make([]toolinput.FileChange, 0, len(item.Changes))
+			for _, change := range item.Changes {
+				changes = append(changes, toolinput.FileChange{Path: change.Path, Kind: change.Kind.Type, Diff: change.Diff})
+			}
+			itemOutput, err := appendGrossMeasurementsWithSummary(cfg, grossObservation{
+				CallID:       item.ID,
+				SessionID:    sessionID,
+				TurnID:       turnID,
+				ToolName:     "fileChange",
+				AgentType:    "codex",
+				Source:       "codex",
+				Origin:       "thread_read_file_change",
+				ObservedAt:   observedAt,
+				Measurements: toolinput.MeasureCodexFileChanges(changes, classifier),
+			})
+			if err != nil {
+				return output, err
+			}
+			output.Add(itemOutput)
+		case "mcpToolCall":
+			toolName := "mcp__" + strings.TrimSpace(item.Server) + "__" + strings.TrimSpace(item.Tool)
+			itemOutput, err := appendGrossMeasurementsWithSummary(cfg, grossObservation{
+				CallID:       item.ID,
+				SessionID:    sessionID,
+				TurnID:       turnID,
+				ToolName:     toolName,
+				AgentType:    "codex",
+				Source:       "codex",
+				Origin:       "thread_read_mcp_reconciliation",
+				ObservedAt:   observedAt,
+				Measurements: toolinput.MeasureCodexMCP(toolName, item.Arguments, classifier),
+			})
+			if err != nil {
+				return output, err
+			}
+			output.Add(itemOutput)
+		}
+	}
+	return output, nil
+}
+
+func outputClassifier(cfg daemon.Config) toolinput.Classifier {
+	cache, err := rulecache.LoadOutputClassificationCache(cfg.DataDir)
+	if err != nil {
+		return toolinput.NewClassifier(nil, nil)
+	}
+	return toolinput.NewClassifier(cache.CodeSuffixes, cache.CodeFilenames)
+}
+
+type grossObservation struct {
+	CallID       string
+	SessionID    string
+	TurnID       string
+	ToolName     string
+	AgentType    string
+	Source       string
+	Origin       string
+	ObservedAt   time.Time
+	Measurements []toolinput.Measurement
+}
+
+func appendGrossMeasurementsWithSummary(
+	cfg daemon.Config,
+	observation grossObservation,
+) (turnreceipt.OutputSummary, error) {
+	events, output := grossMeasurementEvents(cfg, observation)
+	if len(events) == 0 {
+		return output, nil
+	}
+	if err := eventqueue.NewQueue(cfg.DataDir).Append(events); err != nil {
+		return turnreceipt.OutputSummary{}, fmt.Errorf("queue Gross Ink: %w", err)
+	}
+	return output, nil
+}
+
+func grossMeasurementEvents(
+	cfg daemon.Config,
+	observation grossObservation,
+) ([]model.EventEnvelope, turnreceipt.OutputSummary) {
+	callID := strings.TrimSpace(observation.CallID)
+	sessionID := strings.TrimSpace(observation.SessionID)
+	turnID := strings.TrimSpace(observation.TurnID)
+	if callID == "" || sessionID == "" || len(observation.Measurements) == 0 {
+		return nil, turnreceipt.OutputSummary{}
+	}
+	if observation.AgentType == "codex" && turnID == "" {
+		return nil, turnreceipt.OutputSummary{}
+	}
+	createdAt := observation.ObservedAt.UTC()
+	if createdAt.IsZero() {
+		createdAt = time.Now().UTC()
+	}
+	events := make([]model.EventEnvelope, 0, len(observation.Measurements))
+	output := summarizeMeasurements(observation.Measurements)
+	for _, measurement := range observation.Measurements {
+		targetHash := ""
+		if strings.TrimSpace(measurement.Target) != "" {
+			targetHash = util.ShortHash(measurement.Target)
+		}
+		identity := strings.Join([]string{
+			"tool.input.gross.v3",
+			cfg.DaemonID,
+			observation.Source,
+			sessionID,
+			turnID,
+			callID,
+			measurement.Category,
+			targetHash,
+		}, "\x00")
+		payload := map[string]interface{}{
+			"schema_version":      3,
+			"call_id_hash":        util.ShortHash(callID),
+			"tool_name":           privacy.RedactAndTruncate(strings.TrimSpace(observation.ToolName), 256),
+			"tool_class":          measurement.ToolClass,
+			"category":            measurement.Category,
+			"characters":          measurement.Counts.Characters,
+			"lines":               measurement.Counts.Lines,
+			"words":               measurement.Counts.Words,
+			"efficiency_eligible": measurement.EfficiencyEligible,
+			"raw_input_stored":    false,
+			"origin":              observation.Origin,
+			"observed_at":         createdAt.Format(time.RFC3339Nano),
+			"session_id":          util.ShortHash(sessionID),
+		}
+		if measurement.EfficiencyExclusionReason != "" {
+			payload["efficiency_exclusion_reason"] = measurement.EfficiencyExclusionReason
+		}
+		if turnID != "" {
+			payload["turn_id_hash"] = util.ShortHash(turnID)
+		}
+		if targetHash != "" {
+			payload["target_path_hash"] = targetHash
+		}
+		events = append(events, model.EventEnvelope{
+			EventID:      "evt_" + util.ShortHash(identity),
+			CustomerID:   cfg.CustomerID,
+			DeploymentID: cfg.DeploymentID,
+			DaemonID:     cfg.DaemonID,
+			DeviceID:     cfg.DeviceID,
+			TeamID:       cfg.TeamID,
+			EventType:    "tool.input.gross",
+			Source:       observation.Source,
+			AgentType:    observation.AgentType,
+			CreatedAt:    createdAt,
+			Payload:      payload,
+		})
+	}
+	return events, output
+}
+
+func summarizeMeasurements(measurements []toolinput.Measurement) turnreceipt.OutputSummary {
+	var summary turnreceipt.OutputSummary
+	for _, measurement := range measurements {
+		switch measurement.Category {
+		case toolinput.CategoryCode:
+			summary.CodeLines = addPositiveCount(summary.CodeLines, measurement.Counts.Lines)
+		case toolinput.CategoryTests:
+			summary.TestLines = addPositiveCount(summary.TestLines, measurement.Counts.Lines)
+		case toolinput.CategoryDocs:
+			summary.DocWords = addPositiveCount(summary.DocWords, measurement.Counts.Words)
+		case toolinput.CategoryConfig:
+			summary.ConfigLines = addPositiveCount(summary.ConfigLines, measurement.Counts.Lines)
+		case toolinput.CategoryOther:
+			summary.OtherLines = addPositiveCount(summary.OtherLines, measurement.Counts.Lines)
+		}
+	}
+	return summary
+}
+
+func addPositiveCount(current, delta int64) int64 {
+	if delta <= 0 {
+		return current
+	}
+	if current > math.MaxInt64-delta {
+		return math.MaxInt64
+	}
+	return current + delta
+}

@@ -10,7 +10,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gesta-run/gesta-agent/pkg/eventqueue"
 	"github.com/gesta-run/gesta-agent/pkg/model"
+	"github.com/gesta-run/gesta-agent/pkg/rulecache"
 )
 
 func TestFlushWithHeartbeatAppliesUpgradeBeforeFlush(t *testing.T) {
@@ -19,7 +21,7 @@ func TestFlushWithHeartbeatAppliesUpgradeBeforeFlush(t *testing.T) {
 	t.Cleanup(func() { model.DaemonVersion = previousVersion })
 
 	dir := t.TempDir()
-	q := NewQueue(dir)
+	q := eventqueue.NewQueue(dir)
 	if err := q.Append([]model.EventEnvelope{{EventID: "evt_1", EventType: "test", CreatedAt: time.Now()}}); err != nil {
 		t.Fatalf("append: %v", err)
 	}
@@ -79,7 +81,7 @@ func TestFlushWithHeartbeatAppliesUpgradeBeforeFlush(t *testing.T) {
 	if eventFlushes != 0 {
 		t.Fatalf("event flushes = %d, want 0", eventFlushes)
 	}
-	cache, cacheErr := LoadOutputClassificationCache(dir)
+	cache, cacheErr := rulecache.LoadOutputClassificationCache(dir)
 	if cacheErr != nil || cache.Revision != 2 {
 		t.Fatalf("output classification cache = (%+v, %v)", cache, cacheErr)
 	}
@@ -112,7 +114,7 @@ func TestEnsureRuntimeSettingsSyncsClassificationOnce(t *testing.T) {
 			DataDir:       dataDir,
 		},
 		client: NewClient(server.URL, "dtok_settings"),
-		queue:  NewQueue(dataDir),
+		queue:  eventqueue.NewQueue(dataDir),
 		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 	if err := runner.ensureRuntimeSettings(); err != nil {
@@ -124,7 +126,7 @@ func TestEnsureRuntimeSettingsSyncsClassificationOnce(t *testing.T) {
 	if heartbeats != 1 {
 		t.Fatalf("heartbeats = %d, want 1", heartbeats)
 	}
-	cache, err := LoadOutputClassificationCache(dataDir)
+	cache, err := rulecache.LoadOutputClassificationCache(dataDir)
 	if err != nil || cache.Revision != 5 {
 		t.Fatalf("output classification cache = (%+v, %v)", cache, err)
 	}
@@ -132,7 +134,7 @@ func TestEnsureRuntimeSettingsSyncsClassificationOnce(t *testing.T) {
 
 func TestHeartbeatWithoutClassificationPreservesLastValidCache(t *testing.T) {
 	dataDir := t.TempDir()
-	if err := SaveOutputClassificationCache(dataDir, model.OutputClassificationSettings{
+	if err := rulecache.SaveOutputClassificationCache(dataDir, model.OutputClassificationSettings{
 		Revision:      7,
 		CodeSuffixes:  []string{".html"},
 		CodeFilenames: []string{"Dockerfile"},
@@ -157,13 +159,13 @@ func TestHeartbeatWithoutClassificationPreservesLastValidCache(t *testing.T) {
 			DataDir:       dataDir,
 		},
 		client: NewClient(server.URL, "dtok_settings"),
-		queue:  NewQueue(dataDir),
+		queue:  eventqueue.NewQueue(dataDir),
 		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 	if _, err := runner.sendHeartbeat("ok", nil); err != nil {
 		t.Fatalf("sendHeartbeat: %v", err)
 	}
-	cache, err := LoadOutputClassificationCache(dataDir)
+	cache, err := rulecache.LoadOutputClassificationCache(dataDir)
 	if err != nil {
 		t.Fatalf("load output classification cache: %v", err)
 	}

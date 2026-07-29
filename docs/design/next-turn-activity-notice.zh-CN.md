@@ -451,7 +451,7 @@ pending notice 使用独立 schema version。
 实现结构：
 
 ```text
-cmd/app/
+internal/cli/
   turn_completion_notice.go
   turn_completion_format.go
   turn_completion_notice_test.go
@@ -464,8 +464,8 @@ pkg/turnreceipt/
 
 职责：
 
-- `cmd/app/turn_completion_notice.go`：Hook 流程编排；
-- `cmd/app/turn_completion_format.go`：notice 和模型协议格式；
+- `internal/cli/turn_completion_notice.go`：Hook 流程编排；
+- `internal/cli/turn_completion_format.go`：notice 和模型协议格式；
 - `pkg/turnreceipt/pending_notice.go`：复用 turn receipt 的锁、TTL 和清理边界管理结构化 pending activity；
 - `types.go`：持久化结构和 schema version。
 

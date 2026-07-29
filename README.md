@@ -13,10 +13,10 @@ Create a connect token from the Gesta Console while signed in as the user who
 will run the agent, then pass that user-bound token to the daemon:
 
 ```bash
-go run ./cmd run --control-url http://localhost:8080 --apikey sk-... --interval 1m --usage-window 10m
-go run ./cmd run --control-url http://localhost:8080 --apikey sk-... -- kubectl delete pod api
+go run ./cmd/gesta-agent run --control-url http://localhost:8080 --apikey sk-... --interval 1m --usage-window 10m
+go run ./cmd/gesta-agent run --control-url http://localhost:8080 --apikey sk-... -- kubectl delete pod api
 ./scripts/install.sh --control-url http://localhost:8080 --apikey sk-...
-cd "${HOME:-/tmp}" && curl -fsSL https://gesta-run.github.io/onboard/install-agent.sh | bash -s -- --control-url http://localhost:8080 --apikey sk-...
+cd "${HOME:-/tmp}" && curl -fsSL https://artifacts.gesta.run/gesta/install-agent.sh | bash -s -- --control-url http://localhost:8080 --apikey sk-...
 ```
 
 The daemon does not require a separate enrollment step. `--apikey` is used
@@ -37,11 +37,11 @@ untouched for manual inspection.
 ## Commands
 
 ```bash
-go run ./cmd run --control-url http://localhost:8080 --apikey sk-... --interval 1m --usage-window 10m
-go run ./cmd run --control-url http://localhost:8080 --apikey sk-... -- kubectl delete pod api
-go run ./cmd install --control-url http://localhost:8080 --apikey sk-...
-go run ./cmd status
-go run ./cmd guard --agent codex -- kubectl delete pod api
+go run ./cmd/gesta-agent run --control-url http://localhost:8080 --apikey sk-... --interval 1m --usage-window 10m
+go run ./cmd/gesta-agent run --control-url http://localhost:8080 --apikey sk-... -- kubectl delete pod api
+go run ./cmd/gesta-agent install --control-url http://localhost:8080 --apikey sk-...
+go run ./cmd/gesta-agent status
+go run ./cmd/gesta-agent guard --agent codex -- kubectl delete pod api
 ```
 
 `run` starts the daemon when no command is provided. When a command follows
@@ -56,11 +56,11 @@ as a compatibility alias for the same enforcement path.
 including `PostToolUse` and `Stop`, in `~/.claude/settings.json`. `install`
 performs the integration setup, which is useful during installation. The helper
 script builds the daemon from this checkout when run locally, or downloads the
-published binary when run from GitHub Pages:
+published binary from the artifact site:
 
 ```bash
 ./scripts/install.sh --control-url http://localhost:8080 --apikey sk-...
-cd "${HOME:-/tmp}" && curl -fsSL https://gesta-run.github.io/onboard/install-agent.sh | bash -s -- --control-url http://localhost:8080 --apikey sk-...
+cd "${HOME:-/tmp}" && curl -fsSL https://artifacts.gesta.run/gesta/install-agent.sh | bash -s -- --control-url http://localhost:8080 --apikey sk-...
 ```
 
 The installer requires both `--control-url` and `--apikey`. It saves daemon state under
@@ -137,4 +137,15 @@ capped at 256 records with a 24-hour TTL.
 
 ```bash
 make verify
+```
+
+## Project Structure
+
+```text
+cmd/gesta-agent/  Executable entrypoint
+internal/cli/     Command routing and local hook workflows
+pkg/daemon/       Collection loop and agent integrations
+pkg/eventqueue/   Durable, bounded event delivery queue
+pkg/model/        Control-plane wire contracts
+pkg/rulecache/    Validated local policy and runtime-setting caches
 ```

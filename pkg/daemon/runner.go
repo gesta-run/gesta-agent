@@ -10,7 +10,9 @@ import (
 	"time"
 
 	"github.com/gesta-run/gesta-agent/pkg/activitydetail"
+	"github.com/gesta-run/gesta-agent/pkg/eventqueue"
 	"github.com/gesta-run/gesta-agent/pkg/model"
+	"github.com/gesta-run/gesta-agent/pkg/rulecache"
 )
 
 var ErrUpgradeApplied = errors.New("agent upgrade applied")
@@ -20,7 +22,7 @@ const localActivityCleanupInterval = time.Hour
 type Runner struct {
 	cfg                        Config
 	client                     *Client
-	queue                      Queue
+	queue                      eventqueue.Queue
 	logger                     *slog.Logger
 	applyUpgrade               func(model.HeartbeatResponse) error
 	nextLocalActivityCleanupAt time.Time
@@ -38,7 +40,7 @@ func NewRunner(cfg Config) (*Runner, error) {
 	runner := &Runner{
 		cfg:    cfg,
 		client: NewClient(cfg.EffectiveServerURL(), cfg.Token),
-		queue:  NewQueue(cfg.DataDir),
+		queue:  eventqueue.NewQueue(cfg.DataDir),
 		logger: slog.Default(),
 	}
 	if removedBytes, err := cleanupDeprecatedState(cfg.DataDir); err != nil {
@@ -237,28 +239,28 @@ func (r *Runner) SyncRules() error {
 	rules, err := r.client.PolicyRules()
 	if err != nil {
 		syncErrors = append(syncErrors, fmt.Errorf("policy rules: %w", err))
-	} else if err := SavePolicyCache(r.cfg.DataDir, rules, time.Now().UTC()); err != nil {
+	} else if err := rulecache.SavePolicyCache(r.cfg.DataDir, rules, time.Now().UTC()); err != nil {
 		syncErrors = append(syncErrors, fmt.Errorf("save policy rules: %w", err))
 	} else {
-		r.logger.Info("policy rules synced", "rules", len(rules), "cache", PolicyCachePath(r.cfg.DataDir))
+		r.logger.Info("policy rules synced", "rules", len(rules), "cache", rulecache.PolicyCachePath(r.cfg.DataDir))
 	}
 
 	sensitiveRules, err := r.client.SensitiveRules()
 	if err != nil {
 		r.logger.Warn("sensitive rules sync failed", "error", err)
-	} else if err := SaveSensitiveRuleCache(r.cfg.DataDir, sensitiveRules, time.Now().UTC()); err != nil {
+	} else if err := rulecache.SaveSensitiveRuleCache(r.cfg.DataDir, sensitiveRules, time.Now().UTC()); err != nil {
 		syncErrors = append(syncErrors, fmt.Errorf("save sensitive rules: %w", err))
 	} else {
-		r.logger.Info("sensitive rules synced", "rules", len(sensitiveRules), "cache", SensitiveRuleCachePath(r.cfg.DataDir))
+		r.logger.Info("sensitive rules synced", "rules", len(sensitiveRules), "cache", rulecache.SensitiveRuleCachePath(r.cfg.DataDir))
 	}
 
 	contextRules, err := r.client.ContextRules()
 	if err != nil {
 		r.logger.Warn("context rules sync failed", "error", err)
-	} else if err := SaveContextRuleCache(r.cfg.DataDir, contextRules, time.Now().UTC()); err != nil {
+	} else if err := rulecache.SaveContextRuleCache(r.cfg.DataDir, contextRules, time.Now().UTC()); err != nil {
 		syncErrors = append(syncErrors, fmt.Errorf("save context rules: %w", err))
 	} else {
-		r.logger.Info("context rules synced", "rules", len(contextRules.Rules), "cache", ContextRuleCachePath(r.cfg.DataDir))
+		r.logger.Info("context rules synced", "rules", len(contextRules.Rules), "cache", rulecache.ContextRuleCachePath(r.cfg.DataDir))
 	}
 	return errors.Join(syncErrors...)
 }
@@ -299,7 +301,7 @@ func (r *Runner) sendHeartbeat(health string, adapters []model.AdapterStatus) (m
 			"save output classification settings: revision must be positive",
 		)
 	}
-	if err := SaveOutputClassificationCache(r.cfg.DataDir, *response.OutputClassification, time.Now().UTC()); err != nil {
+	if err := rulecache.SaveOutputClassificationCache(r.cfg.DataDir, *response.OutputClassification, time.Now().UTC()); err != nil {
 		return model.HeartbeatResponse{}, fmt.Errorf("save output classification settings: %w", err)
 	}
 	r.runtimeSettingsSynced = true

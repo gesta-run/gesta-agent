@@ -7,7 +7,7 @@ test:
 
 build:
 	mkdir -p bin
-	go build -o bin/gesta-agent ./cmd
+	go build -o bin/gesta-agent ./cmd/gesta-agent
 
 install:
 	@if [ -z "$(CONTROL_URL)" ] || [ -z "$(APIKEY)" ]; then \
