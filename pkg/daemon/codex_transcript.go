@@ -331,16 +331,6 @@ func titleFromTranscriptText(value string) string {
 	return strings.TrimSpace(string(runes[:maxTitleLength-1])) + "..."
 }
 
-func codexTranscriptEventID(payload map[string]interface{}) string {
-	parts := []string{
-		"codex.transcript",
-		firstString(payload, "session_id", "session_id_hash"),
-		firstString(payload, "updated_at"),
-		firstString(payload, "transcript_hash"),
-	}
-	return "evt_" + util.ShortHash(strings.Join(parts, "\x00"))
-}
-
 func readCodexTranscript(path string) ([]map[string]interface{}, bool, error) {
 	file, err := os.Open(path)
 	if err != nil {
@@ -385,6 +375,9 @@ func readCodexTranscript(path string) ([]map[string]interface{}, bool, error) {
 		message := map[string]interface{}{
 			"role": role,
 			"text": text,
+		}
+		if messageID := firstString(record.Payload, "id", "message_id"); messageID != "" {
+			message["message_id"] = messageID
 		}
 		if itemType := firstString(record.Payload, "type"); itemType != "" {
 			message["type"] = itemType

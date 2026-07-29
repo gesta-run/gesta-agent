@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/gesta-run/gesta-agent/pkg/activitydetail"
@@ -293,6 +294,7 @@ func (r *Runner) sendHeartbeat(health string, adapters []model.AdapterStatus) (m
 	if err != nil {
 		return model.HeartbeatResponse{}, err
 	}
+	r.cfg.DailyWorkTimezone = strings.TrimSpace(response.DailyWorkTimezone)
 	if response.OutputClassification == nil {
 		return response, nil
 	}

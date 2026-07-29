@@ -189,8 +189,8 @@ func TestFilterCodexSessionBackfillSkipsBaselineAndKeepsNewSessions(t *testing.T
 	if initialDelta, _ := filteredUsage[0][internalInitialDeltaPayloadKey].(bool); !initialDelta {
 		t.Fatalf("new usage summary should emit an initial delta: %#v", filteredUsage[0])
 	}
-	if len(filteredTranscripts) != 1 || filteredTranscripts[0]["session_id"] != "new-session" {
-		t.Fatalf("filtered transcripts = %#v, want only new-session", filteredTranscripts)
+	if len(filteredTranscripts) != 0 {
+		t.Fatalf("metadata-only transcript snapshots must not emit chunks: %#v", filteredTranscripts)
 	}
 	if ignored, _ := meta["historical_sessions_ignored"].(int); ignored != 1 {
 		t.Fatalf("historical_sessions_ignored = %#v, want 1", meta["historical_sessions_ignored"])
@@ -339,8 +339,8 @@ func TestFilterCodexSessionBackfillKeepsChangedBaselineSession(t *testing.T) {
 	if initialDelta, _ := filteredUsage[0][internalInitialDeltaPayloadKey].(bool); initialDelta {
 		t.Fatalf("old baseline session should not be marked as fresh initial delta: %#v", filteredUsage[0])
 	}
-	if len(filteredTranscripts) != 1 || filteredTranscripts[0]["session_id"] != "old-session" {
-		t.Fatalf("filtered transcripts = %#v, want changed old-session transcript", filteredTranscripts)
+	if len(filteredTranscripts) != 0 {
+		t.Fatalf("metadata-only transcript snapshots must not emit chunks: %#v", filteredTranscripts)
 	}
 
 	store, err := loadSessionBaselineStore(cfg.DataDir)
@@ -378,8 +378,8 @@ func TestFilterCodexSessionBackfillSeedsLegacyTokenBaselineBeforeDelta(t *testin
 	if len(filteredUsage) != 0 {
 		t.Fatalf("filtered usage = %#v, want legacy baseline seeding to skip usage", filteredUsage)
 	}
-	if len(filteredTranscripts) != 1 || filteredTranscripts[0]["session_id"] != "old-session" {
-		t.Fatalf("filtered transcripts = %#v, want newer old-session transcript", filteredTranscripts)
+	if len(filteredTranscripts) != 0 {
+		t.Fatalf("metadata-only transcript snapshots must not emit chunks: %#v", filteredTranscripts)
 	}
 	store, err := loadSessionBaselineStore(cfg.DataDir)
 	if err != nil {
@@ -477,8 +477,8 @@ func TestFilterCodexSessionBackfillKeepsPostCutoffTranscriptForLegacyBaseline(t 
 	if err != nil {
 		t.Fatalf("filterCodexSessionBackfill: %v", err)
 	}
-	if len(filteredTranscripts) != 1 || filteredTranscripts[0]["session_id"] != "old-session" {
-		t.Fatalf("filtered transcripts = %#v, want post-cutoff old-session transcript", filteredTranscripts)
+	if len(filteredTranscripts) != 0 {
+		t.Fatalf("metadata-only transcript snapshots must not emit chunks: %#v", filteredTranscripts)
 	}
 }
 

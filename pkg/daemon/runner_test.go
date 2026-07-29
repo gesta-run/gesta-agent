@@ -96,6 +96,7 @@ func TestEnsureRuntimeSettingsSyncsClassificationOnce(t *testing.T) {
 		}
 		heartbeats++
 		_ = json.NewEncoder(w).Encode(model.HeartbeatResponse{
+			DailyWorkTimezone: "Asia/Shanghai",
 			OutputClassification: &model.OutputClassificationSettings{
 				Revision:      5,
 				CodeSuffixes:  []string{".html"},
@@ -125,6 +126,9 @@ func TestEnsureRuntimeSettingsSyncsClassificationOnce(t *testing.T) {
 	}
 	if heartbeats != 1 {
 		t.Fatalf("heartbeats = %d, want 1", heartbeats)
+	}
+	if runner.cfg.DailyWorkTimezone != "Asia/Shanghai" {
+		t.Fatalf("daily work timezone = %q", runner.cfg.DailyWorkTimezone)
 	}
 	cache, err := rulecache.LoadOutputClassificationCache(dataDir)
 	if err != nil || cache.Revision != 5 {

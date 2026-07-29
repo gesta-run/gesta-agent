@@ -50,15 +50,18 @@ type codexSessionBaseline struct {
 }
 
 type baselineSession struct {
-	UpdatedAt        string `json:"updated_at,omitempty"`
-	TranscriptHash   string `json:"transcript_hash,omitempty"`
-	TotalTokens      int64  `json:"total_tokens,omitempty"`
-	InputTokens      int64  `json:"input_tokens,omitempty"`
-	OutputTokens     int64  `json:"output_tokens,omitempty"`
-	CacheReadTokens  int64  `json:"cache_read_tokens,omitempty"`
-	CacheWriteTokens int64  `json:"cache_write_tokens,omitempty"`
-	TokenAccounting  string `json:"token_accounting,omitempty"`
-	TokensObserved   bool   `json:"tokens_observed,omitempty"`
+	UpdatedAt                   string   `json:"updated_at,omitempty"`
+	TranscriptHash              string   `json:"transcript_hash,omitempty"`
+	TranscriptMessageVersions   []string `json:"transcript_message_versions,omitempty"`
+	TranscriptSequence          int64    `json:"transcript_sequence,omitempty"`
+	TranscriptCursorInitialized bool     `json:"transcript_cursor_initialized,omitempty"`
+	TotalTokens                 int64    `json:"total_tokens,omitempty"`
+	InputTokens                 int64    `json:"input_tokens,omitempty"`
+	OutputTokens                int64    `json:"output_tokens,omitempty"`
+	CacheReadTokens             int64    `json:"cache_read_tokens,omitempty"`
+	CacheWriteTokens            int64    `json:"cache_write_tokens,omitempty"`
+	TokenAccounting             string   `json:"token_accounting,omitempty"`
+	TokensObserved              bool     `json:"tokens_observed,omitempty"`
 	// CacheObserved separates "this session's cache counters were genuinely zero"
 	// from "this baseline predates cache accounting and never recorded them". A
 	// baseline written by an older agent has neither field, so both read back as
@@ -128,15 +131,15 @@ func filterCodexSessionBackfill(cfg Config, stateDB string, usageEvents, transcr
 	}
 
 	var updates []map[string]interface{}
-	var changedUsageSessions map[string]struct{}
 	var ignoredSessions map[string]struct{}
-	result.UsageEvents, updates, changedUsageSessions, ignoredSessions = filterCodexUsageBaseline(baseline, usageEvents)
+	result.UsageEvents, updates, _, ignoredSessions = filterCodexUsageBaseline(baseline, usageEvents)
 	result.TranscriptEvents, updates = filterCodexTranscriptBaseline(
 		baseline,
 		transcriptEvents,
 		updates,
-		changedUsageSessions,
 		ignoredSessions,
+		observedAt,
+		dailyWorkLocation(cfg.DailyWorkTimezone),
 	)
 	baselineDirty := false
 	for _, payload := range updates {
@@ -229,7 +232,9 @@ func filterCodexUsageBaseline(
 func filterCodexTranscriptBaseline(
 	baseline codexSessionBaseline,
 	transcriptEvents, updates []map[string]interface{},
-	changedUsageSessions, ignoredSessions map[string]struct{},
+	ignoredSessions map[string]struct{},
+	observedAt time.Time,
+	location *time.Location,
 ) ([]map[string]interface{}, []map[string]interface{}) {
 	filtered := make([]map[string]interface{}, 0, len(transcriptEvents))
 	for _, payload := range transcriptEvents {
@@ -237,17 +242,20 @@ func filterCodexTranscriptBaseline(
 		if sessionID == "" {
 			continue
 		}
-		if shouldSkipBaselineTranscript(baseline, payload) {
-			if _, usageChanged := changedUsageSessions[sessionID]; usageChanged {
-				filtered = append(filtered, payload)
-				updates = append(updates, payload)
-				continue
-			}
+		cursor, exists := baseline.Sessions[sessionID]
+		if exists && !cursor.TranscriptCursorInitialized {
+			cursor = seedTranscriptCursor(payload, cursor)
+			updates = append(updates, transcriptCursorPayload(payload, cursor))
 			ignoredSessions[sessionID] = struct{}{}
 			continue
 		}
-		filtered = append(filtered, payload)
-		updates = append(updates, payload)
+		if shouldSkipBaselineTranscript(baseline, payload) {
+			ignoredSessions[sessionID] = struct{}{}
+			continue
+		}
+		chunks, cursor := prepareTranscriptChunks(payload, cursor, observedAt, location)
+		filtered = append(filtered, chunks...)
+		updates = append(updates, transcriptCursorPayload(payload, cursor))
 	}
 	return filtered, updates
 }
@@ -279,6 +287,19 @@ func addBaselineSession(sessions map[string]baselineSession, payload map[string]
 	}
 	if transcriptHash := firstPayloadString(payload, "transcript_hash"); transcriptHash != "" && transcriptHash != existing.TranscriptHash {
 		existing.TranscriptHash = transcriptHash
+		changed = true
+	}
+	beforeMessageVersions := len(existing.TranscriptMessageVersions)
+	beforeSequence := existing.TranscriptSequence
+	beforeCursorInitialized := existing.TranscriptCursorInitialized
+	if _, ok := payload["_gesta_transcript_cursor_initialized"]; ok {
+		existing = transcriptCursorFromPayload(payload, existing)
+	} else if _, ok := payload["messages"]; ok {
+		existing = seedTranscriptCursor(payload, existing)
+	}
+	if len(existing.TranscriptMessageVersions) != beforeMessageVersions ||
+		existing.TranscriptSequence != beforeSequence ||
+		existing.TranscriptCursorInitialized != beforeCursorInitialized {
 		changed = true
 	}
 	if total, ok := payloadIntValue(payload, "total_tokens", "tokens_used"); ok && (!existing.TokensObserved || total > existing.TotalTokens) {
