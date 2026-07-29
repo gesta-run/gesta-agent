@@ -253,10 +253,6 @@ func TestCodexTranscriptPayloadExtractsRedactedMessages(t *testing.T) {
 	if err := json.Unmarshal(serialized, &equivalentPayload); err != nil {
 		t.Fatalf("unmarshal equivalent payload: %v", err)
 	}
-	firstEventID := codexTranscriptEventID(publicPayload)
-	if firstEventID == "" || firstEventID != codexTranscriptEventID(equivalentPayload) {
-		t.Fatal("transcript event id should be stable for equivalent payloads")
-	}
 }
 
 func TestCodexToolCallEventsFromTranscriptKeepMetadataOnly(t *testing.T) {

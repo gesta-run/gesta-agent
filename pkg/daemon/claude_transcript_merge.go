@@ -168,16 +168,22 @@ func addClaudeTranscriptCandidate(candidates *[]claudeTranscriptCandidate, index
 		Model:     strings.TrimSpace(modelName),
 		MessageID: strings.TrimSpace(messageID),
 	}
+	key := strings.Join([]string{
+		candidate.Role,
+		candidate.MessageID,
+		candidate.Timestamp,
+		candidate.Text,
+	}, "\x00")
 	if candidate.MessageID != "" {
-		key := candidate.Role + "\x00" + candidate.MessageID
-		if index, ok := indexes[key]; ok {
-			if len(candidate.Text) > len((*candidates)[index].Text) {
-				(*candidates)[index] = candidate
-			}
-			return
-		}
-		indexes[key] = len(*candidates)
+		key = candidate.Role + "\x00" + candidate.MessageID
 	}
+	if index, ok := indexes[key]; ok {
+		if len(candidate.Text) > len((*candidates)[index].Text) {
+			(*candidates)[index] = candidate
+		}
+		return
+	}
+	indexes[key] = len(*candidates)
 	*candidates = append(*candidates, candidate)
 }
 
@@ -194,6 +200,9 @@ func claudeTranscriptMessagesFromCandidates(candidates []claudeTranscriptCandida
 		message := map[string]interface{}{
 			"role": candidate.Role,
 			"text": text,
+		}
+		if candidate.MessageID != "" {
+			message["message_id"] = candidate.MessageID
 		}
 		if candidate.Timestamp != "" {
 			message["timestamp"] = candidate.Timestamp
@@ -243,24 +252,18 @@ func mergeClaudeTranscriptMessages(existing, next []map[string]interface{}, alre
 		}
 		return i < j
 	})
-	seen := map[string]struct{}{}
 	var candidates []claudeTranscriptCandidate
+	indexes := map[string]int{}
 	for _, message := range combined {
-		role := firstString(message, "role")
-		text := firstString(message, "text")
-		timestamp := firstString(message, "timestamp")
-		modelName := firstString(message, "model")
-		key := strings.Join([]string{role, timestamp, text}, "\x00")
-		if _, ok := seen[key]; ok {
-			continue
-		}
-		seen[key] = struct{}{}
-		candidates = append(candidates, claudeTranscriptCandidate{
-			Role:      role,
-			Text:      text,
-			Timestamp: timestamp,
-			Model:     modelName,
-		})
+		addClaudeTranscriptCandidate(
+			&candidates,
+			indexes,
+			firstString(message, "role"),
+			firstString(message, "text"),
+			firstString(message, "timestamp"),
+			firstString(message, "model"),
+			firstString(message, "message_id"),
+		)
 	}
 	messages, truncated := claudeTranscriptMessagesFromCandidates(candidates)
 	return messages, alreadyTruncated || truncated

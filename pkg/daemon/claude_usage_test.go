@@ -197,6 +197,32 @@ func TestParseClaudeTranscriptDeduplicatesByMessageID(t *testing.T) {
 	}
 }
 
+func TestMergeClaudeTranscriptMessagesPreservesMessageID(t *testing.T) {
+	existing := []map[string]interface{}{{
+		"role":       "assistant",
+		"text":       "partial",
+		"timestamp":  "2026-07-28T01:00:00Z",
+		"message_id": "message-1",
+	}}
+	next := []map[string]interface{}{{
+		"role":       "assistant",
+		"text":       "complete response",
+		"timestamp":  "2026-07-28T01:00:00Z",
+		"message_id": "message-1",
+	}}
+
+	messages, _ := mergeClaudeTranscriptMessages(existing, next, false)
+	if len(messages) != 1 {
+		t.Fatalf("messages = %#v, want one merged message", messages)
+	}
+	if got := firstString(messages[0], "message_id"); got != "message-1" {
+		t.Fatalf("message_id = %q, want message-1", got)
+	}
+	if got := firstString(messages[0], "text"); got != "complete response" {
+		t.Fatalf("text = %q, want complete response", got)
+	}
+}
+
 func TestClaudeSessionIndexPayloadIncludesFullTranscript(t *testing.T) {
 	home := t.TempDir()
 	path := writeClaudeTranscript(t, home, claudeSessionUUID, []string{
@@ -486,8 +512,8 @@ func TestCollectClaudeUsageEventsIdempotency(t *testing.T) {
 	if cursorOnly, _ := usage[0][internalCursorOnlyPayloadKey].(bool); !cursorOnly {
 		t.Fatalf("advanced usage should be cursor-only: %#v", usage[0])
 	}
-	if len(sessions) != 1 {
-		t.Fatalf("cycle 3 should re-emit the changed session, got %d", len(sessions))
+	if len(sessions) != 0 {
+		t.Fatalf("cycle 3 has token usage but no new transcript text, got %d chunks", len(sessions))
 	}
 }
 
@@ -530,11 +556,11 @@ func TestCollectClaudeUsageEventsReemitsUserOnlyTranscriptChange(t *testing.T) {
 		t.Fatalf("user-only transcript change should re-emit session, got %d", len(sessions))
 	}
 	messages, ok := sessions[0]["messages"].([]map[string]interface{})
-	if !ok || len(messages) != 3 {
-		t.Fatalf("messages = %#v, want 3 messages", sessions[0]["messages"])
+	if !ok || len(messages) != 1 {
+		t.Fatalf("messages = %#v, want only the newly appended message", sessions[0]["messages"])
 	}
-	if messages[2]["text"] != "new prompt before assistant reply" {
-		t.Fatalf("last message = %#v", messages[2])
+	if messages[0]["text"] != "new prompt before assistant reply" {
+		t.Fatalf("message = %#v", messages[0])
 	}
 }
 

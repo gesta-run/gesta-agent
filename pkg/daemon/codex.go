@@ -100,11 +100,16 @@ func (a CodexAdapter) Collect(ctx context.Context, cfg Config) (AdapterResult, [
 			for _, usage := range usageEvents {
 				events = append(events, baseEvent(cfg, "usage.summary", "codex", "codex", usage))
 			}
+			toolCallsCollected := map[string]struct{}{}
 			for _, transcript := range transcriptEvents {
-				events = append(events, codexToolCallEventsFromTranscript(cfg, transcript)...)
+				sessionID := firstString(transcript, "session_id", "session_id_hash")
+				if _, ok := toolCallsCollected[sessionID]; !ok {
+					events = append(events, codexToolCallEventsFromTranscript(cfg, transcript)...)
+					toolCallsCollected[sessionID] = struct{}{}
+				}
 				publicTranscript := codexPublicTranscriptPayload(transcript)
-				event := baseEvent(cfg, "session.transcript", "codex", "codex", publicTranscript)
-				event.EventID = codexTranscriptEventID(publicTranscript)
+				event := baseEvent(cfg, transcriptChunkEventType, "codex", "codex", publicTranscript)
+				event.EventID = transcriptChunkEventID(publicTranscript)
 				events = append(events, event)
 			}
 			events = append(events, sensitiveEvents...)

@@ -50,7 +50,13 @@ func filterClaudeSessionBaseline(
 		var updates []map[string]interface{}
 		var ignored int
 		result.UsageEvents, updates, ignored = filterClaudeUsageBaseline(baseline, usageEvents)
-		result.SessionEvents, updates = filterClaudeSessionPayloads(baseline, sessionEvents, updates)
+		result.SessionEvents, updates = filterClaudeSessionPayloads(
+			baseline,
+			sessionEvents,
+			updates,
+			observedAt,
+			dailyWorkLocation(cfg.DailyWorkTimezone),
+		)
 		for _, payload := range updates {
 			if addBaselineSession(baseline.Sessions, payload) {
 				dirty = true
@@ -129,14 +135,27 @@ func filterClaudeUsageBaseline(
 func filterClaudeSessionPayloads(
 	baseline claudeCodeSessionBaselineGroup,
 	sessionEvents, updates []map[string]interface{},
+	observedAt time.Time,
+	location *time.Location,
 ) ([]map[string]interface{}, []map[string]interface{}) {
 	filtered := make([]map[string]interface{}, 0, len(sessionEvents))
 	for _, payload := range sessionEvents {
-		if sessionIDFromPayload(payload) == "" || claudeShouldSkipBaselineSession(baseline, payload) {
+		sessionID := sessionIDFromPayload(payload)
+		if sessionID == "" {
 			continue
 		}
-		filtered = append(filtered, payload)
-		updates = append(updates, payload)
+		cursor, exists := baseline.Sessions[sessionID]
+		if exists && !cursor.TranscriptCursorInitialized {
+			cursor = seedTranscriptCursor(payload, cursor)
+			updates = append(updates, transcriptCursorPayload(payload, cursor))
+			continue
+		}
+		if claudeShouldSkipBaselineSession(baseline, payload) {
+			continue
+		}
+		chunks, cursor := prepareTranscriptChunks(payload, cursor, observedAt, location)
+		filtered = append(filtered, chunks...)
+		updates = append(updates, transcriptCursorPayload(payload, cursor))
 	}
 	return filtered, updates
 }

@@ -16,21 +16,22 @@ import (
 )
 
 type Config struct {
-	ServerURL       string `json:"server_url,omitempty"`
-	ControlURL      string `json:"control_url,omitempty"`
-	CustomerID      string `json:"customer_id"`
-	DeploymentID    string `json:"deployment_id"`
-	DaemonID        string `json:"daemon_id"`
-	APIKey          string `json:"api_key,omitempty"`
-	Token           string `json:"token,omitempty"`
-	DeviceID        string `json:"device_id"`
-	TeamID          string `json:"team_id,omitempty"`
-	EnrollmentKeyID string `json:"enrollment_key_id,omitempty"`
-	HostType        string `json:"host_type"`
-	InstallMode     string `json:"install_mode"`
-	PolicyVersion   string `json:"policy_version"`
-	DataDir         string `json:"data_dir"`
-	UsageWindow     string `json:"usage_window"`
+	ServerURL         string `json:"server_url,omitempty"`
+	ControlURL        string `json:"control_url,omitempty"`
+	CustomerID        string `json:"customer_id"`
+	DeploymentID      string `json:"deployment_id"`
+	DaemonID          string `json:"daemon_id"`
+	APIKey            string `json:"api_key,omitempty"`
+	Token             string `json:"token,omitempty"`
+	DeviceID          string `json:"device_id"`
+	TeamID            string `json:"team_id,omitempty"`
+	EnrollmentKeyID   string `json:"enrollment_key_id,omitempty"`
+	HostType          string `json:"host_type"`
+	InstallMode       string `json:"install_mode"`
+	PolicyVersion     string `json:"policy_version"`
+	DataDir           string `json:"data_dir"`
+	UsageWindow       string `json:"usage_window"`
+	DailyWorkTimezone string `json:"-"`
 }
 
 func DefaultDataDir() string {

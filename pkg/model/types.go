@@ -80,6 +80,7 @@ type HeartbeatResponse struct {
 	Daemon               map[string]interface{}        `json:"daemon,omitempty"`
 	Upgrade              *AgentUpgradePolicy           `json:"upgrade,omitempty"`
 	OutputClassification *OutputClassificationSettings `json:"output_classification,omitempty"`
+	DailyWorkTimezone    string                        `json:"daily_work_timezone,omitempty"`
 }
 
 type OutputClassificationSettings struct {

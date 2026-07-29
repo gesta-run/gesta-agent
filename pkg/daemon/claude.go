@@ -5,7 +5,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/gesta-run/gesta-agent/pkg/model"
@@ -88,22 +87,12 @@ func claudeEventsFromSessions(
 		events = append(events, baseEvent(cfg, "usage.summary", claudeCodeUsageSource, claudeCodeAgentType, payload))
 	}
 	for _, payload := range collection.SessionEvents {
-		event := baseEvent(cfg, "session.transcript", claudeCodeUsageSource, claudeCodeAgentType, payload)
-		event.EventID = claudeSessionEventID(payload)
+		event := baseEvent(cfg, transcriptChunkEventType, claudeCodeUsageSource, claudeCodeAgentType, payload)
+		event.EventID = transcriptChunkEventID(payload)
 		events = append(events, event)
 	}
 	events = append(events, collection.MCPEvents...)
 	return events, collection.Commit
-}
-
-func claudeSessionEventID(payload map[string]interface{}) string {
-	parts := []string{
-		"claude_code.session",
-		firstPayloadString(payload, "session_id", "session_id_hash"),
-		firstPayloadString(payload, "updated_at"),
-		firstPayloadString(payload, "transcript_hash"),
-	}
-	return "evt_" + util.ShortHash(strings.Join(parts, "\x00"))
 }
 
 func dirEntryCount(dir string) int {
