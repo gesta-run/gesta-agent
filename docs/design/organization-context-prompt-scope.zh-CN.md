@@ -215,8 +215,8 @@ pkg/promptscope/
 计划修改：
 
 ```text
-cmd/app/codex_hook.go
-cmd/app/context_hook.go
+internal/cli/codex_hook.go
+internal/cli/context_hook.go
 ```
 
 `codex_hook.go` 负责在敏感信息检测之后调用 `promptscope.Extract`；`context_hook.go` 只使用提取后的文本调用现有 matcher。

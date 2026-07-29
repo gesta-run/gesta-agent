@@ -104,7 +104,7 @@ data_dir=${GESTA_DAEMON_DATA_DIR:-${GESTA_DATA_DIR:-"$HOME/.gesta"}}
 install_dir=${GESTA_AGENT_INSTALL_DIR:-"$data_dir/bin"}
 agent_root=${local_agent_root:-"$data_dir/agent"}
 agent_bin=${GESTA_AGENT_BIN:-"$install_dir/gesta-agent"}
-install_base_url=${GESTA_AGENT_INSTALL_BASE_URL:-https://gesta-run.github.io/onboard/agent/rc}
+install_base_url=${GESTA_AGENT_INSTALL_BASE_URL:-https://artifacts.gesta.run/gesta/agent/rc}
 if [ -n "${GESTA_AGENT_BIN:-}" ]; then
   external_agent_bin=1
 fi
@@ -572,7 +572,7 @@ if [ "$external_agent_bin" = "0" ]; then
   if [ -n "$local_agent_root" ] && command -v go >/dev/null 2>&1; then
     mkdir -p "$(dirname -- "$agent_bin")"
     step "Building agent from source"
-    (cd "$local_agent_root" && go build -o "$agent_bin" ./cmd)
+    (cd "$local_agent_root" && go build -o "$agent_bin" ./cmd/gesta-agent)
     ok "Built $(agent_version "$agent_bin")"
   elif [ -n "$local_agent_root" ] && [ -x "$agent_bin" ]; then
     warn "go not found; reusing existing local agent binary at $agent_bin"

@@ -6,11 +6,12 @@ import (
 
 	"github.com/gesta-run/gesta-agent/pkg/model"
 	"github.com/gesta-run/gesta-agent/pkg/privacy"
+	"github.com/gesta-run/gesta-agent/pkg/rulecache"
 	"github.com/gesta-run/gesta-agent/pkg/util"
 )
 
 func codexSensitiveRulesForCollection(cfg Config) []model.SensitiveRule {
-	if cached, err := LoadSensitiveRuleCache(cfg.DataDir); err == nil {
+	if cached, err := rulecache.LoadSensitiveRuleCache(cfg.DataDir); err == nil {
 		return cached.Rules
 	}
 	return []model.SensitiveRule{}
