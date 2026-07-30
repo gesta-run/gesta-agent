@@ -3,6 +3,7 @@ package eventqueue
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/gesta-run/gesta-agent/pkg/model"
+	bolt "go.etcd.io/bbolt"
 )
 
 func drainAll(q Queue) ([]model.EventEnvelope, error) {
@@ -174,6 +176,126 @@ func TestQueueAppendDeduplicatesSnapshotsKeepingNewest(t *testing.T) {
 	}
 }
 
+func TestQueueAppendDeduplicatesQueuedEventsByEventID(t *testing.T) {
+	now := time.Date(2026, 7, 27, 12, 0, 0, 0, time.UTC)
+	q := NewQueue(t.TempDir())
+	q.now = func() time.Time { return now }
+	stats, err := q.AppendWithStats([]model.EventEnvelope{
+		{EventID: "evt_tool_call", EventType: "tool.call", CreatedAt: now},
+		{EventID: "evt_tool_call", EventType: "tool.call", CreatedAt: now.Add(time.Second)},
+	})
+	if err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	if stats.RemovedDuplicate != 1 || stats.QueuedEvents != 1 {
+		t.Fatalf("stats = %#v", stats)
+	}
+	events, err := drainAll(q)
+	if err != nil {
+		t.Fatalf("drain: %v", err)
+	}
+	if len(events) != 1 || !events[0].CreatedAt.Equal(now) {
+		t.Fatalf("events = %#v, want first immutable event", events)
+	}
+}
+
+func TestQueueRemembersDeliveredEventIDs(t *testing.T) {
+	now := time.Date(2026, 7, 27, 12, 0, 0, 0, time.UTC)
+	q := NewQueue(t.TempDir())
+	q.now = func() time.Time { return now }
+	event := model.EventEnvelope{EventID: "evt_delivered", EventType: "tool.call", CreatedAt: now}
+	if err := q.Append([]model.EventEnvelope{event}); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	if _, err := drainAll(q); err != nil {
+		t.Fatalf("drain: %v", err)
+	}
+	stats, err := q.AppendWithStats([]model.EventEnvelope{event})
+	if err != nil {
+		t.Fatalf("append delivered event: %v", err)
+	}
+	if stats.RemovedDuplicate != 1 || stats.QueuedEvents != 0 {
+		t.Fatalf("stats = %#v", stats)
+	}
+}
+
+func TestQueueBackfillsEventIDsWithoutDeletingExistingEvents(t *testing.T) {
+	dir := t.TempDir()
+	q := NewQueue(dir)
+	now := time.Date(2026, 7, 27, 12, 0, 0, 0, time.UTC)
+	event := model.EventEnvelope{EventID: "evt_existing", EventType: "tool.call", CreatedAt: now}
+	encoded, err := json.Marshal(event)
+	if err != nil {
+		t.Fatalf("marshal event: %v", err)
+	}
+	db, err := bolt.Open(q.path, 0o600, nil)
+	if err != nil {
+		t.Fatalf("open legacy queue: %v", err)
+	}
+	err = db.Update(func(tx *bolt.Tx) error {
+		for _, bucket := range [][]byte{
+			queueEventsBucket,
+			queueTimesBucket,
+			queueMetaBucket,
+		} {
+			if _, err := tx.CreateBucket(bucket); err != nil {
+				return err
+			}
+		}
+		sequence := encodeUint64(1)
+		if err := tx.Bucket(queueEventsBucket).Put(sequence, encodeQueuedEvent(now, encoded)); err != nil {
+			return err
+		}
+		if err := tx.Bucket(queueTimesBucket).Put(queueTimeKey(now, sequence), nil); err != nil {
+			return err
+		}
+		if err := tx.Bucket(queueMetaBucket).Put(queueMetaCountKey, encodeUint64(1)); err != nil {
+			return err
+		}
+		if err := tx.Bucket(queueMetaBucket).Put(queueMetaBytesKey, encodeUint64(uint64(len(encoded)+1))); err != nil {
+			return err
+		}
+		return tx.Bucket(queueMetaBucket).Put(queueMetaNextKey, sequence)
+	})
+	if closeErr := db.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		t.Fatalf("seed legacy queue: %v", err)
+	}
+
+	q.now = func() time.Time { return now }
+	stats, err := q.AppendWithStats([]model.EventEnvelope{event})
+	if err != nil {
+		t.Fatalf("append existing event: %v", err)
+	}
+	if stats.RemovedDuplicate != 1 || stats.QueuedEvents != 1 {
+		t.Fatalf("stats = %#v", stats)
+	}
+}
+
+func TestQueueForgetsDeliveredEventIDsAfterRetention(t *testing.T) {
+	now := time.Date(2026, 7, 27, 12, 0, 0, 0, time.UTC)
+	q := NewQueue(t.TempDir())
+	q.now = func() time.Time { return now }
+	event := model.EventEnvelope{EventID: "evt_delivered", EventType: "tool.call", CreatedAt: now}
+	if err := q.Append([]model.EventEnvelope{event}); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	if _, err := drainAll(q); err != nil {
+		t.Fatalf("drain: %v", err)
+	}
+	q.now = func() time.Time { return now.Add(queueMaxAge + time.Second) }
+	event.CreatedAt = q.currentTime()
+	stats, err := q.AppendWithStats([]model.EventEnvelope{event})
+	if err != nil {
+		t.Fatalf("append after retention: %v", err)
+	}
+	if stats.RemovedDuplicate != 0 || stats.QueuedEvents != 1 {
+		t.Fatalf("stats = %#v", stats)
+	}
+}
+
 func TestQueueAppendEvictsOldestEventsAtCapacity(t *testing.T) {
 	now := time.Date(2026, 7, 27, 12, 0, 0, 0, time.UTC)
 	q := NewQueue(t.TempDir())
@@ -239,7 +361,7 @@ func TestQueueDrainSendsEventsInBatches(t *testing.T) {
 	q := NewQueue(t.TempDir())
 	events := make([]model.EventEnvelope, 0, queueDrainBatchSize+3)
 	for index := 0; index < queueDrainBatchSize+3; index++ {
-		events = append(events, currentEvent("evt_batch"))
+		events = append(events, currentEvent(fmt.Sprintf("evt_batch_%d", index)))
 	}
 	if err := q.Append(events); err != nil {
 		t.Fatalf("append: %v", err)
@@ -261,7 +383,7 @@ func TestQueueDrainKeepsOnlyUnsentBatchOnFailure(t *testing.T) {
 	q := NewQueue(t.TempDir())
 	events := make([]model.EventEnvelope, 0, queueDrainBatchSize+1)
 	for index := 0; index < queueDrainBatchSize+1; index++ {
-		events = append(events, currentEvent("evt_batch"))
+		events = append(events, currentEvent(fmt.Sprintf("evt_batch_%d", index)))
 	}
 	events[queueDrainBatchSize].EventID = "evt_remaining"
 	if err := q.Append(events); err != nil {

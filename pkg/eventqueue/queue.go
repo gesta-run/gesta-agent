@@ -188,15 +188,18 @@ func (q Queue) effectiveLockTimeout() time.Duration {
 }
 
 func (q Queue) cutoff() time.Time {
-	now := time.Now()
-	if q.now != nil {
-		now = q.now()
-	}
 	maxAge := q.maxAge
 	if maxAge <= 0 {
 		maxAge = queueMaxAge
 	}
-	return now.UTC().Add(-maxAge)
+	return q.currentTime().Add(-maxAge)
+}
+
+func (q Queue) currentTime() time.Time {
+	if q.now != nil {
+		return q.now().UTC()
+	}
+	return time.Now().UTC()
 }
 
 func (q Queue) effectiveMaxBytes() int64 {
