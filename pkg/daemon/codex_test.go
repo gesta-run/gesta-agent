@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -439,7 +440,7 @@ func TestCodexSensitiveTranscriptFallbackSkipsWhenUserPromptHookActive(t *testin
 	config := `[features]
 hooks = true
 
-[hooks.state.` + tomlBasicString(hookPath+":user_prompt_submit:0:0") + `]
+[hooks.state.` + strconv.Quote(hookPath+":user_prompt_submit:0:0") + `]
 trusted_hash = "sha256:test"
 `
 	if err := os.WriteFile(filepath.Join(codexDir, "config.toml"), []byte(config), 0o600); err != nil {
@@ -580,19 +581,5 @@ func TestCodexUsageSQLScansAllTokenRows(t *testing.T) {
 	}
 	if strings.Contains(strings.ToLower(query), "limit") {
 		t.Fatalf("query should scan all token rows, got: %s", query)
-	}
-}
-
-func TestCommandOutputMetadataDoesNotIncludeOutput(t *testing.T) {
-	payload := commandOutputMetadata("first line\nsecret second line")
-	data, err := json.Marshal(payload)
-	if err != nil {
-		t.Fatalf("marshal payload: %v", err)
-	}
-	if strings.Contains(string(data), "secret second line") {
-		t.Fatalf("payload leaked command output: %s", data)
-	}
-	if payload["line_count"] != 2 {
-		t.Fatalf("unexpected line count: %#v", payload["line_count"])
 	}
 }

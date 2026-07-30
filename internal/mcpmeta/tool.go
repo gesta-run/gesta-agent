@@ -1,8 +1,8 @@
-package daemon
+package mcpmeta
 
 import "strings"
 
-func mcpToolParts(name string) (string, string) {
+func ToolParts(name string) (string, string) {
 	trimmed := strings.TrimSpace(name)
 	if !strings.HasPrefix(trimmed, "mcp__") {
 		return "", ""
@@ -16,7 +16,7 @@ func mcpToolParts(name string) (string, string) {
 	} else {
 		return "", ""
 	}
-	server := normalizeMCPServerName(parts[0])
+	server := NormalizeServerName(parts[0])
 	tool := strings.TrimSpace(parts[1])
 	if server == "" || tool == "" {
 		return "", ""

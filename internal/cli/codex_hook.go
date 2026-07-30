@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gesta-run/gesta-agent/internal/controlclient"
 	"github.com/gesta-run/gesta-agent/pkg/daemon"
 	"github.com/gesta-run/gesta-agent/pkg/model"
 	"github.com/gesta-run/gesta-agent/pkg/policy"
@@ -166,7 +167,7 @@ func consumeApprovedPolicyGrant(ctx context.Context, cfg daemon.Config, evaluati
 	if cfg.Token == "" || cfg.EffectiveServerURL() == "" || evaluation.CommandHash == "" {
 		return model.PolicyApproval{}, false
 	}
-	client := daemon.NewClient(cfg.EffectiveServerURL(), cfg.Token)
+	client := controlclient.NewClient(cfg.EffectiveServerURL(), cfg.Token)
 	type result struct {
 		resp model.PolicyApprovalResolveResponse
 		err  error
@@ -199,7 +200,7 @@ func createPolicyApprovalRequest(ctx context.Context, cfg daemon.Config, evaluat
 	if cfg.Token == "" || cfg.EffectiveServerURL() == "" || evaluation.CommandHash == "" {
 		return model.PolicyApproval{}, false
 	}
-	client := daemon.NewClient(cfg.EffectiveServerURL(), cfg.Token)
+	client := controlclient.NewClient(cfg.EffectiveServerURL(), cfg.Token)
 	type result struct {
 		approval model.PolicyApproval
 		err      error
@@ -248,7 +249,7 @@ func hookPolicyRules(ctx context.Context, cfg daemon.Config, shouldFetch bool) (
 	if !shouldFetch {
 		return nil, false
 	}
-	client := daemon.NewClient(cfg.EffectiveServerURL(), cfg.Token)
+	client := controlclient.NewClient(cfg.EffectiveServerURL(), cfg.Token)
 	type result struct {
 		rules []model.PolicyRule
 		err   error

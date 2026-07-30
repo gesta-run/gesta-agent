@@ -13,7 +13,16 @@ import (
 	"github.com/gesta-run/gesta-agent/pkg/model"
 )
 
-func TestQueueAppendReadClear(t *testing.T) {
+func drainAll(q Queue) ([]model.EventEnvelope, error) {
+	var drained []model.EventEnvelope
+	err := q.Drain(func(events []model.EventEnvelope) error {
+		drained = append(drained, events...)
+		return nil
+	})
+	return drained, err
+}
+
+func TestQueueAppendAndDrain(t *testing.T) {
 	q := NewQueue(t.TempDir())
 	now := time.Now().UTC()
 	events := []model.EventEnvelope{
@@ -26,27 +35,24 @@ func TestQueueAppendReadClear(t *testing.T) {
 	if got := q.Size(); got != 2 {
 		t.Fatalf("queue size = %d, want 2", got)
 	}
-	read, err := q.ReadAll()
+	read, err := drainAll(q)
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
 	if len(read) != 2 || read[0].EventID != "evt_1" || read[1].EventID != "evt_2" {
 		t.Fatalf("events = %#v", read)
 	}
-	if err := q.Clear(); err != nil {
-		t.Fatalf("clear: %v", err)
-	}
 	if got := q.Size(); got != 0 {
-		t.Fatalf("queue size after clear = %d, want 0", got)
+		t.Fatalf("queue size after drain = %d, want 0", got)
 	}
 }
 
-func TestQueueReadAllReturnsCorruptDatabaseError(t *testing.T) {
+func TestQueueDrainReturnsCorruptDatabaseError(t *testing.T) {
 	q := NewQueue(t.TempDir())
 	if err := os.WriteFile(q.path, []byte("not-a-bbolt-database"), 0o600); err != nil {
 		t.Fatalf("write corrupt database: %v", err)
 	}
-	if _, err := q.ReadAll(); err == nil {
+	if _, err := drainAll(q); err == nil {
 		t.Fatal("corrupt queue database was accepted")
 	}
 }
@@ -69,7 +75,7 @@ func TestQueueUsesProtocolV2DatabaseAndIgnoresLegacyQueue(t *testing.T) {
 	}}); err != nil {
 		t.Fatalf("append v2 queue: %v", err)
 	}
-	events, err := q.ReadAll()
+	events, err := drainAll(q)
 	if err != nil {
 		t.Fatalf("read v2 queue: %v", err)
 	}
@@ -156,7 +162,7 @@ func TestQueueAppendDeduplicatesSnapshotsKeepingNewest(t *testing.T) {
 	if stats.RemovedDuplicate != 1 || stats.QueuedEvents != 2 {
 		t.Fatalf("stats = %#v", stats)
 	}
-	events, err := q.ReadAll()
+	events, err := drainAll(q)
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
@@ -195,7 +201,7 @@ func TestQueueAppendEvictsOldestEventsAtCapacity(t *testing.T) {
 	if stats.RemovedCapacity != 1 || stats.QueuedEvents != 1 {
 		t.Fatalf("stats = %#v", stats)
 	}
-	events, err := q.ReadAll()
+	events, err := drainAll(q)
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
@@ -217,7 +223,7 @@ func TestQueueDrainKeepsEventsAppendedDuringSend(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("drain: %v", err)
 	}
-	read, err := q.ReadAll()
+	read, err := drainAll(q)
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
@@ -269,7 +275,7 @@ func TestQueueDrainKeepsOnlyUnsentBatchOnFailure(t *testing.T) {
 	if !errors.Is(err, sendErr) {
 		t.Fatalf("drain error = %v, want %v", err, sendErr)
 	}
-	read, readErr := q.ReadAll()
+	read, readErr := drainAll(q)
 	if readErr != nil {
 		t.Fatalf("read: %v", readErr)
 	}

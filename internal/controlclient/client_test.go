@@ -1,4 +1,4 @@
-package daemon
+package controlclient
 
 import (
 	"encoding/json"
@@ -8,52 +8,6 @@ import (
 
 	"github.com/gesta-run/gesta-agent/pkg/model"
 )
-
-func TestClientEnrollWithAPIKeySendsAuthAndPayload(t *testing.T) {
-	const apiKey = "enroll_secret_test_key"
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/v1/enroll" {
-			t.Fatalf("unexpected path: %s", r.URL.Path)
-		}
-		if got := r.Header.Get("Authorization"); got != "" {
-			t.Fatalf("connect token should not be sent as bearer token, got %q", got)
-		}
-		if got := r.Header.Get("X-API-Key"); got != apiKey {
-			t.Fatalf("unexpected x-api-key header: %q", got)
-		}
-		var payload map[string]interface{}
-		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-			t.Fatalf("decode request: %v", err)
-		}
-		if payload["api_key"] != "" {
-			t.Fatalf("connect token should not be duplicated in JSON payload")
-		}
-		if _, ok := payload["user_id"]; ok {
-			t.Fatalf("enrollment payload exposed user_id: %#v", payload)
-		}
-		if _, ok := payload["user_name"]; ok {
-			t.Fatalf("enrollment payload exposed user_name: %#v", payload)
-		}
-		if payload["device_id"] != "dev_123" {
-			t.Fatalf("unexpected enrollment request: %#v", payload)
-		}
-		_ = json.NewEncoder(w).Encode(model.EnrollmentResponse{
-			DaemonID:      "daemon_123",
-			Token:         "dtok_123",
-			PolicyVersion: "bootstrap-v0",
-		})
-	}))
-	defer server.Close()
-
-	client := NewClient(server.URL, "")
-	resp, err := client.EnrollWithAPIKey(model.EnrollmentRequest{DeviceID: "dev_123"}, apiKey)
-	if err != nil {
-		t.Fatalf("enroll: %v", err)
-	}
-	if resp.DaemonID != "daemon_123" || resp.Token != "dtok_123" {
-		t.Fatalf("unexpected response: %#v", resp)
-	}
-}
 
 func TestClientHeartbeatSendsDaemonTokenAndHostType(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

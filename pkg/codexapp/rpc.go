@@ -62,16 +62,16 @@ func readThread(
 	cmd := exec.CommandContext(ctx, executable, "app-server", "--stdio")
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
-		return nil, fmt.Errorf("open Codex app-server stdin: %w", err)
+		return nil, fmt.Errorf("open codex app-server stdin: %w", err)
 	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return nil, fmt.Errorf("open Codex app-server stdout: %w", err)
+		return nil, fmt.Errorf("open codex app-server stdout: %w", err)
 	}
 	var stderr synchronizedBuffer
 	cmd.Stderr = &stderr
 	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("start Codex app-server: %w", err)
+		return nil, fmt.Errorf("start codex app-server: %w", err)
 	}
 	streamCtx, stopStream := context.WithCancel(ctx)
 	responses := streamRPCResponses(streamCtx, stdout)
@@ -107,18 +107,18 @@ func readThread(
 	initializeResponse, err := readRPCResponse(initializeCtx, responses, "1", &stderr)
 	cancelInitialize()
 	if err != nil {
-		return nil, fmt.Errorf("initialize Codex app-server: %w", err)
+		return nil, fmt.Errorf("initialize codex app-server: %w", err)
 	}
 	if initializeResponse.Error != nil {
 		return nil, fmt.Errorf(
-			"initialize Codex app-server failed (%d): %s",
+			"initialize codex app-server failed (%d): %s",
 			initializeResponse.Error.Code,
 			initializeResponse.Error.Message,
 		)
 	}
 	var initializeResult map[string]interface{}
 	if err := json.Unmarshal(initializeResponse.Result, &initializeResult); err != nil || initializeResult == nil {
-		return nil, errors.New("initialize Codex app-server returned an invalid result")
+		return nil, errors.New("initialize codex app-server returned an invalid result")
 	}
 
 	requests := []interface{}{
@@ -131,7 +131,7 @@ func readThread(
 	}
 	for _, request := range requests {
 		if err := encoder.Encode(request); err != nil {
-			return nil, fmt.Errorf("write Codex app-server request: %w", err)
+			return nil, fmt.Errorf("write codex app-server request: %w", err)
 		}
 	}
 
@@ -157,7 +157,14 @@ func streamRPCResponses(ctx context.Context, stdout io.Reader) <-chan rpcStreamR
 		scanner.Buffer(make([]byte, 64*1024), 64*1024*1024)
 		for scanner.Scan() {
 			var response rpcResponse
-			if err := json.Unmarshal(scanner.Bytes(), &response); err != nil || len(response.ID) == 0 {
+			if err := json.Unmarshal(scanner.Bytes(), &response); err != nil {
+				select {
+				case results <- rpcStreamResult{Err: fmt.Errorf("decode codex app-server response: %w", err)}:
+				case <-ctx.Done():
+				}
+				return
+			}
+			if len(response.ID) == 0 {
 				continue
 			}
 			select {
@@ -168,7 +175,7 @@ func streamRPCResponses(ctx context.Context, stdout io.Reader) <-chan rpcStreamR
 		}
 		if err := scanner.Err(); err != nil {
 			select {
-			case results <- rpcStreamResult{Err: fmt.Errorf("read Codex app-server response: %w", err)}:
+			case results <- rpcStreamResult{Err: fmt.Errorf("read codex app-server response: %w", err)}:
 			case <-ctx.Done():
 			}
 		}
@@ -185,18 +192,18 @@ func readRPCResponse(
 	for {
 		select {
 		case <-ctx.Done():
-			return rpcResponse{}, fmt.Errorf("Codex app-server response timed out: %w", ctx.Err())
+			return rpcResponse{}, fmt.Errorf("codex app-server response timed out: %w", ctx.Err())
 		case result, ok := <-responses:
 			if !ok {
 				detail := strings.TrimSpace(stderr.String())
 				if detail != "" {
 					return rpcResponse{}, fmt.Errorf(
-						"Codex app-server exited without response %s: %s",
+						"codex app-server exited without response %s: %s",
 						responseID,
 						detail,
 					)
 				}
-				return rpcResponse{}, fmt.Errorf("Codex app-server exited without response %s", responseID)
+				return rpcResponse{}, fmt.Errorf("codex app-server exited without response %s", responseID)
 			}
 			if result.Err != nil {
 				return rpcResponse{}, result.Err

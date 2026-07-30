@@ -1,4 +1,4 @@
-package daemon
+package controlclient
 
 import (
 	"bytes"
@@ -23,26 +23,6 @@ func NewClient(controlURL, token string) *Client {
 		token:   token,
 		http:    &http.Client{Timeout: 15 * time.Second},
 	}
-}
-
-func (c *Client) Enroll(req model.EnrollmentRequest) (model.EnrollmentResponse, error) {
-	return c.EnrollWithAPIKey(req, req.APIKey)
-}
-
-func (c *Client) EnrollWithAPIKey(req model.EnrollmentRequest, apiKey string) (model.EnrollmentResponse, error) {
-	var resp model.EnrollmentResponse
-	if apiKey == "" {
-		apiKey = req.APIKey
-	}
-	req.APIKey = ""
-	headers := map[string]string{}
-	if apiKey != "" {
-		headers["X-API-Key"] = apiKey
-	}
-	if err := c.postWithHeaders("/api/v1/enroll", headers, req, &resp); err != nil {
-		return model.EnrollmentResponse{}, err
-	}
-	return resp, nil
 }
 
 func (c *Client) Heartbeat(req model.HeartbeatRequest) (model.HeartbeatResponse, error) {

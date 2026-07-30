@@ -72,7 +72,7 @@ func collectClaudeUsageEvents(
 	projectsDir string,
 	observedAt time.Time,
 ) (usageEvents, sessionEvents []map[string]interface{}, meta map[string]interface{}, err error) {
-	collection, err := collectClaudeEvents(cfg, projectsDir, observedAt)
+	collection, err := collectClaudeEventsFromSessions(cfg, mergedClaudeSessions(projectsDir), observedAt)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -85,7 +85,10 @@ func collectClaudeUsageEvents(
 }
 
 func claudeUsageEvents(cfg Config, projectsDir string, observedAt time.Time) []model.EventEnvelope {
-	events, commit := claudeEvents(cfg, projectsDir, observedAt)
+	if projectsDir == "" {
+		return nil
+	}
+	events, commit := claudeEventsFromSessions(cfg, mergedClaudeSessions(projectsDir), observedAt)
 	if commit != nil {
 		_ = commit()
 	}

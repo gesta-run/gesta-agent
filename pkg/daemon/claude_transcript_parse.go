@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/gesta-run/gesta-agent/internal/mcpmeta"
 )
 
 type claudeTranscriptRecord struct {
@@ -289,7 +291,7 @@ func claudeMCPToolCallsFromContent(value interface{}, timestamp string) []claude
 			blockType := strings.ToLower(strings.TrimSpace(firstString(typed, "type")))
 			if blockType == "tool_use" {
 				name := strings.TrimSpace(firstString(typed, "name"))
-				server, tool := mcpToolParts(name)
+				server, tool := mcpmeta.ToolParts(name)
 				if server == "" || tool == "" {
 					return
 				}

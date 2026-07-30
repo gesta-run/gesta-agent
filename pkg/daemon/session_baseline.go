@@ -1,20 +1,13 @@
 package daemon
 
 import (
-	"bytes"
-	"encoding/json"
-	"os"
-	"path/filepath"
-	"strings"
 	"time"
 
-	"github.com/gesta-run/gesta-agent/internal/atomicfile"
 	"github.com/gesta-run/gesta-agent/pkg/model"
 	"github.com/gesta-run/gesta-agent/pkg/util"
 )
 
 const (
-	sessionBaselineFile                 = "session-baseline.json"
 	internalCursorOnlyPayloadKey        = "_gesta_internal_cursor_only"
 	internalInitialDeltaPayloadKey      = "_gesta_internal_initial_delta"
 	internalPreviousTotalTokensKey      = "_gesta_internal_previous_total_tokens"
@@ -26,74 +19,6 @@ const (
 	internalPreviousAccountingKey       = "_gesta_internal_previous_accounting"
 	codexSessionBackfillModeValue       = "disabled"
 )
-
-type sessionBaselineStore struct {
-	Version    int                            `json:"version"`
-	Codex      codexSessionBaselineGroup      `json:"codex"`
-	ClaudeCode claudeCodeSessionBaselineGroup `json:"claude_code"`
-}
-
-type codexSessionBaselineGroup struct {
-	StateDBs map[string]codexSessionBaseline `json:"state_dbs"`
-}
-
-type claudeCodeSessionBaselineGroup struct {
-	InitializedAt    string                     `json:"initialized_at,omitempty"`
-	MCPInitializedAt string                     `json:"mcp_initialized_at,omitempty"`
-	Sessions         map[string]baselineSession `json:"sessions"`
-}
-
-type codexSessionBaseline struct {
-	InitializedAt string                     `json:"initialized_at"`
-	StateDBHash   string                     `json:"state_db_hash,omitempty"`
-	Sessions      map[string]baselineSession `json:"sessions"`
-}
-
-type baselineSession struct {
-	UpdatedAt                   string   `json:"updated_at,omitempty"`
-	TranscriptHash              string   `json:"transcript_hash,omitempty"`
-	TranscriptMessageVersions   []string `json:"transcript_message_versions,omitempty"`
-	TranscriptSequence          int64    `json:"transcript_sequence,omitempty"`
-	TranscriptCursorInitialized bool     `json:"transcript_cursor_initialized,omitempty"`
-	TotalTokens                 int64    `json:"total_tokens,omitempty"`
-	InputTokens                 int64    `json:"input_tokens,omitempty"`
-	OutputTokens                int64    `json:"output_tokens,omitempty"`
-	CacheReadTokens             int64    `json:"cache_read_tokens,omitempty"`
-	CacheWriteTokens            int64    `json:"cache_write_tokens,omitempty"`
-	TokenAccounting             string   `json:"token_accounting,omitempty"`
-	TokensObserved              bool     `json:"tokens_observed,omitempty"`
-	// CacheObserved separates "this session's cache counters were genuinely zero"
-	// from "this baseline predates cache accounting and never recorded them". A
-	// baseline written by an older agent has neither field, so both read back as
-	// zero — but only the first may be diffed against. Without this, the recovery
-	// path below would hand the delta machinery a cursor claiming an OBSERVED zero,
-	// defeating its seeding guard and emitting the session's whole cumulative cache
-	// history as one window's delta.
-	CacheObserved bool `json:"cache_observed,omitempty"`
-	// Previous* records the cursor value this session last advanced FROM (i.e.
-	// the value before the most recent advance). The usage cursor is committed in
-	// a later phase than the baseline (see runner.go), so a crash between the two
-	// can leave the baseline advanced while the cursor is stale. Carrying the
-	// pre-advance cursor lets a suppressed (total == baseline) summary still be
-	// re-emitted as a cursor-only recovery hint, so the delta machinery can
-	// reconstruct the lost delta on restart without double counting when the
-	// cursor did commit. Populated only when a real advance happens.
-	PreviousTotalTokens      int64  `json:"previous_total_tokens,omitempty"`
-	PreviousInputTokens      int64  `json:"previous_input_tokens,omitempty"`
-	PreviousOutputTokens     int64  `json:"previous_output_tokens,omitempty"`
-	PreviousCacheReadTokens  int64  `json:"previous_cache_read_tokens,omitempty"`
-	PreviousCacheWriteTokens int64  `json:"previous_cache_write_tokens,omitempty"`
-	PreviousObservedAt       string `json:"previous_observed_at,omitempty"`
-	// PreviousCacheObserved is CacheObserved for that pre-advance snapshot. The
-	// recovery cursor is reconstructed from the Previous* fields, so it needs its
-	// own record of whether those cache counters were ever real.
-	PreviousCacheObserved bool `json:"previous_cache_observed,omitempty"`
-	// MCPToolCallCursorAt and MCPToolCallCursorEventIDs form a bounded cursor for
-	// transcript MCP calls. Only event IDs sharing the latest timestamp are
-	// retained, so the baseline does not grow with the total number of calls.
-	MCPToolCallCursorAt       string   `json:"mcp_tool_call_cursor_at,omitempty"`
-	MCPToolCallCursorEventIDs []string `json:"mcp_tool_call_cursor_event_ids,omitempty"`
-}
 
 type codexBaselineResult struct {
 	UsageEvents      []map[string]interface{}
@@ -538,69 +463,4 @@ func filterInternalEvents(events []model.EventEnvelope) ([]model.EventEnvelope, 
 		filtered = append(filtered, event)
 	}
 	return filtered, filteredCount
-}
-
-func loadSessionBaselineStore(dataDir string) (sessionBaselineStore, error) {
-	if dataDir == "" {
-		dataDir = DefaultDataDir()
-	}
-	path := filepath.Join(dataDir, sessionBaselineFile)
-	data, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
-		return newSessionBaselineStore(), nil
-	}
-	if err != nil {
-		return sessionBaselineStore{}, err
-	}
-	var store sessionBaselineStore
-	if err := json.Unmarshal(data, &store); err != nil {
-		recoveredStore, recovered, recoverErr := decodeSessionBaselineStorePrefix(data)
-		if recoverErr != nil {
-			return sessionBaselineStore{}, err
-		}
-		if recovered {
-			_ = saveSessionBaselineStore(dataDir, recoveredStore)
-		}
-		return recoveredStore, nil
-	}
-	normalizeSessionBaselineStore(&store)
-	return store, nil
-}
-
-func decodeSessionBaselineStorePrefix(data []byte) (sessionBaselineStore, bool, error) {
-	var store sessionBaselineStore
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	if err := decoder.Decode(&store); err != nil {
-		return sessionBaselineStore{}, false, err
-	}
-	remainder := string(data[decoder.InputOffset():])
-	recovered := strings.TrimSpace(remainder) != ""
-	normalizeSessionBaselineStore(&store)
-	return store, recovered, nil
-}
-
-func saveSessionBaselineStore(dataDir string, store sessionBaselineStore) error {
-	if dataDir == "" {
-		dataDir = DefaultDataDir()
-	}
-	normalizeSessionBaselineStore(&store)
-	return atomicfile.WriteJSON(filepath.Join(dataDir, sessionBaselineFile), store)
-}
-
-func newSessionBaselineStore() sessionBaselineStore {
-	store := sessionBaselineStore{}
-	normalizeSessionBaselineStore(&store)
-	return store
-}
-
-func normalizeSessionBaselineStore(store *sessionBaselineStore) {
-	if store.Version == 0 {
-		store.Version = 1
-	}
-	if store.Codex.StateDBs == nil {
-		store.Codex.StateDBs = map[string]codexSessionBaseline{}
-	}
-	if store.ClaudeCode.Sessions == nil {
-		store.ClaudeCode.Sessions = map[string]baselineSession{}
-	}
 }

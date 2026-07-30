@@ -4,6 +4,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gesta-run/gesta-agent/internal/hookinstall"
 	"github.com/gesta-run/gesta-agent/pkg/model"
 	"github.com/gesta-run/gesta-agent/pkg/privacy"
 	"github.com/gesta-run/gesta-agent/pkg/rulecache"
@@ -21,7 +22,7 @@ func codexSensitiveFindingEventsFromTranscripts(cfg Config, transcripts []map[st
 	if len(transcripts) == 0 || len(rules) == 0 {
 		return nil
 	}
-	if codexUserPromptSubmitHookActive() {
+	if hookinstall.CodexUserPromptSubmitHookActive() {
 		return nil
 	}
 	var events []model.EventEnvelope

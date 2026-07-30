@@ -1,4 +1,4 @@
-package daemon
+package hookinstall
 
 import (
 	"crypto/sha256"
@@ -279,10 +279,6 @@ func ensureCodexPolicyHookState(configText, hookPath, eventName, trustedHash str
 	return strings.Join(out, "\n")
 }
 
-func codexPolicyHookTrustedHash(command string) string {
-	return codexHookTrustedHash("pre_tool_use", command, "*")
-}
-
 func codexHookTrustedHash(eventName, command string, matcher string) string {
 	identity := map[string]interface{}{
 		"event_name": eventName,
@@ -305,10 +301,6 @@ func codexHookTrustedHash(eventName, command string, matcher string) string {
 	}
 	sum := sha256.Sum256(data)
 	return "sha256:" + hex.EncodeToString(sum[:])
-}
-
-func codexPolicyHookStateHeader(hookPath string) string {
-	return codexHookStateHeader(hookPath, "pre_tool_use")
 }
 
 func codexHookStateHeader(hookPath, eventName string) string {

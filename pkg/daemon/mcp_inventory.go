@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gesta-run/gesta-agent/internal/mcpmeta"
 	"github.com/gesta-run/gesta-agent/pkg/model"
 	"github.com/gesta-run/gesta-agent/pkg/util"
 )
@@ -45,7 +46,7 @@ func parseMCPServersFromListOutput(output string) mcpListParseResult {
 		if len(fields) == 0 {
 			continue
 		}
-		name := normalizeMCPServerName(fields[0])
+		name := mcpmeta.NormalizeServerName(fields[0])
 		if name == "" || strings.Trim(name, "-") == "" {
 			continue
 		}
@@ -122,15 +123,4 @@ func unsupportedMCPInventory(observedAt time.Time) *model.MCPInventoryStatus {
 		ObservedAt: observedAt.UTC().Format(time.RFC3339Nano),
 		ErrorCode:  "unsupported",
 	}
-}
-
-func normalizeMCPServerName(value string) string {
-	value = strings.Trim(strings.TrimSpace(value), "`\"'")
-	value = strings.TrimRight(value, ":")
-	value = strings.TrimSpace(value)
-	lower := strings.ToLower(value)
-	if lower == "" || lower == "checking" || lower == "codex_apps" || lower == "codex-apps" {
-		return ""
-	}
-	return lower
 }

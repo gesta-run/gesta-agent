@@ -1,4 +1,4 @@
-package daemon
+package statecleanup
 
 import (
 	"errors"
@@ -22,9 +22,9 @@ func TestCleanupDeprecatedStateRemovesOnlyOutputBaselineFiles(t *testing.T) {
 		t.Fatalf("write retained state: %v", err)
 	}
 
-	removedBytes, err := cleanupDeprecatedState(dataDir)
+	removedBytes, err := CleanupDeprecatedState(dataDir)
 	if err != nil {
-		t.Fatalf("cleanupDeprecatedState: %v", err)
+		t.Fatalf("CleanupDeprecatedState: %v", err)
 	}
 	if removedBytes != wantBytes {
 		t.Fatalf("removed bytes = %d, want %d", removedBytes, wantBytes)
@@ -38,7 +38,7 @@ func TestCleanupDeprecatedStateRemovesOnlyOutputBaselineFiles(t *testing.T) {
 		t.Fatalf("retained state missing: %v", err)
 	}
 
-	removedBytes, err = cleanupDeprecatedState(dataDir)
+	removedBytes, err = CleanupDeprecatedState(dataDir)
 	if err != nil || removedBytes != 0 {
 		t.Fatalf("idempotent cleanup = (%d, %v), want (0, nil)", removedBytes, err)
 	}
