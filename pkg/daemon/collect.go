@@ -32,15 +32,6 @@ func DefaultAdapters() []Adapter {
 	}
 }
 
-func DefaultAdapterNames() []string {
-	adapters := DefaultAdapters()
-	names := make([]string, 0, len(adapters))
-	for _, adapter := range adapters {
-		names = append(names, adapter.Name())
-	}
-	return names
-}
-
 func Collect(ctx context.Context, cfg Config) ([]model.EventEnvelope, []model.AdapterStatus, func() error) {
 	return CollectWithAdapters(ctx, cfg, DefaultAdapters())
 }
@@ -150,20 +141,6 @@ func commandOutput(ctx context.Context, name string, args ...string) (string, er
 		return string(out), cmdCtx.Err()
 	}
 	return string(out), err
-}
-
-func commandOutputMetadata(output string) map[string]interface{} {
-	trimmed := strings.TrimSpace(output)
-	lineCount := 0
-	if trimmed != "" {
-		lineCount = strings.Count(trimmed, "\n") + 1
-	}
-	return map[string]interface{}{
-		"output_hash":   util.HashString(output),
-		"byte_count":    len(output),
-		"line_count":    lineCount,
-		"metadata_only": true,
-	}
 }
 
 func findFiles(pattern string) []string {

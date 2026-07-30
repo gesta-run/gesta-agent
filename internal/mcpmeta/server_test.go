@@ -1,4 +1,4 @@
-package daemon
+package mcpmeta
 
 import (
 	"strings"
@@ -6,7 +6,7 @@ import (
 )
 
 func TestMCPServerIdentityUsesConfiguredName(t *testing.T) {
-	serverID, serverName := mcpServerIdentity(" GitHub ")
+	serverID, serverName := ServerIdentity(" GitHub ")
 	if serverID != "github" || serverName != "github" {
 		t.Fatalf("identity = (%q, %q), want (github, github)", serverID, serverName)
 	}
@@ -14,14 +14,14 @@ func TestMCPServerIdentityUsesConfiguredName(t *testing.T) {
 
 func TestMCPServerIdentityHidesUUIDDisplayName(t *testing.T) {
 	const opaqueID = "03acf4c5-efa1-4ae6-9653-f1eda698c57c"
-	serverID, serverName := mcpServerIdentity(opaqueID)
+	serverID, serverName := ServerIdentity(opaqueID)
 	if serverID != opaqueID || serverName != "" {
 		t.Fatalf("identity = (%q, %q), want (%q, empty)", serverID, serverName, opaqueID)
 	}
 }
 
 func TestMCPServerIdentityRejectsOversizedID(t *testing.T) {
-	serverID, serverName := mcpServerIdentity(strings.Repeat("a", maxMCPServerIdentityBytes+1))
+	serverID, serverName := ServerIdentity(strings.Repeat("a", maxServerIdentityBytes+1))
 	if serverID != "" || serverName != "" {
 		t.Fatalf("identity = (%q, %q), want empty", serverID, serverName)
 	}

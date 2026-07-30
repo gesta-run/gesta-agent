@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gesta-run/gesta-agent/internal/controlclient"
 	"github.com/gesta-run/gesta-agent/pkg/eventqueue"
 	"github.com/gesta-run/gesta-agent/pkg/model"
 	"github.com/gesta-run/gesta-agent/pkg/rulecache"
@@ -59,7 +60,7 @@ func TestFlushWithHeartbeatAppliesUpgradeBeforeFlush(t *testing.T) {
 			PolicyVersion: model.DefaultPolicyVersion,
 			DataDir:       dir,
 		},
-		client: NewClient(server.URL, "dtok_test"),
+		client: controlclient.NewClient(server.URL, "dtok_test"),
 		queue:  q,
 		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 		applyUpgrade: func(resp model.HeartbeatResponse) error {
@@ -114,7 +115,7 @@ func TestEnsureRuntimeSettingsSyncsClassificationOnce(t *testing.T) {
 			PolicyVersion: model.DefaultPolicyVersion,
 			DataDir:       dataDir,
 		},
-		client: NewClient(server.URL, "dtok_settings"),
+		client: controlclient.NewClient(server.URL, "dtok_settings"),
 		queue:  eventqueue.NewQueue(dataDir),
 		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
@@ -162,7 +163,7 @@ func TestHeartbeatWithoutClassificationPreservesLastValidCache(t *testing.T) {
 			PolicyVersion: model.DefaultPolicyVersion,
 			DataDir:       dataDir,
 		},
-		client: NewClient(server.URL, "dtok_settings"),
+		client: controlclient.NewClient(server.URL, "dtok_settings"),
 		queue:  eventqueue.NewQueue(dataDir),
 		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}

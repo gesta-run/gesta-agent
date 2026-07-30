@@ -25,14 +25,6 @@ type SensitiveFinding struct {
 	RuleName    string  `json:"rule_name"`
 }
 
-func DetectSensitiveText(input, fingerprintKey string) []SensitiveFinding {
-	return DetectSensitiveTextWithRules(input, fingerprintKey, DefaultSensitiveRules())
-}
-
-func DefaultSensitiveRules() []model.SensitiveRule {
-	return []model.SensitiveRule{}
-}
-
 func DetectSensitiveTextWithRules(input, fingerprintKey string, rules []model.SensitiveRule) []SensitiveFinding {
 	input = strings.TrimSpace(input)
 	if input == "" {

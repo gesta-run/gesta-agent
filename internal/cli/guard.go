@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gesta-run/gesta-agent/internal/controlclient"
 	"github.com/gesta-run/gesta-agent/pkg/daemon"
 	"github.com/gesta-run/gesta-agent/pkg/eventqueue"
 	"github.com/gesta-run/gesta-agent/pkg/model"
@@ -171,7 +172,7 @@ func isExecutable(path string) bool {
 
 func evaluateGuardCommandWithConfig(agentType string, args []string, cfg daemon.Config, shouldFetch bool) policy.Evaluation {
 	if shouldFetch {
-		client := daemon.NewClient(cfg.EffectiveServerURL(), cfg.Token)
+		client := controlclient.NewClient(cfg.EffectiveServerURL(), cfg.Token)
 		rules, err := client.PolicyRules()
 		if err == nil {
 			return policy.EvaluateCommandWithRules(agentType, args, rules)
@@ -218,7 +219,7 @@ func recordGuardDecisionWithConfig(cfg daemon.Config, shouldFlush bool, evaluati
 	if !shouldFlush {
 		return nil
 	}
-	client := daemon.NewClient(cfg.EffectiveServerURL(), cfg.Token)
+	client := controlclient.NewClient(cfg.EffectiveServerURL(), cfg.Token)
 	if err := queue.Drain(client.SendEvents); err != nil {
 		fmt.Fprintf(os.Stderr, "gesta-agent guard: queued decision locally; flush failed: %v\n", err)
 		return nil

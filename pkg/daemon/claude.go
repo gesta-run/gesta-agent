@@ -58,13 +58,6 @@ func (a ClaudeCodeAdapter) Collect(ctx context.Context, cfg Config) (AdapterResu
 	return AdapterResult{Status: status, Commit: commit}, events
 }
 
-func claudeEvents(cfg Config, projectsDir string, observedAt time.Time) ([]model.EventEnvelope, func() error) {
-	if projectsDir == "" {
-		return nil, nil
-	}
-	return claudeEventsFromSessions(cfg, mergedClaudeSessions(projectsDir), observedAt)
-}
-
 func claudeEventsFromSessions(
 	cfg Config,
 	sessions []claudeSessionUsage,

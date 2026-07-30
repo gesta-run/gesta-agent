@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gesta-run/gesta-agent/internal/mcpmeta"
 	"github.com/gesta-run/gesta-agent/pkg/model"
 	"github.com/gesta-run/gesta-agent/pkg/util"
 )
@@ -65,7 +66,7 @@ func claudeMCPInventoryFromConfigData(data []byte, observedAt time.Time) *model.
 	serversByName := map[string]model.MCPServerConfiguration{}
 	addServers := func(configured map[string]json.RawMessage) {
 		for name := range configured {
-			normalized := normalizeMCPServerName(name)
+			normalized := mcpmeta.NormalizeServerName(name)
 			if normalized == "" {
 				continue
 			}

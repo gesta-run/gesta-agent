@@ -59,13 +59,6 @@ func TestDetectSensitiveTextFindsCredentialAssignment(t *testing.T) {
 	}
 }
 
-func TestDetectSensitiveTextHasNoDefaultRules(t *testing.T) {
-	findings := DetectSensitiveText("token=abcdefghi1234567890", "tenant-key")
-	if len(findings) != 0 {
-		t.Fatalf("default findings = %d, want 0: %#v", len(findings), findings)
-	}
-}
-
 func TestDetectSensitiveTextWithCustomRuleFingerprintOnlyRecord(t *testing.T) {
 	findings := DetectSensitiveTextWithRules("customer_secret_123 should be logged", "tenant-key", []model.SensitiveRule{
 		{

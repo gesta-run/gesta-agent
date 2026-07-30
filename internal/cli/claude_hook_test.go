@@ -50,7 +50,7 @@ func TestClaudeHookMeasuresWriteAndMCPAfterSuccessfulToolUse(t *testing.T) {
 		}
 		processAgentHook(context.Background(), data, "claude_code", "claude_code")
 	}
-	events, err := eventqueue.NewQueue(cfg.DataDir).ReadAll()
+	events, err := consumeQueuedEvents(eventqueue.NewQueue(cfg.DataDir))
 	if err != nil {
 		t.Fatalf("read queue: %v", err)
 	}
@@ -84,7 +84,7 @@ func TestClaudeHookDoesNotMeasurePreToolUseAttempts(t *testing.T) {
 		t.Fatalf("marshal hook: %v", err)
 	}
 	processAgentHook(context.Background(), data, "claude_code", "claude_code")
-	events, err := eventqueue.NewQueue(cfg.DataDir).ReadAll()
+	events, err := consumeQueuedEvents(eventqueue.NewQueue(cfg.DataDir))
 	if err != nil {
 		t.Fatalf("read queue: %v", err)
 	}

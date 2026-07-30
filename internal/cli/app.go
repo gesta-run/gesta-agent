@@ -11,7 +11,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/gesta-run/gesta-agent/internal/agentupgrade"
 	"github.com/gesta-run/gesta-agent/internal/cli/options"
+	"github.com/gesta-run/gesta-agent/internal/hookinstall"
 	"github.com/gesta-run/gesta-agent/pkg/daemon"
 	"github.com/gesta-run/gesta-agent/pkg/localactivity"
 	"github.com/gesta-run/gesta-agent/pkg/model"
@@ -143,7 +145,7 @@ func upgrade(args []string) error {
 		ChecksumURL:   strings.TrimSpace(checksumURL),
 	}
 	if !force {
-		decision := daemon.DecideAgentUpgrade(policy, model.DaemonVersion)
+		decision := agentupgrade.DecideAgentUpgrade(policy, model.DaemonVersion)
 		if !decision.ShouldApply {
 			uiOK("Agent upgrade skipped", decision.Reason)
 			return nil
@@ -156,7 +158,7 @@ func upgrade(args []string) error {
 			return fmt.Errorf("resolve agent executable: %w", err)
 		}
 	}
-	if err := daemon.ApplyAgentUpgradeToPath(context.Background(), policy, targetPath); err != nil {
+	if err := agentupgrade.ApplyAgentUpgradeToPath(context.Background(), policy, targetPath); err != nil {
 		return err
 	}
 	uiOK("Agent upgraded", policy.TargetVersion)
@@ -206,16 +208,16 @@ func install(args []string) error {
 }
 
 func installAgentHooks(agentPath string) error {
-	hookPath, err := daemon.InstallCodexPolicyHook(agentPath)
+	hookPath, err := hookinstall.InstallCodexPolicyHook(agentPath)
 	if err != nil {
 		return fmt.Errorf("install Codex policy hook: %w", err)
 	}
 	uiOK("Codex policy hook installed and trusted", hookPath)
-	if disabled, path := daemon.CodexHooksDisabled(); disabled {
+	if disabled, path := hookinstall.CodexHooksDisabled(); disabled {
 		uiWarn(fmt.Sprintf("Codex hooks are disabled in %s; set [features].hooks=true and restart Codex to enable policy checks and turn output measurement", path))
 	}
 
-	claudeSettingsPath, err := daemon.InstallClaudeCodePolicyHook(agentPath)
+	claudeSettingsPath, err := hookinstall.InstallClaudeCodePolicyHook(agentPath)
 	if err != nil {
 		return fmt.Errorf("install Claude Code policy hook: %w", err)
 	}

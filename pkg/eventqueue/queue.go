@@ -107,31 +107,6 @@ func (q Queue) AppendWithStats(events []model.EventEnvelope) (QueueStats, error)
 	return stats, err
 }
 
-func (q Queue) ReadAll() ([]model.EventEnvelope, error) {
-	db, err := q.open()
-	if err != nil {
-		return nil, err
-	}
-	defer db.Close()
-
-	var events []model.EventEnvelope
-	err = db.View(func(tx *bolt.Tx) error {
-		bucket := tx.Bucket(queueEventsBucket)
-		if bucket == nil {
-			return nil
-		}
-		return bucket.ForEach(func(_, value []byte) error {
-			event, _, err := decodeQueuedEvent(value)
-			if err != nil {
-				return err
-			}
-			events = append(events, event)
-			return nil
-		})
-	})
-	return events, err
-}
-
 func (q Queue) Stats() (QueueStats, error) {
 	db, err := q.open()
 	if err != nil {
@@ -180,15 +155,6 @@ func (q Queue) Drain(send func([]model.EventEnvelope) error) error {
 			return fmt.Errorf("acknowledge queue batch: %w", err)
 		}
 	}
-}
-
-func (q Queue) Clear() error {
-	db, err := q.open()
-	if err != nil {
-		return err
-	}
-	defer db.Close()
-	return db.Update(resetQueueBuckets)
 }
 
 func (q Queue) Size() int {

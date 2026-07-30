@@ -1,4 +1,4 @@
-package daemon
+package hookinstall
 
 import (
 	"encoding/json"
@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-func codexUserPromptSubmitHookActive() bool {
+func CodexUserPromptSubmitHookActive() bool {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return false

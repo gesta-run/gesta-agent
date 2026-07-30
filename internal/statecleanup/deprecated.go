@@ -1,4 +1,4 @@
-package daemon
+package statecleanup
 
 import (
 	"errors"
@@ -13,9 +13,9 @@ var obsoleteOutputBaselineFiles = []string{
 	"output-baselines.json.lock",
 }
 
-func cleanupDeprecatedState(dataDir string) (int64, error) {
+func CleanupDeprecatedState(dataDir string) (int64, error) {
 	if dataDir == "" {
-		dataDir = DefaultDataDir()
+		return 0, errors.New("data directory is required")
 	}
 	var removedBytes int64
 	for _, name := range obsoleteOutputBaselineFiles {

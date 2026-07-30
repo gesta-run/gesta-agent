@@ -41,7 +41,7 @@ func TestCodexHookInjectsOrganizationContextWithoutUploadingPrompt(t *testing.T)
 		!strings.Contains(text, "Keep files focused and functions small.\\n\\nUse verified sources.") {
 		t.Fatalf("unexpected hook response: %s", text)
 	}
-	queued, err := eventqueue.NewQueue(cfg.DataDir).ReadAll()
+	queued, err := consumeQueuedEvents(eventqueue.NewQueue(cfg.DataDir))
 	if err != nil {
 		t.Fatalf("read queued events: %v", err)
 	}
@@ -128,7 +128,7 @@ Please review this layout.
 		t.Fatalf("attachment metadata matched context rule: %s", text)
 	}
 
-	queued, err := eventqueue.NewQueue(cfg.DataDir).ReadAll()
+	queued, err := consumeQueuedEvents(eventqueue.NewQueue(cfg.DataDir))
 	if err != nil {
 		t.Fatalf("read queued events: %v", err)
 	}
@@ -217,7 +217,7 @@ func TestCodexHookSkipsContextForMalformedFileEnvelope(t *testing.T) {
 	if len(response) != 0 {
 		t.Fatalf("malformed envelope response = %#v, want no context", response)
 	}
-	queued, err := eventqueue.NewQueue(cfg.DataDir).ReadAll()
+	queued, err := consumeQueuedEvents(eventqueue.NewQueue(cfg.DataDir))
 	if err != nil {
 		t.Fatalf("read queued events: %v", err)
 	}

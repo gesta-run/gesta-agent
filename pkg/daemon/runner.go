@@ -10,6 +10,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gesta-run/gesta-agent/internal/agentupgrade"
+	"github.com/gesta-run/gesta-agent/internal/controlclient"
+	"github.com/gesta-run/gesta-agent/internal/statecleanup"
 	"github.com/gesta-run/gesta-agent/pkg/activitydetail"
 	"github.com/gesta-run/gesta-agent/pkg/eventqueue"
 	"github.com/gesta-run/gesta-agent/pkg/model"
@@ -22,7 +25,7 @@ const localActivityCleanupInterval = time.Hour
 
 type Runner struct {
 	cfg                        Config
-	client                     *Client
+	client                     *controlclient.Client
 	queue                      eventqueue.Queue
 	logger                     *slog.Logger
 	applyUpgrade               func(model.HeartbeatResponse) error
@@ -40,11 +43,11 @@ func NewRunner(cfg Config) (*Runner, error) {
 	}
 	runner := &Runner{
 		cfg:    cfg,
-		client: NewClient(cfg.EffectiveServerURL(), cfg.Token),
+		client: controlclient.NewClient(cfg.EffectiveServerURL(), cfg.Token),
 		queue:  eventqueue.NewQueue(cfg.DataDir),
 		logger: slog.Default(),
 	}
-	if removedBytes, err := cleanupDeprecatedState(cfg.DataDir); err != nil {
+	if removedBytes, err := statecleanup.CleanupDeprecatedState(cfg.DataDir); err != nil {
 		runner.logger.Warn("deprecated local state cleanup failed", "error", err)
 	} else if removedBytes > 0 {
 		runner.logger.Info("deprecated local state removed", "bytes", removedBytes)
@@ -221,7 +224,7 @@ func (r *Runner) applyActionableUpgradeFromHeartbeat(resp model.HeartbeatRespons
 	if resp.Upgrade == nil {
 		return nil
 	}
-	decision := DecideAgentUpgrade(*resp.Upgrade, model.DaemonVersion)
+	decision := agentupgrade.DecideAgentUpgrade(*resp.Upgrade, model.DaemonVersion)
 	if !decision.ShouldApply {
 		return nil
 	}
@@ -264,15 +267,6 @@ func (r *Runner) SyncRules() error {
 		r.logger.Info("context rules synced", "rules", len(contextRules.Rules), "cache", rulecache.ContextRuleCachePath(r.cfg.DataDir))
 	}
 	return errors.Join(syncErrors...)
-}
-
-func (r *Runner) SendHeartbeat() error {
-	if _, err := r.sendHeartbeat("ok", nil); err != nil {
-		r.logger.Warn("heartbeat failed", "health", "ok", "error", err)
-		return err
-	}
-	r.logger.Info("heartbeat sent", "health", "ok", "queue_size", r.queue.Size())
-	return nil
 }
 
 func (r *Runner) sendHeartbeat(health string, adapters []model.AdapterStatus) (model.HeartbeatResponse, error) {

@@ -7,12 +7,6 @@ import (
 	"github.com/gesta-run/gesta-agent/pkg/model"
 )
 
-// collectClaudeEvents scans every transcript once, builds usage/session/MCP
-// observations, and returns an after-queue baseline commit.
-func collectClaudeEvents(cfg Config, projectsDir string, observedAt time.Time) (claudeBaselineResult, error) {
-	return collectClaudeEventsFromSessions(cfg, mergedClaudeSessions(projectsDir), observedAt)
-}
-
 // mergedClaudeSessions scans every transcript under projectsDir, parses each
 // into a per-session record, and merges records that share a SessionID.
 func mergedClaudeSessions(projectsDir string) []claudeSessionUsage {

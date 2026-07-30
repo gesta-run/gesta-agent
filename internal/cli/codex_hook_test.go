@@ -50,7 +50,7 @@ func TestCodexHookMeasuresOnlyCompletedThreadItems(t *testing.T) {
 	if len(response) != 0 {
 		t.Fatalf("non-shell hook response = %#v, want empty allow response", response)
 	}
-	events, err := eventqueue.NewQueue(cfg.DataDir).ReadAll()
+	events, err := consumeQueuedEvents(eventqueue.NewQueue(cfg.DataDir))
 	if err != nil {
 		t.Fatalf("read gross event: %v", err)
 	}
@@ -71,7 +71,7 @@ func TestCodexHookMeasuresOnlyCompletedThreadItems(t *testing.T) {
 		t.Fatalf("marshal file pre hook: %v", err)
 	}
 	processAgentHook(context.Background(), input, "codex", "codex")
-	events, err = eventqueue.NewQueue(cfg.DataDir).ReadAll()
+	events, err = consumeQueuedEvents(eventqueue.NewQueue(cfg.DataDir))
 	if err != nil {
 		t.Fatalf("read after file pre hook: %v", err)
 	}
@@ -170,7 +170,7 @@ func TestCodexHookMeasuresOnlyCompletedThreadItems(t *testing.T) {
 	if got := hookAdditionalContext(nextPromptResponse); got != pendingTurnNoticeContext(wantNotice) {
 		t.Fatalf("next prompt context = %q, want %q", got, pendingTurnNoticeContext(wantNotice))
 	}
-	events, err = eventqueue.NewQueue(cfg.DataDir).ReadAll()
+	events, err = consumeQueuedEvents(eventqueue.NewQueue(cfg.DataDir))
 	if err != nil {
 		t.Fatalf("read after Stop hook: %v", err)
 	}
@@ -217,7 +217,7 @@ func TestGrossInkEventPreservesEfficiencyExclusionMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatalf("appendGrossMeasurements: %v", err)
 	}
-	events, err := eventqueue.NewQueue(cfg.DataDir).ReadAll()
+	events, err := consumeQueuedEvents(eventqueue.NewQueue(cfg.DataDir))
 	if err != nil {
 		t.Fatalf("read Gross Ink event: %v", err)
 	}

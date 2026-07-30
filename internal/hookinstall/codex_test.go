@@ -1,4 +1,4 @@
-package daemon
+package hookinstall
 
 import (
 	"encoding/json"
@@ -315,8 +315,8 @@ enabled = false
 		t.Fatalf("read config: %v", err)
 	}
 	text := string(data)
-	preHookHeader := codexPolicyHookStateHeader(hookPath)
-	expectedHash := codexPolicyHookTrustedHash("'/tmp/gesta-agent' codex-hook")
+	preHookHeader := codexHookStateHeader(hookPath, "pre_tool_use")
+	expectedHash := codexHookTrustedHash("pre_tool_use", "'/tmp/gesta-agent' codex-hook", "*")
 	if !strings.Contains(text, preHookHeader+"\n"+`trusted_hash = "`+expectedHash+`"`) {
 		t.Fatalf("Gesta hook state was not trusted: %s", text)
 	}
@@ -392,7 +392,7 @@ conversationDetailMode = "STEPS_COMMANDS"
 func TestCodexPolicyHookTrustedHashMatchesCodexCanonicalIdentity(t *testing.T) {
 	command := "'/Users/jwcesign/git/ideas/gesta/gesta-local/run/daemon/gesta-agent' codex-hook"
 	want := "sha256:169abf5b0160468963a4fd7231a6fed97761f9f97b61db4f535a75b51226ccaa"
-	if got := codexPolicyHookTrustedHash(command); got != want {
+	if got := codexHookTrustedHash("pre_tool_use", command, "*"); got != want {
 		t.Fatalf("trusted hash = %s, want %s", got, want)
 	}
 }

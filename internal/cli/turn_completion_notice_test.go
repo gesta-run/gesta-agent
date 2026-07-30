@@ -565,7 +565,7 @@ func TestCodexStopRecordsOutputWithoutNoticeReceipt(t *testing.T) {
 	if len(stop) != 0 {
 		t.Fatalf("Stop response = %#v, want no notice without a receipt", stop)
 	}
-	events, err := eventqueue.NewQueue(cfg.DataDir).ReadAll()
+	events, err := consumeQueuedEvents(eventqueue.NewQueue(cfg.DataDir))
 	if err != nil {
 		t.Fatalf("ReadAll: %v", err)
 	}

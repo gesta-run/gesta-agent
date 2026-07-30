@@ -32,9 +32,18 @@ func saveTestOutputClassification(t *testing.T, cfg daemon.Config) {
 	}
 }
 
+func consumeQueuedEvents(queue eventqueue.Queue) ([]model.EventEnvelope, error) {
+	var drained []model.EventEnvelope
+	err := queue.Drain(func(events []model.EventEnvelope) error {
+		drained = append(drained, events...)
+		return nil
+	})
+	return drained, err
+}
+
 func readSingleQueuedEvent(t *testing.T, cfg daemon.Config) model.EventEnvelope {
 	t.Helper()
-	events, err := eventqueue.NewQueue(cfg.DataDir).ReadAll()
+	events, err := consumeQueuedEvents(eventqueue.NewQueue(cfg.DataDir))
 	if err != nil {
 		t.Fatalf("read queued events: %v", err)
 	}

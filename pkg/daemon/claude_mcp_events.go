@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gesta-run/gesta-agent/internal/mcpmeta"
 	"github.com/gesta-run/gesta-agent/pkg/model"
 	"github.com/gesta-run/gesta-agent/pkg/util"
 )
@@ -20,7 +21,7 @@ func claudeMCPToolCallEvents(cfg Config, session claudeSessionUsage) []model.Eve
 		if !ok {
 			continue
 		}
-		serverID, serverName := mcpServerIdentity(call.MCPServer)
+		serverID, serverName := mcpmeta.ServerIdentity(call.MCPServer)
 		tool := strings.TrimSpace(call.MCPTool)
 		name := strings.TrimSpace(call.Name)
 		if serverID == "" || tool == "" {

@@ -72,7 +72,7 @@ func TestGuardDoesNotExecuteBlockedCommand(t *testing.T) {
 	}
 
 	queue := eventqueue.NewQueue(filepath.Join(home, ".gesta"))
-	events, readErr := queue.ReadAll()
+	events, readErr := consumeQueuedEvents(queue)
 	if readErr != nil {
 		t.Fatalf("read queue: %v", readErr)
 	}
@@ -125,7 +125,7 @@ func TestGuardExecutesAllowedUnmatchedCommandWithoutRecordingDecision(t *testing
 	}
 
 	queue := eventqueue.NewQueue(filepath.Join(home, ".gesta"))
-	events, readErr := queue.ReadAll()
+	events, readErr := consumeQueuedEvents(queue)
 	if readErr != nil {
 		t.Fatalf("read queue: %v", readErr)
 	}
@@ -154,7 +154,7 @@ func TestRecordGuardDecisionKeepsMatchedAllowDecision(t *testing.T) {
 	if err := recordGuardDecisionWithConfig(cfg, false, evaluation, true, 0); err != nil {
 		t.Fatalf("recordGuardDecisionWithConfig: %v", err)
 	}
-	events, err := eventqueue.NewQueue(dataDir).ReadAll()
+	events, err := consumeQueuedEvents(eventqueue.NewQueue(dataDir))
 	if err != nil {
 		t.Fatalf("read queue: %v", err)
 	}
@@ -217,7 +217,7 @@ func TestGuardDoesNotExecuteApprovalCommand(t *testing.T) {
 	}
 
 	queue := eventqueue.NewQueue(filepath.Join(home, ".gesta"))
-	events, readErr := queue.ReadAll()
+	events, readErr := consumeQueuedEvents(queue)
 	if readErr != nil {
 		t.Fatalf("read queue: %v", readErr)
 	}

@@ -42,21 +42,6 @@ func initializeQueueBuckets(tx *bolt.Tx) error {
 	return nil
 }
 
-func resetQueueBuckets(tx *bolt.Tx) error {
-	for _, name := range [][]byte{
-		queueEventsBucket,
-		queueTimesBucket,
-		queueSnapshotsIDBucket,
-		queueSnapshotsSeqBucket,
-		queueMetaBucket,
-	} {
-		if err := tx.DeleteBucket(name); err != nil && err != bolt.ErrBucketNotFound {
-			return err
-		}
-	}
-	return initializeQueueBuckets(tx)
-}
-
 func insertQueuedEvent(tx *bolt.Tx, event model.EventEnvelope) (bool, error) {
 	encoded, err := json.Marshal(event)
 	if err != nil {

@@ -2,32 +2,6 @@ package model
 
 import "time"
 
-type EnrollmentRequest struct {
-	APIKey        string   `json:"api_key"`
-	DeviceID      string   `json:"device_id"`
-	TeamID        string   `json:"team_id"`
-	Hostname      string   `json:"hostname"`
-	HostType      string   `json:"host_type"`
-	InstallMode   string   `json:"install_mode"`
-	OS            string   `json:"os"`
-	Arch          string   `json:"arch"`
-	DaemonVersion string   `json:"daemon_version"`
-	Adapters      []string `json:"adapters"`
-}
-
-type EnrollmentResponse struct {
-	DaemonID        string `json:"daemon_id"`
-	DeviceID        string `json:"device_id"`
-	Token           string `json:"token"`
-	EnrollmentKeyID string `json:"enrollment_key_id"`
-	CustomerID      string `json:"customer_id"`
-	DeploymentID    string `json:"deployment_id"`
-	UserID          string `json:"user_id"`
-	UserName        string `json:"user_name"`
-	TeamID          string `json:"team_id"`
-	PolicyVersion   string `json:"policy_version"`
-}
-
 type AdapterStatus struct {
 	Name         string              `json:"name"`
 	Detected     bool                `json:"detected"`
