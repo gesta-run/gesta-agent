@@ -70,11 +70,12 @@ type claudeModelDayKey struct {
 }
 
 type claudeTranscriptCandidate struct {
-	Role      string
-	Text      string
-	Timestamp string
-	Model     string
-	MessageID string
+	Role         string
+	Text         string
+	Timestamp    string
+	Model        string
+	MessageID    string
+	SummaryPhase string
 }
 
 type claudeTranscriptToolCall struct {

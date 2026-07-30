@@ -86,6 +86,34 @@ func TestPrepareTranscriptChunksEmitsMessageRevisionWithStableID(t *testing.T) {
 	}
 }
 
+func TestPrepareTranscriptChunksEmitsSummaryPhaseRevision(t *testing.T) {
+	observedAt := time.Date(2026, 7, 28, 10, 0, 0, 0, time.UTC)
+	progressPayload := transcriptTestPayload("hash-1", []map[string]interface{}{{
+		"message_id":    "source-message-1",
+		"role":          "assistant",
+		"text":          "same response",
+		"timestamp":     observedAt.Format(time.RFC3339Nano),
+		"summary_phase": "progress",
+	}})
+	firstChunks, cursor := prepareTranscriptChunks(progressPayload, baselineSession{}, observedAt, time.UTC)
+
+	finalPayload := transcriptTestPayload("hash-2", []map[string]interface{}{{
+		"message_id":    "source-message-1",
+		"role":          "assistant",
+		"text":          "same response",
+		"timestamp":     observedAt.Format(time.RFC3339Nano),
+		"summary_phase": "final",
+	}})
+	finalChunks, _ := prepareTranscriptChunks(finalPayload, cursor, observedAt.Add(time.Second), time.UTC)
+	if len(firstChunks) != 1 || len(finalChunks) != 1 {
+		t.Fatalf("chunks first=%d final=%d, want 1/1", len(firstChunks), len(finalChunks))
+	}
+	message := finalChunks[0]["messages"].([]map[string]interface{})[0]
+	if got := firstString(message, "summary_phase"); got != transcriptSummaryPhaseFinal {
+		t.Fatalf("summary phase = %q, want final", got)
+	}
+}
+
 func TestPrepareTranscriptChunksRespectsMessageLimit(t *testing.T) {
 	observedAt := time.Date(2026, 7, 28, 10, 0, 0, 0, time.UTC)
 	messages := make([]map[string]interface{}, 0, transcriptChunkMaxMessages+1)
@@ -125,7 +153,7 @@ func TestPrepareTranscriptChunksUsesConfiguredDailyWorkTimezone(t *testing.T) {
 	}
 }
 
-func TestCodexLegacyTranscriptCursorDoesNotBackfill(t *testing.T) {
+func TestCodexTranscriptCursorInitializationDoesNotBackfill(t *testing.T) {
 	cfg := Config{DataDir: t.TempDir(), DailyWorkTimezone: "UTC"}
 	stateDB := filepath.Join(t.TempDir(), "state.sqlite")
 	stateDBHash := util.ShortHash(stateDB)
@@ -159,7 +187,7 @@ func TestCodexLegacyTranscriptCursorDoesNotBackfill(t *testing.T) {
 		t.Fatalf("legacy messages were backfilled: %#v", first.TranscriptEvents)
 	}
 	if first.Commit == nil {
-		t.Fatal("legacy cursor migration should be committed")
+		t.Fatal("cursor initialization should be committed")
 	}
 	if err := first.Commit(); err != nil {
 		t.Fatalf("commit migrated cursor: %v", err)
@@ -182,7 +210,7 @@ func TestCodexLegacyTranscriptCursorDoesNotBackfill(t *testing.T) {
 	}
 }
 
-func TestClaudeLegacyTranscriptCursorDoesNotBackfill(t *testing.T) {
+func TestClaudeTranscriptCursorInitializationDoesNotBackfill(t *testing.T) {
 	cfg := Config{DataDir: t.TempDir(), DailyWorkTimezone: "UTC"}
 	store := newSessionBaselineStore()
 	store.ClaudeCode = claudeCodeSessionBaselineGroup{
@@ -216,7 +244,7 @@ func TestClaudeLegacyTranscriptCursorDoesNotBackfill(t *testing.T) {
 		t.Fatalf("legacy messages were backfilled: %#v", first.SessionEvents)
 	}
 	if first.Commit == nil {
-		t.Fatal("legacy cursor migration should be committed")
+		t.Fatal("cursor initialization should be committed")
 	}
 	if err := first.Commit(); err != nil {
 		t.Fatalf("commit migrated cursor: %v", err)

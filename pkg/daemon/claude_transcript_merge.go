@@ -155,18 +155,28 @@ func mergeClaudeMCPToolCalls(existing, next []claudeTranscriptToolCall) []claude
 	return merged
 }
 
-func addClaudeTranscriptCandidate(candidates *[]claudeTranscriptCandidate, indexes map[string]int, role, text, timestamp, modelName, messageID string) {
+func addClaudeTranscriptCandidate(
+	candidates *[]claudeTranscriptCandidate,
+	indexes map[string]int,
+	role, text, timestamp, modelName, messageID, summaryPhase string,
+) {
 	role = strings.ToLower(strings.TrimSpace(role))
 	text = strings.TrimSpace(text)
 	if (role != "user" && role != "assistant") || text == "" || isCodexNonChatText(text) {
 		return
 	}
+	if role == "assistant" {
+		summaryPhase = normalizeTranscriptSummaryPhase(summaryPhase)
+	} else {
+		summaryPhase = ""
+	}
 	candidate := claudeTranscriptCandidate{
-		Role:      role,
-		Text:      text,
-		Timestamp: strings.TrimSpace(timestamp),
-		Model:     strings.TrimSpace(modelName),
-		MessageID: strings.TrimSpace(messageID),
+		Role:         role,
+		Text:         text,
+		Timestamp:    strings.TrimSpace(timestamp),
+		Model:        strings.TrimSpace(modelName),
+		MessageID:    strings.TrimSpace(messageID),
+		SummaryPhase: summaryPhase,
 	}
 	key := strings.Join([]string{
 		candidate.Role,
@@ -178,7 +188,11 @@ func addClaudeTranscriptCandidate(candidates *[]claudeTranscriptCandidate, index
 		key = candidate.Role + "\x00" + candidate.MessageID
 	}
 	if index, ok := indexes[key]; ok {
-		if len(candidate.Text) > len((*candidates)[index].Text) {
+		existing := (*candidates)[index]
+		candidateRank := transcriptSummaryPhaseRank(candidate.SummaryPhase)
+		existingRank := transcriptSummaryPhaseRank(existing.SummaryPhase)
+		if candidateRank > existingRank ||
+			(candidateRank == existingRank && len(candidate.Text) >= len(existing.Text)) {
 			(*candidates)[index] = candidate
 		}
 		return
@@ -209,6 +223,9 @@ func claudeTranscriptMessagesFromCandidates(candidates []claudeTranscriptCandida
 		}
 		if candidate.Role == "assistant" && candidate.Model != "" {
 			message["model"] = candidate.Model
+		}
+		if candidate.Role == "assistant" {
+			message["summary_phase"] = normalizeTranscriptSummaryPhase(candidate.SummaryPhase)
 		}
 		messages = append(messages, message)
 		totalBytes += len(text)
@@ -263,6 +280,7 @@ func mergeClaudeTranscriptMessages(existing, next []map[string]interface{}, alre
 			firstString(message, "timestamp"),
 			firstString(message, "model"),
 			firstString(message, "message_id"),
+			firstString(message, "summary_phase"),
 		)
 	}
 	messages, truncated := claudeTranscriptMessagesFromCandidates(candidates)

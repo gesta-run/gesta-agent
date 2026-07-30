@@ -135,6 +135,9 @@ func readCodexTranscript(path string) ([]map[string]interface{}, bool, error) {
 			"role": role,
 			"text": text,
 		}
+		if role == "assistant" {
+			message["summary_phase"] = codexTranscriptSummaryPhase(firstString(record.Payload, "phase"))
+		}
 		if messageID := firstString(record.Payload, "id", "message_id"); messageID != "" {
 			message["message_id"] = messageID
 		}

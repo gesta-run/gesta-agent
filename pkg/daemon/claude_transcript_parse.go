@@ -19,9 +19,10 @@ type claudeTranscriptRecord struct {
 	GitBranch string `json:"gitBranch"`
 	Timestamp string `json:"timestamp"`
 	Message   struct {
-		ID    string `json:"id"`
-		Model string `json:"model"`
-		Usage struct {
+		ID         string `json:"id"`
+		Model      string `json:"model"`
+		StopReason string `json:"stop_reason"`
+		Usage      struct {
 			InputTokens              int64 `json:"input_tokens"`
 			OutputTokens             int64 `json:"output_tokens"`
 			CacheCreationInputTokens int64 `json:"cache_creation_input_tokens"`
@@ -115,6 +116,7 @@ func (a *claudeTranscriptAccumulator) addContent(record claudeTranscriptRecord, 
 		record.Timestamp,
 		modelName,
 		record.Message.ID,
+		claudeTranscriptSummaryPhase(record.Message.StopReason),
 	)
 	if role == "user" && a.firstUserText == "" && !isCodexNonChatText(text) {
 		a.firstUserText = titleFromTranscriptText(text)
