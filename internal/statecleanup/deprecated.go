@@ -7,10 +7,12 @@ import (
 	"path/filepath"
 )
 
-var obsoleteOutputBaselineFiles = []string{
+var deprecatedStateFiles = []string{
 	"output-baselines.json",
 	"output-baselines.json.tmp",
 	"output-baselines.json.lock",
+	"queue-v2.db",
+	"queue-v2.db.drain.lock",
 }
 
 func CleanupDeprecatedState(dataDir string) (int64, error) {
@@ -18,7 +20,7 @@ func CleanupDeprecatedState(dataDir string) (int64, error) {
 		return 0, errors.New("data directory is required")
 	}
 	var removedBytes int64
-	for _, name := range obsoleteOutputBaselineFiles {
+	for _, name := range deprecatedStateFiles {
 		target := filepath.Join(dataDir, name)
 		info, err := os.Lstat(target)
 		if errors.Is(err, os.ErrNotExist) {
