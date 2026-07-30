@@ -54,7 +54,7 @@ type LegacyQueueStats struct {
 
 func NewQueue(dataDir string) Queue {
 	return Queue{
-		path:        filepath.Join(dataDir, "queue-v2.db"),
+		path:        filepath.Join(dataDir, "queue-v"+model.EventProtocolVersion+".db"),
 		legacyPath:  filepath.Join(dataDir, "queue.jsonl"),
 		now:         time.Now,
 		maxAge:      queueMaxAge,

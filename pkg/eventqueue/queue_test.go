@@ -57,7 +57,7 @@ func TestQueueDrainReturnsCorruptDatabaseError(t *testing.T) {
 	}
 }
 
-func TestQueueUsesProtocolV2DatabaseAndIgnoresLegacyQueue(t *testing.T) {
+func TestQueueUsesCurrentProtocolDatabaseAndIgnoresLegacyQueue(t *testing.T) {
 	dir := t.TempDir()
 	legacy := model.EventEnvelope{
 		EventID:   "evt_legacy",
@@ -68,19 +68,22 @@ func TestQueueUsesProtocolV2DatabaseAndIgnoresLegacyQueue(t *testing.T) {
 		t.Fatalf("write legacy queue: %v", err)
 	}
 	q := NewQueue(dir)
+	if got, want := filepath.Base(q.path), "queue-v3.db"; got != want {
+		t.Fatalf("queue database = %q, want %q", got, want)
+	}
 	if err := q.Append([]model.EventEnvelope{{
-		EventID:   "evt_v2",
+		EventID:   "evt_v3",
 		EventType: "policy.decision",
 		CreatedAt: time.Now().UTC(),
 	}}); err != nil {
-		t.Fatalf("append v2 queue: %v", err)
+		t.Fatalf("append current queue: %v", err)
 	}
 	events, err := drainAll(q)
 	if err != nil {
-		t.Fatalf("read v2 queue: %v", err)
+		t.Fatalf("read current queue: %v", err)
 	}
-	if len(events) != 1 || events[0].EventID != "evt_v2" {
-		t.Fatalf("v2 queue events = %#v, want only evt_v2", events)
+	if len(events) != 1 || events[0].EventID != "evt_v3" {
+		t.Fatalf("current queue events = %#v, want only evt_v3", events)
 	}
 	stats, err := q.LegacyStats()
 	if err != nil {

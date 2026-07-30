@@ -7,19 +7,21 @@ import (
 	"testing"
 )
 
-func TestCleanupDeprecatedStateRemovesOnlyOutputBaselineFiles(t *testing.T) {
+func TestCleanupDeprecatedStateRemovesObsoleteProtocolState(t *testing.T) {
 	dataDir := t.TempDir()
 	var wantBytes int64
-	for _, name := range obsoleteOutputBaselineFiles {
+	for _, name := range deprecatedStateFiles {
 		content := []byte("obsolete")
 		if err := os.WriteFile(filepath.Join(dataDir, name), content, 0o600); err != nil {
 			t.Fatalf("write %s: %v", name, err)
 		}
 		wantBytes += int64(len(content))
 	}
-	keepPath := filepath.Join(dataDir, "state.json")
-	if err := os.WriteFile(keepPath, []byte("keep"), 0o600); err != nil {
-		t.Fatalf("write retained state: %v", err)
+	retainedNames := []string{"queue-v3.db", "queue.jsonl", "state.json"}
+	for _, name := range retainedNames {
+		if err := os.WriteFile(filepath.Join(dataDir, name), []byte("keep"), 0o600); err != nil {
+			t.Fatalf("write retained state %s: %v", name, err)
+		}
 	}
 
 	removedBytes, err := CleanupDeprecatedState(dataDir)
@@ -29,13 +31,15 @@ func TestCleanupDeprecatedStateRemovesOnlyOutputBaselineFiles(t *testing.T) {
 	if removedBytes != wantBytes {
 		t.Fatalf("removed bytes = %d, want %d", removedBytes, wantBytes)
 	}
-	for _, name := range obsoleteOutputBaselineFiles {
+	for _, name := range deprecatedStateFiles {
 		if _, err := os.Stat(filepath.Join(dataDir, name)); !errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("%s still exists: %v", name, err)
 		}
 	}
-	if _, err := os.Stat(keepPath); err != nil {
-		t.Fatalf("retained state missing: %v", err)
+	for _, name := range retainedNames {
+		if _, err := os.Stat(filepath.Join(dataDir, name)); err != nil {
+			t.Fatalf("retained state %s missing: %v", name, err)
+		}
 	}
 
 	removedBytes, err = CleanupDeprecatedState(dataDir)
