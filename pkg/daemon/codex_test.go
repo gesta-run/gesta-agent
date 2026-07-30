@@ -514,6 +514,33 @@ func TestReadCodexTranscriptReadsTailOfLargeRollout(t *testing.T) {
 	}
 }
 
+func TestReadCodexTranscriptMapsAssistantSummaryPhases(t *testing.T) {
+	rolloutPath := filepath.Join(t.TempDir(), "phases-rollout.jsonl")
+	lines := []string{
+		`{"timestamp":"2026-06-12T00:01:00Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"text","text":"question"}]}}`,
+		`{"timestamp":"2026-06-12T00:02:00Z","type":"response_item","payload":{"type":"message","role":"assistant","phase":"commentary","content":[{"type":"text","text":"working"}]}}`,
+		`{"timestamp":"2026-06-12T00:03:00Z","type":"response_item","payload":{"type":"message","role":"assistant","phase":"final_answer","content":[{"type":"text","text":"answer"}]}}`,
+		`{"timestamp":"2026-06-12T00:04:00Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"text","text":"legacy"}]}}`,
+	}
+	if err := os.WriteFile(rolloutPath, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+		t.Fatalf("write rollout: %v", err)
+	}
+
+	messages, _, err := readCodexTranscript(rolloutPath)
+	if err != nil {
+		t.Fatalf("readCodexTranscript: %v", err)
+	}
+	if got := firstString(messages[1], "summary_phase"); got != transcriptSummaryPhaseProgress {
+		t.Fatalf("commentary phase = %q, want progress", got)
+	}
+	if got := firstString(messages[2], "summary_phase"); got != transcriptSummaryPhaseFinal {
+		t.Fatalf("final answer phase = %q, want final", got)
+	}
+	if got := firstString(messages[3], "summary_phase"); got != transcriptSummaryPhaseUnknown {
+		t.Fatalf("missing phase = %q, want unknown", got)
+	}
+}
+
 func TestReadCodexTranscriptKeepsLatestMessages(t *testing.T) {
 	rolloutPath := filepath.Join(t.TempDir(), "long-rollout.jsonl")
 	lines := make([]string, 0, codexMaxTranscriptMessages+5)

@@ -176,6 +176,9 @@ func normalizedTranscriptMessages(
 		if model := firstString(record, "model"); model != "" {
 			message["model"] = model
 		}
+		if role == "assistant" {
+			message["summary_phase"] = normalizeTranscriptSummaryPhase(firstString(record, "summary_phase"))
+		}
 		messages = append(messages, message)
 	}
 	return messages
@@ -246,6 +249,7 @@ func transcriptMessageVersion(message map[string]interface{}) string {
 		firstString(message, "text"),
 		firstString(message, "timestamp"),
 		firstString(message, "model"),
+		firstString(message, "summary_phase"),
 	}, "\x00")
 	return messageID + ":" + util.HashString(content)
 }
