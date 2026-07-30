@@ -26,10 +26,17 @@ type AdapterResult struct {
 }
 
 func DefaultAdapters() []Adapter {
-	return []Adapter{
+	return defaultAdaptersForOS(runtime.GOOS)
+}
+
+func defaultAdaptersForOS(goos string) []Adapter {
+	adapters := []Adapter{
 		CodexAdapter{},
-		ClaudeCodeAdapter{},
 	}
+	if goos == "darwin" {
+		adapters = append(adapters, CodexDesktopAdapter{})
+	}
+	return append(adapters, ClaudeCodeAdapter{})
 }
 
 func Collect(ctx context.Context, cfg Config) ([]model.EventEnvelope, []model.AdapterStatus, func() error) {

@@ -2,10 +2,28 @@ package daemon
 
 import (
 	"context"
+	"reflect"
 	"testing"
 
 	"github.com/gesta-run/gesta-agent/pkg/model"
 )
+
+func TestDefaultAdaptersIncludeCodexDesktopOnlyOnMacOS(t *testing.T) {
+	names := func(adapters []Adapter) []string {
+		result := make([]string, 0, len(adapters))
+		for _, adapter := range adapters {
+			result = append(result, adapter.Name())
+		}
+		return result
+	}
+
+	if got, want := names(defaultAdaptersForOS("darwin")), []string{"codex", "codex_desktop", "claude_code"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("macOS adapters = %#v, want %#v", got, want)
+	}
+	if got, want := names(defaultAdaptersForOS("linux")), []string{"codex", "claude_code"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("Linux adapters = %#v, want %#v", got, want)
+	}
+}
 
 type deferredCommitAdapter struct {
 	committed *bool
