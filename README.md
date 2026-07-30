@@ -7,6 +7,9 @@ plane with a user-scoped API key, sends heartbeats, gathers metadata-only usage
 events, evaluates command and prompt policies, redacts sensitive fields, and
 keeps a local JSONL queue while offline.
 
+On macOS, daemon heartbeats report Codex Desktop separately from the Codex
+command-line adapter and include the application bundle version.
+
 ## Run
 
 Create a connect token from the Gesta Console while signed in as the user who
