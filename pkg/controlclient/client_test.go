@@ -2,8 +2,11 @@ package controlclient
 
 import (
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gesta-run/gesta-agent/pkg/model"
@@ -185,5 +188,133 @@ func TestClientSendEventsSkipsPostWhenOnlyUnmatchedPolicyDecisions(t *testing.T)
 	}
 	if requests != 0 {
 		t.Fatalf("requests = %d, want 0", requests)
+	}
+}
+
+func TestClientSendEventsSplitsRequestsByEncodedSize(t *testing.T) {
+	requests := 0
+	received := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("read event request: %v", err)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		if len(body) > maxEventRequestBodyBytes {
+			t.Errorf("event request bytes = %d, limit = %d", len(body), maxEventRequestBodyBytes)
+		}
+		var batch model.EventBatch
+		if err := json.Unmarshal(body, &batch); err != nil {
+			t.Errorf("decode event request: %v", err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		received += len(batch.Events)
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	}))
+	defer server.Close()
+
+	const eventCount = 70
+	events := make([]model.EventEnvelope, 0, eventCount)
+	for index := 0; index < eventCount; index++ {
+		events = append(events, model.EventEnvelope{
+			EventID:   fmt.Sprintf("evt_large_%d", index),
+			EventType: "session.transcript.chunk",
+			Payload: map[string]interface{}{
+				"content": strings.Repeat("x", 128*1024),
+			},
+		})
+	}
+
+	client := NewClient(server.URL, "dtok_123")
+	if err := client.SendEvents(events); err != nil {
+		t.Fatalf("SendEvents: %v", err)
+	}
+	if requests < 2 {
+		t.Fatalf("requests = %d, want multiple byte-bounded requests", requests)
+	}
+	if received != eventCount {
+		t.Fatalf("received events = %d, want %d", received, eventCount)
+	}
+}
+
+func TestClientSendEventsBisectsPayloadRejectedByProxy(t *testing.T) {
+	requests := 0
+	var accepted []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		var batch model.EventBatch
+		if err := json.NewDecoder(r.Body).Decode(&batch); err != nil {
+			t.Errorf("decode event request: %v", err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		if len(batch.Events) > 2 {
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+			_ = json.NewEncoder(w).Encode(model.APIError{Error: "request body too large"})
+			return
+		}
+		for _, event := range batch.Events {
+			accepted = append(accepted, event.EventID)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	}))
+	defer server.Close()
+
+	events := make([]model.EventEnvelope, 0, 5)
+	for index := 0; index < 5; index++ {
+		events = append(events, model.EventEnvelope{
+			EventID:   fmt.Sprintf("evt_split_%d", index),
+			EventType: "daemon.system_snapshot",
+			Payload:   map[string]interface{}{"index": index},
+		})
+	}
+
+	client := NewClient(server.URL, "dtok_123")
+	if err := client.SendEvents(events); err != nil {
+		t.Fatalf("SendEvents: %v", err)
+	}
+	if requests <= 1 {
+		t.Fatalf("requests = %d, want adaptive retry requests", requests)
+	}
+	if len(accepted) != len(events) {
+		t.Fatalf("accepted events = %v, want %d events", accepted, len(events))
+	}
+	for index, eventID := range accepted {
+		want := fmt.Sprintf("evt_split_%d", index)
+		if eventID != want {
+			t.Fatalf("accepted[%d] = %q, want %q", index, eventID, want)
+		}
+	}
+}
+
+func TestClientSendEventsReportsSinglePermanentRejection(t *testing.T) {
+	for _, statusCode := range []int{http.StatusBadRequest, http.StatusRequestEntityTooLarge} {
+		t.Run(http.StatusText(statusCode), func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				http.Error(w, "permanently rejected", statusCode)
+			}))
+			defer server.Close()
+
+			client := NewClient(server.URL, "dtok_123")
+			err := client.SendEvents([]model.EventEnvelope{{
+				EventID:   "evt_rejected",
+				EventType: "session.transcript.chunk",
+				Payload:   map[string]interface{}{"content": "rejected"},
+			}})
+			if err == nil {
+				t.Fatal("SendEvents accepted a permanently rejected event")
+			}
+			rejected, ok := err.(interface{ RejectedEventIDs() []string })
+			if !ok {
+				t.Fatalf("error type = %T, want rejected event error", err)
+			}
+			eventIDs := rejected.RejectedEventIDs()
+			if len(eventIDs) != 1 || eventIDs[0] != "evt_rejected" {
+				t.Fatalf("rejected event IDs = %v, want evt_rejected", eventIDs)
+			}
+		})
 	}
 }
