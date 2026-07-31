@@ -11,10 +11,39 @@ import (
 	"github.com/gesta-run/gesta-agent/pkg/model"
 )
 
+const maxEventRequestBodyBytes = 8 * 1024 * 1024
+
 type Client struct {
 	baseURL string
 	token   string
 	http    *http.Client
+}
+
+type httpStatusError struct {
+	statusCode int
+	status     string
+	message    string
+}
+
+func (e *httpStatusError) Error() string {
+	return fmt.Sprintf("control plane returned %s: %s", e.status, e.message)
+}
+
+type rejectedEventError struct {
+	eventID string
+	cause   error
+}
+
+func (e *rejectedEventError) Error() string {
+	return e.cause.Error()
+}
+
+func (e *rejectedEventError) Unwrap() error {
+	return e.cause
+}
+
+func (e *rejectedEventError) RejectedEventIDs() []string {
+	return []string{e.eventID}
 }
 
 func NewClient(controlURL, token string) *Client {
@@ -42,14 +71,80 @@ func (c *Client) SendEvents(events []model.EventEnvelope) error {
 		events[i].UserID = ""
 		events[i].UserName = ""
 	}
-	var resp map[string]interface{}
 	headers := map[string]string{
 		model.EventProtocolHeader: model.EventProtocolVersion,
 	}
 	if c.token != "" {
 		headers["Authorization"] = "Bearer " + c.token
 	}
-	return c.postWithHeaders("/api/v1/events", headers, model.EventBatch{Events: events}, &resp)
+	batches, err := splitEventBatchesByEncodedSize(events, maxEventRequestBodyBytes)
+	if err != nil {
+		return err
+	}
+	for _, batch := range batches {
+		if err := c.sendEventBatch(headers, batch); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func splitEventBatchesByEncodedSize(events []model.EventEnvelope, maxBytes int) ([][]model.EventEnvelope, error) {
+	if len(events) == 0 {
+		return nil, nil
+	}
+	if maxBytes <= 0 {
+		return nil, fmt.Errorf("event request body limit must be positive")
+	}
+
+	const eventBatchJSONOverhead = len(`{"events":[]}`)
+	batches := make([][]model.EventEnvelope, 0, 1)
+	current := make([]model.EventEnvelope, 0, len(events))
+	currentBytes := eventBatchJSONOverhead
+	for _, event := range events {
+		encoded, err := json.Marshal(event)
+		if err != nil {
+			return nil, fmt.Errorf("marshal event %s: %w", event.EventID, err)
+		}
+		separatorBytes := 0
+		if len(current) > 0 {
+			separatorBytes = 1
+		}
+		if len(current) > 0 && currentBytes+separatorBytes+len(encoded) > maxBytes {
+			batches = append(batches, current)
+			current = make([]model.EventEnvelope, 0, len(events)-len(current))
+			currentBytes = eventBatchJSONOverhead
+			separatorBytes = 0
+		}
+		current = append(current, event)
+		currentBytes += separatorBytes + len(encoded)
+	}
+	if len(current) > 0 {
+		batches = append(batches, current)
+	}
+	return batches, nil
+}
+
+func (c *Client) sendEventBatch(headers map[string]string, events []model.EventEnvelope) error {
+	var resp map[string]interface{}
+	err := c.postWithHeaders("/api/v1/events", headers, model.EventBatch{Events: events}, &resp)
+	statusErr, isHTTPError := err.(*httpStatusError)
+	if !isHTTPError || !isPermanentEventBatchRejection(statusErr.statusCode) {
+		return err
+	}
+	if len(events) == 1 {
+		return &rejectedEventError{eventID: events[0].EventID, cause: err}
+	}
+
+	middle := len(events) / 2
+	if err := c.sendEventBatch(headers, events[:middle]); err != nil {
+		return err
+	}
+	return c.sendEventBatch(headers, events[middle:])
+}
+
+func isPermanentEventBatchRejection(statusCode int) bool {
+	return statusCode == http.StatusBadRequest || statusCode == http.StatusRequestEntityTooLarge
 }
 
 func filterUploadEvents(events []model.EventEnvelope) []model.EventEnvelope {
@@ -165,12 +260,7 @@ func (c *Client) get(path, token string, out interface{}) error {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		var apiErr model.APIError
-		_ = json.NewDecoder(resp.Body).Decode(&apiErr)
-		if apiErr.Error == "" {
-			apiErr.Error = resp.Status
-		}
-		return fmt.Errorf("control plane returned %s: %s", resp.Status, apiErr.Error)
+		return decodeHTTPStatusError(resp)
 	}
 	if out != nil {
 		return json.NewDecoder(resp.Body).Decode(out)
@@ -207,15 +297,23 @@ func (c *Client) postWithHeaders(path string, headers map[string]string, body in
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		var apiErr model.APIError
-		_ = json.NewDecoder(resp.Body).Decode(&apiErr)
-		if apiErr.Error == "" {
-			apiErr.Error = resp.Status
-		}
-		return fmt.Errorf("control plane returned %s: %s", resp.Status, apiErr.Error)
+		return decodeHTTPStatusError(resp)
 	}
 	if out != nil {
 		return json.NewDecoder(resp.Body).Decode(out)
 	}
 	return nil
+}
+
+func decodeHTTPStatusError(resp *http.Response) error {
+	var apiErr model.APIError
+	_ = json.NewDecoder(resp.Body).Decode(&apiErr)
+	if apiErr.Error == "" {
+		apiErr.Error = resp.Status
+	}
+	return &httpStatusError{
+		statusCode: resp.StatusCode,
+		status:     resp.Status,
+		message:    apiErr.Error,
+	}
 }

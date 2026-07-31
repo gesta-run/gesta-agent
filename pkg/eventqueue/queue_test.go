@@ -24,6 +24,18 @@ func drainAll(q Queue) ([]model.EventEnvelope, error) {
 	return drained, err
 }
 
+type rejectedEventsTestError struct {
+	eventIDs []string
+}
+
+func (e rejectedEventsTestError) Error() string {
+	return "permanently rejected"
+}
+
+func (e rejectedEventsTestError) RejectedEventIDs() []string {
+	return e.eventIDs
+}
+
 func TestQueueAppendAndDrain(t *testing.T) {
 	q := NewQueue(t.TempDir())
 	now := time.Now().UTC()
@@ -420,6 +432,114 @@ func TestQueueDrainPreservesBatchOnFirstSendFailure(t *testing.T) {
 	}
 	if got := q.Size(); got != 1 {
 		t.Fatalf("queue size = %d, want 1", got)
+	}
+}
+
+func TestQueueDrainQuarantinesPermanentRejectionAndContinues(t *testing.T) {
+	now := time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC)
+	q := NewQueue(t.TempDir())
+	q.now = func() time.Time { return now }
+	bad := model.EventEnvelope{
+		EventID:   "evt_rejected",
+		EventType: "session.transcript.chunk",
+		CreatedAt: now,
+		Payload:   map[string]interface{}{"content": "preserve me"},
+	}
+	good := model.EventEnvelope{
+		EventID:   "evt_deliverable",
+		EventType: "usage.delta",
+		CreatedAt: now.Add(time.Second),
+		Payload:   map[string]interface{}{"total_tokens": 1},
+	}
+	if err := q.Append([]model.EventEnvelope{bad, good}); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+
+	var delivered []string
+	err := q.Drain(func(events []model.EventEnvelope) error {
+		for _, event := range events {
+			if event.EventID == bad.EventID {
+				return rejectedEventsTestError{eventIDs: []string{bad.EventID}}
+			}
+		}
+		for _, event := range events {
+			delivered = append(delivered, event.EventID)
+		}
+		return nil
+	})
+	var quarantineErr *QuarantinedEventsError
+	if !errors.As(err, &quarantineErr) {
+		t.Fatalf("drain error = %v, want QuarantinedEventsError", err)
+	}
+	if len(quarantineErr.EventIDs) != 1 || quarantineErr.EventIDs[0] != bad.EventID {
+		t.Fatalf("quarantined event IDs = %v", quarantineErr.EventIDs)
+	}
+	if quarantineErr.Reason != "permanently rejected" {
+		t.Fatalf("quarantine reason = %q", quarantineErr.Reason)
+	}
+	if len(delivered) != 1 || delivered[0] != good.EventID {
+		t.Fatalf("delivered events = %v, want %s", delivered, good.EventID)
+	}
+
+	stats, err := q.Stats()
+	if err != nil {
+		t.Fatalf("stats: %v", err)
+	}
+	if stats.QueuedEvents != 0 || stats.QuarantinedEvents != 1 {
+		t.Fatalf("queue stats = %#v, want zero active and one quarantined", stats)
+	}
+
+	db, err := q.open()
+	if err != nil {
+		t.Fatalf("open queue: %v", err)
+	}
+	var record quarantinedEventRecord
+	err = db.View(func(tx *bolt.Tx) error {
+		encoded := tx.Bucket(queueQuarantineBucket).Get([]byte(bad.EventID))
+		if encoded == nil {
+			return errors.New("quarantined event is missing")
+		}
+		return json.Unmarshal(encoded, &record)
+	})
+	if closeErr := db.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		t.Fatalf("read quarantined event: %v", err)
+	}
+	if record.Event.EventID != bad.EventID || record.Event.Payload["content"] != "preserve me" {
+		t.Fatalf("quarantined record = %#v", record)
+	}
+	if record.Reason != "permanently rejected" || !record.QuarantinedAt.Equal(now) {
+		t.Fatalf("quarantine metadata = %#v", record)
+	}
+
+	stats, err = q.AppendWithStats([]model.EventEnvelope{bad})
+	if err != nil {
+		t.Fatalf("reappend quarantined event: %v", err)
+	}
+	if stats.RemovedDuplicate != 1 || stats.QueuedEvents != 0 || stats.QuarantinedEvents != 1 {
+		t.Fatalf("reappend stats = %#v", stats)
+	}
+}
+
+func TestQueueDrainDoesNotQuarantineUnknownEventID(t *testing.T) {
+	q := NewQueue(t.TempDir())
+	if err := q.Append([]model.EventEnvelope{currentEvent("evt_active")}); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	err := q.Drain(func([]model.EventEnvelope) error {
+		return rejectedEventsTestError{eventIDs: []string{"evt_not_in_batch"}}
+	})
+	if err == nil || !strings.Contains(err.Error(), "do not match the active queue batch") {
+		t.Fatalf("drain error = %v, want batch mismatch", err)
+	}
+	stats, statsErr := q.Stats()
+	if statsErr != nil {
+		t.Fatalf("stats: %v", statsErr)
+	}
+	if stats.QueuedEvents != 1 || stats.QuarantinedEvents != 0 {
+		t.Fatalf("queue stats = %#v, want active event preserved", stats)
 	}
 }
 

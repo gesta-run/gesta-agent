@@ -15,6 +15,7 @@ var (
 	queueEventSeqsBucket     = []byte("events_by_sequence")
 	queueDeliveredIDsBucket  = []byte("delivered_by_id")
 	queueDeliveredTimeBucket = []byte("delivered_by_time")
+	queueQuarantineBucket    = []byte("quarantine")
 	queueMetaBucket          = []byte("meta")
 	queueMetaCountKey        = []byte("count")
 	queueMetaBytesKey        = []byte("bytes")
@@ -35,6 +36,7 @@ func initializeQueueBuckets(tx *bolt.Tx) error {
 		queueEventSeqsBucket,
 		queueDeliveredIDsBucket,
 		queueDeliveredTimeBucket,
+		queueQuarantineBucket,
 		queueMetaBucket,
 	} {
 		if _, err := tx.CreateBucketIfNotExists(name); err != nil {
@@ -48,6 +50,9 @@ func insertQueuedEvent(tx *bolt.Tx, event model.EventEnvelope) (bool, error) {
 	removedDuplicate := false
 	if event.EventID != "" {
 		eventID := []byte(event.EventID)
+		if tx.Bucket(queueQuarantineBucket).Get(eventID) != nil {
+			return true, nil
+		}
 		if tx.Bucket(queueDeliveredIDsBucket).Get(eventID) != nil {
 			return true, nil
 		}
@@ -209,6 +214,9 @@ func queueStatsFromTx(tx *bolt.Tx) QueueStats {
 				stats.OldestQueuedAt = createdAt
 			}
 		}
+	}
+	if quarantine := tx.Bucket(queueQuarantineBucket); quarantine != nil {
+		stats.QuarantinedEvents = quarantine.Stats().KeyN
 	}
 	return stats
 }

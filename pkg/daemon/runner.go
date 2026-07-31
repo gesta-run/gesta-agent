@@ -140,6 +140,7 @@ func (r *Runner) collectAndQueue(ctx context.Context) ([]model.AdapterStatus, er
 		"removed_expired", queueStats.RemovedExpired,
 		"removed_duplicate", queueStats.RemovedDuplicate,
 		"removed_capacity", queueStats.RemovedCapacity,
+		"quarantined_events", queueStats.QuarantinedEvents,
 	)
 	if commitAdapters != nil {
 		if err := commitAdapters(); err != nil {
@@ -339,12 +340,13 @@ func (r *Runner) Flush() error {
 		return fmt.Errorf("inspect event queue: %w", err)
 	}
 	if stats.QueuedEvents == 0 {
-		r.logger.Info("event queue empty")
+		r.logger.Info("event queue empty", "quarantined_events", stats.QuarantinedEvents)
 		return nil
 	}
 	r.logger.Info("flushing event queue",
 		"queued_events", stats.QueuedEvents,
 		"queue_bytes", stats.QueuedBytes,
+		"quarantined_events", stats.QuarantinedEvents,
 		"oldest_created_at", stats.OldestQueuedAt,
 		"oldest_age", time.Since(stats.OldestQueuedAt).Round(time.Second),
 	)

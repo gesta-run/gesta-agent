@@ -1,6 +1,7 @@
 package eventqueue
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -36,12 +37,13 @@ type Queue struct {
 }
 
 type QueueStats struct {
-	QueuedEvents     int
-	QueuedBytes      int64
-	RemovedExpired   int
-	RemovedDuplicate int
-	RemovedCapacity  int
-	OldestQueuedAt   time.Time
+	QueuedEvents      int
+	QueuedBytes       int64
+	RemovedExpired    int
+	RemovedDuplicate  int
+	RemovedCapacity   int
+	QuarantinedEvents int
+	OldestQueuedAt    time.Time
 }
 
 type LegacyQueueStats struct {
@@ -136,12 +138,17 @@ func (q Queue) Drain(send func([]model.EventEnvelope) error) error {
 	if watermark == nil {
 		return nil
 	}
+	var quarantinedEventIDs []string
+	var quarantineReason string
 	for {
 		batch, err := q.nextDrainBatch(watermark)
 		if err != nil {
 			return err
 		}
 		if len(batch) == 0 {
+			if len(quarantinedEventIDs) > 0 {
+				return &QuarantinedEventsError{EventIDs: quarantinedEventIDs, Reason: quarantineReason}
+			}
 			return nil
 		}
 		events := make([]model.EventEnvelope, len(batch))
@@ -149,12 +156,39 @@ func (q Queue) Drain(send func([]model.EventEnvelope) error) error {
 			events[index] = batch[index].event
 		}
 		if err := send(events); err != nil {
-			return err
+			rejectedEventIDs, ok := rejectedEventIDsFromError(err)
+			if !ok {
+				return err
+			}
+			moved, quarantineErr := q.quarantineRejectedEvents(batch, rejectedEventIDs, err.Error())
+			if quarantineErr != nil {
+				return fmt.Errorf("quarantine rejected queue events: %w", quarantineErr)
+			}
+			quarantinedEventIDs = append(quarantinedEventIDs, moved...)
+			if quarantineReason == "" {
+				quarantineReason = err.Error()
+			}
+			continue
 		}
 		if err := q.acknowledge(batch); err != nil {
 			return fmt.Errorf("acknowledge queue batch: %w", err)
 		}
 	}
+}
+
+func rejectedEventIDsFromError(err error) ([]string, bool) {
+	type rejectedEventsError interface {
+		RejectedEventIDs() []string
+	}
+	var rejected rejectedEventsError
+	if !errors.As(err, &rejected) {
+		return nil, false
+	}
+	eventIDs := rejected.RejectedEventIDs()
+	if len(eventIDs) == 0 {
+		return nil, false
+	}
+	return eventIDs, true
 }
 
 func (q Queue) Size() int {
