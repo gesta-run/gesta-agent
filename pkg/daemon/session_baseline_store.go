@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/gesta-run/gesta-agent/internal/atomicfile"
+	"github.com/gesta-run/gesta-agent/pkg/atomicfile"
 )
 
 const sessionBaselineFile = "session-baseline.json"

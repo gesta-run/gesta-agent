@@ -1,4 +1,4 @@
-package cli
+package agent
 
 import (
 	"context"
@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gesta-run/gesta-agent/internal/cli/options"
+	"github.com/gesta-run/gesta-agent/pkg/agent/options"
 	"github.com/gesta-run/gesta-agent/pkg/daemon"
 	"github.com/gesta-run/gesta-agent/pkg/eventqueue"
 	"github.com/gesta-run/gesta-agent/pkg/model"

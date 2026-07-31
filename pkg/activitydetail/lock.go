@@ -3,7 +3,7 @@ package activitydetail
 import (
 	"path/filepath"
 
-	"github.com/gesta-run/gesta-agent/internal/lockfile"
+	"github.com/gesta-run/gesta-agent/pkg/lockfile"
 )
 
 var activityLockOptions = lockfile.Options{

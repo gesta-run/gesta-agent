@@ -11,7 +11,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/gesta-run/gesta-agent/internal/atomicfile"
+	"github.com/gesta-run/gesta-agent/pkg/atomicfile"
 )
 
 const gestaCodexHookStatus = "Checking Gesta policy"

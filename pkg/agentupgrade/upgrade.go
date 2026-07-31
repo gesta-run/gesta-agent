@@ -20,7 +20,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/gesta-run/gesta-agent/internal/atomicfile"
+	"github.com/gesta-run/gesta-agent/pkg/atomicfile"
 	"github.com/gesta-run/gesta-agent/pkg/model"
 )
 

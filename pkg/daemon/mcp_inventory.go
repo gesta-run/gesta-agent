@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gesta-run/gesta-agent/internal/mcpmeta"
+	"github.com/gesta-run/gesta-agent/pkg/mcpmeta"
 	"github.com/gesta-run/gesta-agent/pkg/model"
 	"github.com/gesta-run/gesta-agent/pkg/util"
 )

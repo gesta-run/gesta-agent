@@ -4,7 +4,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gesta-run/gesta-agent/internal/hookinstall"
+	"github.com/gesta-run/gesta-agent/pkg/hookinstall"
 	"github.com/gesta-run/gesta-agent/pkg/model"
 	"github.com/gesta-run/gesta-agent/pkg/privacy"
 	"github.com/gesta-run/gesta-agent/pkg/rulecache"

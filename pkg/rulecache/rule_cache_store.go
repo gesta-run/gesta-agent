@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/gesta-run/gesta-agent/internal/atomicfile"
+	"github.com/gesta-run/gesta-agent/pkg/atomicfile"
 )
 
 func ruleCachePath(dataDir, fileName string) string {
