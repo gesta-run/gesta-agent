@@ -10,13 +10,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gesta-run/gesta-agent/internal/agentupgrade"
-	"github.com/gesta-run/gesta-agent/internal/controlclient"
-	"github.com/gesta-run/gesta-agent/internal/statecleanup"
 	"github.com/gesta-run/gesta-agent/pkg/activitydetail"
+	"github.com/gesta-run/gesta-agent/pkg/agentupgrade"
+	"github.com/gesta-run/gesta-agent/pkg/controlclient"
 	"github.com/gesta-run/gesta-agent/pkg/eventqueue"
 	"github.com/gesta-run/gesta-agent/pkg/model"
 	"github.com/gesta-run/gesta-agent/pkg/rulecache"
+	"github.com/gesta-run/gesta-agent/pkg/statecleanup"
 )
 
 var ErrUpgradeApplied = errors.New("agent upgrade applied")

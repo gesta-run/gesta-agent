@@ -12,7 +12,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/gesta-run/gesta-agent/internal/atomicfile"
+	"github.com/gesta-run/gesta-agent/pkg/atomicfile"
 	"github.com/gesta-run/gesta-agent/pkg/contextmatch"
 	"github.com/gesta-run/gesta-agent/pkg/util"
 )

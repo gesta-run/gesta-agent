@@ -146,10 +146,15 @@ make verify
 ## Project Structure
 
 ```text
-cmd/gesta-agent/  Executable entrypoint
-internal/cli/     Command routing and local hook workflows
-pkg/daemon/       Collection loop and agent integrations
-pkg/eventqueue/   Durable, bounded event delivery queue
-pkg/model/        Control-plane wire contracts
-pkg/rulecache/    Validated local policy and runtime-setting caches
+cmd/gesta-agent/    Executable entrypoint
+pkg/agent/          Command routing and process composition
+pkg/agent/options/  Command option definitions
+pkg/controlclient/  Control-plane HTTP transport
+pkg/daemon/         Collection loop and agent integrations
+pkg/eventqueue/     Durable, bounded event delivery queue
+pkg/model/          Control-plane wire contracts
+pkg/rulecache/      Validated local policy and runtime-setting caches
 ```
+
+`cmd/gesta-agent` contains process wiring only. `pkg/agent` is the application
+composition root; domain and foundation packages do not depend on it.

@@ -4,7 +4,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/gesta-run/gesta-agent/internal/agentupgrade"
+	"github.com/gesta-run/gesta-agent/pkg/agentupgrade"
 	"github.com/gesta-run/gesta-agent/pkg/model"
 )
 

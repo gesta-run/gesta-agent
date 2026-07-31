@@ -1,4 +1,4 @@
-package cli
+package agent
 
 import (
 	"context"
@@ -11,10 +11,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/gesta-run/gesta-agent/internal/agentupgrade"
-	"github.com/gesta-run/gesta-agent/internal/cli/options"
-	"github.com/gesta-run/gesta-agent/internal/hookinstall"
+	"github.com/gesta-run/gesta-agent/pkg/agent/options"
+	"github.com/gesta-run/gesta-agent/pkg/agentupgrade"
 	"github.com/gesta-run/gesta-agent/pkg/daemon"
+	"github.com/gesta-run/gesta-agent/pkg/hookinstall"
 	"github.com/gesta-run/gesta-agent/pkg/localactivity"
 	"github.com/gesta-run/gesta-agent/pkg/model"
 )
