@@ -120,37 +120,40 @@ func injectPendingTurnNoticeBestEffort(
 	agentType string,
 	response map[string]interface{},
 ) map[string]interface{} {
+	messages := make([]string, 0, 2)
 	sessionID, _ := turnReceiptIdentity(event)
 	pending, found, err := turnreceipt.NewStore(cfg.DataDir).ConsumePending(agentType, sessionID)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "gesta-agent hook: pending turn notice was not consumed: %v\n", err)
-		return response
-	}
-	if !found {
-		return response
-	}
-	receipt := turnreceipt.Receipt{
-		ContextMatches: pending.ContextMatches,
-		Output:         pending.Output,
-	}
-	detailURL := ""
-	if len(receipt.ContextMatches) > 0 && localActivityUIHealthy(ctx) {
-		detail, detailErr := activitydetail.NewStore(cfg.DataDir).Create(
-			agentType,
-			receipt.ContextMatches,
-			receipt.Output,
-		)
-		if detailErr != nil {
-			fmt.Fprintf(os.Stderr, "gesta-agent hook: local activity detail was not saved: %v\n", detailErr)
-		} else {
-			detailURL = localactivity.ActivityURL(detail.ActivityID)
+	} else if found {
+		receipt := turnreceipt.Receipt{
+			ContextMatches: pending.ContextMatches,
+			Output:         pending.Output,
+		}
+		detailURL := ""
+		if len(receipt.ContextMatches) > 0 && localActivityUIHealthy(ctx) {
+			detail, detailErr := activitydetail.NewStore(cfg.DataDir).Create(
+				agentType,
+				receipt.ContextMatches,
+				receipt.Output,
+			)
+			if detailErr != nil {
+				fmt.Fprintf(os.Stderr, "gesta-agent hook: local activity detail was not saved: %v\n", detailErr)
+			} else {
+				detailURL = localactivity.ActivityURL(detail.ActivityID)
+			}
+		}
+		if message := formatTurnCompletionNoticeWithDetails(receipt, detailURL); message != "" {
+			messages = append(messages, message)
 		}
 	}
-	message := formatTurnCompletionNoticeWithDetails(receipt, detailURL)
-	if message == "" {
+	if message := dailyRecapNoticeBestEffort(cfg); message != "" {
+		messages = append(messages, message)
+	}
+	if len(messages) == 0 {
 		return response
 	}
-	return mergeUserPromptAdditionalContext(response, pendingTurnNoticeContext(message))
+	return mergeUserPromptAdditionalContext(response, turnNoticesContext(messages))
 }
 
 func mergeUserPromptAdditionalContext(

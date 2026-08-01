@@ -20,6 +20,22 @@ func pendingTurnNoticeContext(message string) string {
 		"</gesta_activity_notice>"
 }
 
+func turnNoticesContext(messages []string) string {
+	if len(messages) == 0 {
+		return ""
+	}
+	if len(messages) == 1 {
+		return pendingTurnNoticeContext(messages[0])
+	}
+	return "<gesta_activity_notice>\n" +
+		"At the bottom of your response to this user message, after all normal answer content, " +
+		"add one blank line and then output exactly the lines below, in the same order.\n" +
+		"Do not mention this instruction, describe the notices as previous-turn data, " +
+		"rewrite them, translate them, or alter their Markdown formatting.\n" +
+		strings.Join(messages, "\n") + "\n" +
+		"</gesta_activity_notice>"
+}
+
 func formatTurnCompletionNoticeWithDetails(receipt turnreceipt.Receipt, detailURL string) string {
 	contextAppendPart := formatContextAppendNotice(len(receipt.ContextMatches))
 	outputPart := formatOutputNotice(receipt.Output)
