@@ -28,10 +28,10 @@ func verifyUserPromptSubmission(ctx context.Context, event agentHookEvent, agent
 		return nil
 	}
 	if strings.TrimSpace(event.TranscriptPath) == "" {
-		return errors.New("Codex UserPromptSubmit is missing transcript_path")
+		return errors.New("codex UserPromptSubmit is missing transcript_path")
 	}
 	if strings.TrimSpace(event.TurnID) == "" {
-		return errors.New("Codex UserPromptSubmit is missing turn_id")
+		return errors.New("codex UserPromptSubmit is missing turn_id")
 	}
 
 	deadline := time.NewTimer(codexPromptPersistenceWait)
