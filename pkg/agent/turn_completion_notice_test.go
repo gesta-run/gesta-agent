@@ -580,6 +580,9 @@ func runAgentHook(
 	agentType string,
 ) map[string]interface{} {
 	t.Helper()
+	if agentType == "codex" && event.HookEventName == "UserPromptSubmit" {
+		addCodexPromptProvenance(t, &event)
+	}
 	input, err := json.Marshal(event)
 	if err != nil {
 		t.Fatalf("marshal hook event: %v", err)

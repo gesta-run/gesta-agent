@@ -25,12 +25,9 @@ func TestCodexHookInjectsOrganizationContextWithoutUploadingPrompt(t *testing.T)
 	})
 
 	prompt := "Please refactor the billing package"
-	input, err := json.Marshal(agentHookEvent{
+	input := marshalVerifiedCodexPrompt(t, agentHookEvent{
 		HookEventName: "UserPromptSubmit", Prompt: prompt, SessionID: "session-raw", TurnID: "turn-raw",
 	})
-	if err != nil {
-		t.Fatalf("marshal hook input: %v", err)
-	}
 	response := processAgentHook(context.Background(), input, "codex", "codex")
 	data, err := json.Marshal(response)
 	if err != nil {
@@ -106,15 +103,12 @@ Please review this layout.
 
 <image name=[Image #1] path="/tmp/refactor-notes.png">
 </image>`
-	input, err := json.Marshal(agentHookEvent{
+	input := marshalVerifiedCodexPrompt(t, agentHookEvent{
 		HookEventName: "UserPromptSubmit",
 		Prompt:        prompt,
 		SessionID:     "session-envelope",
 		TurnID:        "turn-envelope",
 	})
-	if err != nil {
-		t.Fatalf("marshal hook input: %v", err)
-	}
 	response := processAgentHook(context.Background(), input, "codex", "codex")
 	data, err := json.Marshal(response)
 	if err != nil {
@@ -161,15 +155,12 @@ Current URL: http://127.0.0.1:3333/activity/example
 提PR`
 	const sessionID = "session-request-only"
 	const turnID = "turn-request-only"
-	input, err := json.Marshal(agentHookEvent{
+	input := marshalVerifiedCodexPrompt(t, agentHookEvent{
 		HookEventName: "UserPromptSubmit",
 		Prompt:        prompt,
 		SessionID:     sessionID,
 		TurnID:        turnID,
 	})
-	if err != nil {
-		t.Fatalf("marshal hook input: %v", err)
-	}
 	response := processAgentHook(context.Background(), input, "codex", "codex")
 	data, err := json.Marshal(response)
 	if err != nil {
@@ -204,15 +195,12 @@ func TestCodexHookSkipsContextForMalformedFileEnvelope(t *testing.T) {
 	const prompt = `# Files mentioned by the user:
 
 ## refactor-notes.png: /tmp/refactor-notes.png`
-	input, err := json.Marshal(agentHookEvent{
+	input := marshalVerifiedCodexPrompt(t, agentHookEvent{
 		HookEventName: "UserPromptSubmit",
 		Prompt:        prompt,
 		SessionID:     "session-malformed",
 		TurnID:        "turn-malformed",
 	})
-	if err != nil {
-		t.Fatalf("marshal hook input: %v", err)
-	}
 	response := processAgentHook(context.Background(), input, "codex", "codex")
 	if len(response) != 0 {
 		t.Fatalf("malformed envelope response = %#v, want no context", response)
@@ -226,7 +214,7 @@ func TestCodexHookSkipsContextForMalformedFileEnvelope(t *testing.T) {
 	}
 }
 
-func TestCodexHookScansRawEnvelopeForSensitiveData(t *testing.T) {
+func TestCodexHookDoesNotScanGeneratedEnvelopeForSensitiveData(t *testing.T) {
 	cfg := setupContextHookTest(t, []model.ContextRule{{
 		RuleID: "crule_always", Name: "Always", Status: "active", MatchType: "always",
 		AgentType: "all", Priority: 10, ContextContent: "must not appear",
@@ -242,22 +230,19 @@ func TestCodexHookScansRawEnvelopeForSensitiveData(t *testing.T) {
 ## My request for Codex:
 
 Review this image.`
-	input, err := json.Marshal(agentHookEvent{
+	input := marshalVerifiedCodexPrompt(t, agentHookEvent{
 		HookEventName: "UserPromptSubmit",
 		Prompt:        prompt,
 		SessionID:     "session-sensitive-envelope",
 		TurnID:        "turn-sensitive-envelope",
 	})
-	if err != nil {
-		t.Fatalf("marshal hook input: %v", err)
-	}
 	response := processAgentHook(context.Background(), input, "codex", "codex")
 	data, err := json.Marshal(response)
 	if err != nil {
 		t.Fatalf("marshal response: %v", err)
 	}
-	if !strings.Contains(string(data), `"decision":"block"`) || strings.Contains(string(data), "must not appear") {
-		t.Fatalf("unexpected sensitive envelope response: %s", data)
+	if strings.Contains(string(data), `"decision":"block"`) || !strings.Contains(string(data), "must not appear") {
+		t.Fatalf("generated envelope should not be treated as user-authored content: %s", data)
 	}
 }
 
@@ -337,7 +322,10 @@ func TestCodexHookDoesNotInjectContextWhenSensitivePromptIsBlocked(t *testing.T)
 	}
 
 	secret := "sk-" + strings.Repeat("a", 32)
-	input := []byte(`{"hook_event_name":"UserPromptSubmit","prompt":"use ` + secret + `"}`)
+	input := marshalVerifiedCodexPrompt(t, agentHookEvent{
+		HookEventName: "UserPromptSubmit",
+		Prompt:        "use " + secret,
+	})
 	response := processAgentHook(context.Background(), input, "codex", "codex")
 	data, err := json.Marshal(response)
 	if err != nil {

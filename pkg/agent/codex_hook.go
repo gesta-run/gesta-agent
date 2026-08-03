@@ -94,10 +94,18 @@ func processUserPromptSubmit(ctx context.Context, event agentHookEvent, agentTyp
 	if strings.TrimSpace(event.Prompt) == "" {
 		return map[string]interface{}{}
 	}
+	userPrompt := promptscope.Extract(agentType, event.Prompt)
+	if strings.TrimSpace(userPrompt) == "" {
+		return map[string]interface{}{}
+	}
+	if err := verifyUserPromptSubmission(ctx, event, agentType, event.Prompt); err != nil {
+		fmt.Fprintf(os.Stderr, "gesta-agent: skipped unverifiable UserPromptSubmit: %v\n", err)
+		return map[string]interface{}{}
+	}
 
 	cfg, _ := guardConfig()
 	beginTurnReceiptBestEffort(cfg, event, agentType)
-	findings := detectSensitivePrompt(cfg, event.Prompt)
+	findings := detectSensitivePrompt(cfg, userPrompt)
 	if len(findings) > 0 {
 		recordSensitiveFindingsBestEffortWithConfig(cfg, event, findings, source, agentType)
 		if sensitiveFindingsShouldBlock(findings) {
@@ -107,8 +115,7 @@ func processUserPromptSubmit(ctx context.Context, event agentHookEvent, agentTyp
 			}
 		}
 	}
-	matchPrompt := promptscope.Extract(agentType, event.Prompt)
-	response := processOrganizationContext(cfg, event, matchPrompt, agentType, source)
+	response := processOrganizationContext(cfg, event, userPrompt, agentType, source)
 	return injectPendingTurnNoticeBestEffort(ctx, cfg, event, agentType, response)
 }
 
