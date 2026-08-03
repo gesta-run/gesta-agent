@@ -128,15 +128,12 @@ func TestCodexHookMeasuresOnlyCompletedThreadItems(t *testing.T) {
 	}
 	t.Cleanup(func() { readCodexTurn = originalReadCodexTurn })
 
-	promptInput, err := json.Marshal(agentHookEvent{
+	promptInput := marshalVerifiedCodexPrompt(t, agentHookEvent{
 		HookEventName: "UserPromptSubmit",
 		Prompt:        "Update the release plan",
 		SessionID:     "session-meter-1",
 		TurnID:        "turn-meter-1",
 	})
-	if err != nil {
-		t.Fatalf("marshal UserPromptSubmit hook: %v", err)
-	}
 	processAgentHook(context.Background(), promptInput, "codex", "codex")
 
 	stopInput, err := json.Marshal(agentHookEvent{
@@ -152,15 +149,12 @@ func TestCodexHookMeasuresOnlyCompletedThreadItems(t *testing.T) {
 		t.Fatalf("Stop response = %#v, want empty", stopResponse)
 	}
 	wantNotice := "Gesta governance · Observed output: 1 code line, 2 doc words"
-	nextPromptInput, err := json.Marshal(agentHookEvent{
+	nextPromptInput := marshalVerifiedCodexPrompt(t, agentHookEvent{
 		HookEventName: "UserPromptSubmit",
 		Prompt:        "Continue",
 		SessionID:     "session-meter-1",
 		TurnID:        "turn-meter-2",
 	})
-	if err != nil {
-		t.Fatalf("marshal next UserPromptSubmit hook: %v", err)
-	}
 	nextPromptResponse := processAgentHook(
 		context.Background(),
 		nextPromptInput,
@@ -336,14 +330,14 @@ func TestCodexHookBlocksUserPromptSubmitSecret(t *testing.T) {
 	}
 
 	secret := "sk-" + strings.Repeat("a", 32)
-	input := []byte(`{
-		"hook_event_name": "UserPromptSubmit",
-		"prompt": "please use ` + secret + ` for the test",
-		"session_id": "raw-session-id",
-		"turn_id": "raw-turn-id",
-		"cwd": "/Users/alice/private/repo",
-		"model": "gpt-5"
-	}`)
+	input := marshalVerifiedCodexPrompt(t, agentHookEvent{
+		HookEventName: "UserPromptSubmit",
+		Prompt:        "please use " + secret + " for the test",
+		SessionID:     "raw-session-id",
+		TurnID:        "raw-turn-id",
+		CWD:           "/Users/alice/private/repo",
+		Model:         "gpt-5",
+	})
 	response := processAgentHook(context.Background(), input, "codex", "codex")
 	data, err := json.Marshal(response)
 	if err != nil {
@@ -473,11 +467,11 @@ func TestCodexHookBlocksBuiltInSmartSecretRule(t *testing.T) {
 	}
 
 	secret := "test_9xLmR7QpV2nB4sC8dF6gH1jK3zT5wY0aE9rU2iO4pS6dV8kN0m"
-	input := []byte(`{
-		"hook_event_name": "UserPromptSubmit",
-		"prompt": "auth0 token is: ` + secret + `",
-		"session_id": "built-in-sensitive-session"
-	}`)
+	input := marshalVerifiedCodexPrompt(t, agentHookEvent{
+		HookEventName: "UserPromptSubmit",
+		Prompt:        "auth0 token is: " + secret,
+		SessionID:     "built-in-sensitive-session",
+	})
 	response := processAgentHook(context.Background(), input, "codex", "codex")
 	data, err := json.Marshal(response)
 	if err != nil {
@@ -524,11 +518,11 @@ func TestCodexHookRecordsNonBlockingSensitiveRule(t *testing.T) {
 		t.Fatalf("SaveSensitiveRuleCache: %v", err)
 	}
 
-	input := []byte(`{
-		"hook_event_name": "UserPromptSubmit",
-		"prompt": "customer_secret_123 should be observed",
-		"session_id": "record-session"
-	}`)
+	input := marshalVerifiedCodexPrompt(t, agentHookEvent{
+		HookEventName: "UserPromptSubmit",
+		Prompt:        "customer_secret_123 should be observed",
+		SessionID:     "record-session",
+	})
 	response := processAgentHook(context.Background(), input, "codex", "codex")
 	if len(response) != 0 {
 		t.Fatalf("record-only finding should allow prompt, got %#v", response)
@@ -563,10 +557,10 @@ func TestCodexHookAllowsUserPromptSubmitWithoutSensitiveData(t *testing.T) {
 		t.Fatalf("SaveConfig: %v", err)
 	}
 
-	input := []byte(`{
-		"hook_event_name": "UserPromptSubmit",
-		"prompt": "please summarize the dashboard and suggest better labels"
-	}`)
+	input := marshalVerifiedCodexPrompt(t, agentHookEvent{
+		HookEventName: "UserPromptSubmit",
+		Prompt:        "please summarize the dashboard and suggest better labels",
+	})
 	response := processAgentHook(context.Background(), input, "codex", "codex")
 	if len(response) != 0 {
 		t.Fatalf("plain prompt should be allowed, got %#v", response)
