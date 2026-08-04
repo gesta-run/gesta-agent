@@ -187,11 +187,9 @@ func TestCodexHookMeasuresOnlyCompletedThreadItems(t *testing.T) {
 
 func TestGrossInkEventPreservesEfficiencyExclusionMetadata(t *testing.T) {
 	cfg := daemon.Config{
-		CustomerID:   "customer-1",
-		DeploymentID: "deployment-1",
-		DaemonID:     "daemon-1",
-		DeviceID:     "device-1",
-		DataDir:      t.TempDir(),
+		DaemonID: "daemon-1",
+		DeviceID: "device-1",
+		DataDir:  t.TempDir(),
 	}
 	_, err := appendGrossMeasurementsWithSummary(cfg, grossObservation{
 		CallID:     "call-1",

@@ -109,7 +109,7 @@ func sensitiveFindingEvent(
 		payload["model"] = privacy.RedactAndTruncate(hookEvent.Model, 128)
 	}
 	return model.EventEnvelope{
-		EventID: util.NewID("evt"), CustomerID: cfg.CustomerID, DeploymentID: cfg.DeploymentID,
+		EventID:  util.NewID("evt"),
 		DaemonID: cfg.DaemonID, DeviceID: cfg.DeviceID, TeamID: cfg.TeamID,
 		EventType: "sensitive.finding", Source: source, AgentType: agentType,
 		CreatedAt: time.Now().UTC(), Payload: payload,

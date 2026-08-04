@@ -12,12 +12,10 @@ import (
 
 func TestBuildUsageDeltaEventsBaselinesThenEmitsDelta(t *testing.T) {
 	cfg := Config{
-		DataDir:      t.TempDir(),
-		CustomerID:   "acme",
-		DeploymentID: "prod",
-		DaemonID:     "daemon_1",
-		DeviceID:     "device_1",
-		UsageWindow:  "10m",
+		DataDir:     t.TempDir(),
+		DaemonID:    "daemon_1",
+		DeviceID:    "device_1",
+		UsageWindow: "10m",
 	}
 	firstObservedAt := time.Date(2026, 6, 10, 23, 58, 0, 0, time.UTC)
 	first := usageSummaryEvent(100, 60, 40)
@@ -64,12 +62,10 @@ func TestBuildUsageDeltaEventsBaselinesThenEmitsDelta(t *testing.T) {
 
 func TestBuildUsageDeltaEventsSkipsNegativeDelta(t *testing.T) {
 	cfg := Config{
-		DataDir:      t.TempDir(),
-		CustomerID:   "acme",
-		DeploymentID: "prod",
-		DaemonID:     "daemon_1",
-		DeviceID:     "device_1",
-		UsageWindow:  "10m",
+		DataDir:     t.TempDir(),
+		DaemonID:    "daemon_1",
+		DeviceID:    "device_1",
+		UsageWindow: "10m",
 	}
 	observedAt := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
 	deltas, commit, err := BuildUsageDeltaEvents(cfg, []model.EventEnvelope{usageSummaryEvent(200, 100, 100)}, observedAt)
@@ -201,12 +197,10 @@ func TestBuildUsageDeltaEventsSeparatesAccountingModes(t *testing.T) {
 
 func TestBuildUsageDeltaEventsComputesCacheTierDeltas(t *testing.T) {
 	cfg := Config{
-		DataDir:      t.TempDir(),
-		CustomerID:   "acme",
-		DeploymentID: "prod",
-		DaemonID:     "daemon_1",
-		DeviceID:     "device_1",
-		UsageWindow:  "10m",
+		DataDir:     t.TempDir(),
+		DaemonID:    "daemon_1",
+		DeviceID:    "device_1",
+		UsageWindow: "10m",
 	}
 	firstObservedAt := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
 	first := usageSummaryEvent(200, 100, 40)
@@ -301,12 +295,10 @@ func cursorEventWithCache(total, input, output, cacheRead, cacheWrite int64) mod
 // after it must resume reporting real increments.
 func TestUsageDeltaDoesNotSpikeWhenUpgradingWithInFlightSession(t *testing.T) {
 	cfg := Config{
-		DataDir:      t.TempDir(),
-		CustomerID:   "acme",
-		DeploymentID: "prod",
-		DaemonID:     "daemon_1",
-		DeviceID:     "device_1",
-		UsageWindow:  "10m",
+		DataDir:     t.TempDir(),
+		DaemonID:    "daemon_1",
+		DeviceID:    "device_1",
+		UsageWindow: "10m",
 	}
 	t0 := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
 
@@ -452,12 +444,10 @@ func TestRecoveredCursorFromPreUpgradeBaselineDoesNotSpikeCache(t *testing.T) {
 // total keeps advancing.
 func TestKeylessPollDoesNotArmACacheSpikeOnTheNextPoll(t *testing.T) {
 	cfg := Config{
-		DataDir:      t.TempDir(),
-		CustomerID:   "acme",
-		DeploymentID: "prod",
-		DaemonID:     "daemon_1",
-		DeviceID:     "device_1",
-		UsageWindow:  "10m",
+		DataDir:     t.TempDir(),
+		DaemonID:    "daemon_1",
+		DeviceID:    "device_1",
+		UsageWindow: "10m",
 	}
 	t0 := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
 

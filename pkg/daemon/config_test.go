@@ -7,40 +7,6 @@ import (
 	"testing"
 )
 
-func TestSaveLoadInstallConfigDoesNotPersistAPIKey(t *testing.T) {
-	apiKey := "enroll_secret_test_key"
-	cfg := NewRuntimeConfig("https://control.example")
-	cfg.CustomerID = "default"
-	cfg.DaemonID = "daemon_123"
-	cfg.Token = "dtok_123"
-
-	path := filepath.Join(t.TempDir(), "state.json")
-	if err := SaveConfig(path, cfg); err != nil {
-		t.Fatalf("save config: %v", err)
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read config: %v", err)
-	}
-	if strings.Contains(string(data), apiKey) {
-		t.Fatalf("persisted connect token in config: %s", data)
-	}
-
-	loaded, err := LoadConfig(path)
-	if err != nil {
-		t.Fatalf("load config: %v", err)
-	}
-	if loaded.EffectiveServerURL() != "https://control.example" {
-		t.Fatalf("server url mismatch: %q", loaded.EffectiveServerURL())
-	}
-	if loaded.CustomerID == "" {
-		t.Fatal("expected fallback customer id for local/dev control planes")
-	}
-	if err := loaded.ValidateEnrolled(); err != nil {
-		t.Fatalf("expected enrolled config to validate: %v", err)
-	}
-}
-
 func TestSaveConfigPersistsCleanRuntimeState(t *testing.T) {
 	cfg := NewDirectRuntimeConfig("https://control.example", "sk-test-key")
 	cfg.ControlURL = "https://control.example"
@@ -83,9 +49,12 @@ func TestLoadConfigMigratesLegacyTokenAndControlURL(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.json")
 	legacy := `{
   "control_url": "https://legacy.example",
+  "customer_id": "legacy-customer",
+  "deployment_id": "legacy-deployment",
   "daemon_id": "daemon_legacy",
   "token": "dtok_legacy",
   "device_id": "dev_legacy",
+  "enrollment_key_id": "key_legacy",
   "user_name": "legacy-user"
 }`
 	if err := os.WriteFile(path, []byte(legacy), 0o600); err != nil {
@@ -100,6 +69,18 @@ func TestLoadConfigMigratesLegacyTokenAndControlURL(t *testing.T) {
 	}
 	if loaded.EffectiveServerURL() != "https://legacy.example" {
 		t.Fatalf("legacy server url = %q", loaded.EffectiveServerURL())
+	}
+	if err := SaveConfig(path, loaded); err != nil {
+		t.Fatalf("save migrated config: %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read migrated config: %v", err)
+	}
+	for _, serverOwned := range []string{"customer_id", "deployment_id", "enrollment_key_id"} {
+		if strings.Contains(string(data), serverOwned) {
+			t.Fatalf("migrated config retained %s: %s", serverOwned, data)
+		}
 	}
 }
 

@@ -18,14 +18,11 @@ import (
 type Config struct {
 	ServerURL         string `json:"server_url,omitempty"`
 	ControlURL        string `json:"control_url,omitempty"`
-	CustomerID        string `json:"customer_id"`
-	DeploymentID      string `json:"deployment_id"`
 	DaemonID          string `json:"daemon_id"`
 	APIKey            string `json:"api_key,omitempty"`
 	Token             string `json:"token,omitempty"`
 	DeviceID          string `json:"device_id"`
 	TeamID            string `json:"team_id,omitempty"`
-	EnrollmentKeyID   string `json:"enrollment_key_id,omitempty"`
 	HostType          string `json:"host_type"`
 	InstallMode       string `json:"install_mode"`
 	PolicyVersion     string `json:"policy_version"`
@@ -111,9 +108,6 @@ func normalizeConfig(cfg *Config, path string) {
 	if cfg.ControlURL == "" {
 		cfg.ControlURL = cfg.ServerURL
 	}
-	if cfg.DeploymentID == "" {
-		cfg.DeploymentID = "single-node"
-	}
 	if cfg.HostType == "" {
 		cfg.HostType = "laptop"
 	}
@@ -153,7 +147,6 @@ func NewRuntimeConfig(serverURL string) Config {
 	return Config{
 		ServerURL:     serverURL,
 		ControlURL:    serverURL,
-		DeploymentID:  "single-node",
 		DeviceID:      util.NewID("dev"),
 		HostType:      "laptop",
 		InstallMode:   "daemon",

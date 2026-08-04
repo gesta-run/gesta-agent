@@ -231,17 +231,15 @@ func grossMeasurementEvents(
 			payload["target_path_hash"] = targetHash
 		}
 		events = append(events, model.EventEnvelope{
-			EventID:      "evt_" + util.ShortHash(identity),
-			CustomerID:   cfg.CustomerID,
-			DeploymentID: cfg.DeploymentID,
-			DaemonID:     cfg.DaemonID,
-			DeviceID:     cfg.DeviceID,
-			TeamID:       cfg.TeamID,
-			EventType:    "tool.input.gross",
-			Source:       observation.Source,
-			AgentType:    observation.AgentType,
-			CreatedAt:    createdAt,
-			Payload:      payload,
+			EventID:   "evt_" + util.ShortHash(identity),
+			DaemonID:  cfg.DaemonID,
+			DeviceID:  cfg.DeviceID,
+			TeamID:    cfg.TeamID,
+			EventType: "tool.input.gross",
+			Source:    observation.Source,
+			AgentType: observation.AgentType,
+			CreatedAt: createdAt,
+			Payload:   payload,
 		})
 	}
 	return events, output
