@@ -9,21 +9,20 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"time"
 )
 
-const (
-	codexPromptProvenanceTailBytes int64 = 8 * 1024 * 1024
-	codexPromptPersistenceWait           = 3 * time.Second
-	codexPromptPersistencePoll           = 50 * time.Millisecond
+const codexPromptProvenanceTailBytes int64 = 8 * 1024 * 1024
+
+var (
+	errCodexPromptMismatch = errors.New("codex user prompt does not match the active turn")
+	errCodexTurnNotActive  = errors.New("codex turn is not active")
 )
 
-var errCodexPromptNotPersisted = errors.New("matching user prompt is not persisted for this turn")
-
-// verifyUserPromptSubmission ensures a Codex hook is backed by the same
-// user-authored message in the rollout transcript. This rejects internal or
-// synthetic UserPromptSubmit payloads that happen to reuse a real turn ID.
-func verifyUserPromptSubmission(ctx context.Context, event agentHookEvent, agentType, userPrompt string) error {
+// verifyUserPromptSubmission ensures a Codex hook belongs to the active rollout
+// turn. Codex runs UserPromptSubmit before it persists the current user message,
+// so an active turn without a persisted prompt is valid. Once the canonical
+// user_message exists, it must match the hook payload.
+func verifyUserPromptSubmission(_ context.Context, event agentHookEvent, agentType, userPrompt string) error {
 	if !strings.EqualFold(strings.TrimSpace(agentType), "codex") {
 		return nil
 	}
@@ -34,39 +33,23 @@ func verifyUserPromptSubmission(ctx context.Context, event agentHookEvent, agent
 		return errors.New("codex UserPromptSubmit is missing turn_id")
 	}
 
-	deadline := time.NewTimer(codexPromptPersistenceWait)
-	defer deadline.Stop()
-	ticker := time.NewTicker(codexPromptPersistencePoll)
-	defer ticker.Stop()
-	var lastReadErr error
-
-	for {
-		matched, err := codexTranscriptHasUserPrompt(event.TranscriptPath, event.TurnID, userPrompt)
-		if matched {
-			return nil
-		}
-		lastReadErr = err
-
-		select {
-		case <-ctx.Done():
-			if lastReadErr != nil {
-				return lastReadErr
-			}
-			return fmt.Errorf("%w: %v", errCodexPromptNotPersisted, ctx.Err())
-		case <-deadline.C:
-			if lastReadErr != nil {
-				return lastReadErr
-			}
-			return errCodexPromptNotPersisted
-		case <-ticker.C:
-		}
+	state, err := codexTranscriptPromptState(event.TranscriptPath, event.TurnID, userPrompt)
+	if err != nil {
+		return err
 	}
+	if !state.turnFound || state.turnComplete || state.turnSuperseded {
+		return errCodexTurnNotActive
+	}
+	if state.canonicalPromptSeen && !state.canonicalPromptMatched {
+		return errCodexPromptMismatch
+	}
+	return nil
 }
 
-func codexTranscriptHasUserPrompt(path, turnID, userPrompt string) (bool, error) {
+func codexTranscriptPromptState(path, turnID, userPrompt string) (codexPromptState, error) {
 	data, err := readRecentTranscript(path, codexPromptProvenanceTailBytes)
 	if err != nil {
-		return false, fmt.Errorf("read Codex transcript: %w", err)
+		return codexPromptState{}, fmt.Errorf("read Codex transcript: %w", err)
 	}
 	return scanCodexUserPrompt(data, turnID, userPrompt)
 }
@@ -102,9 +85,17 @@ func readRecentTranscript(path string, limit int64) ([]byte, error) {
 	return data, nil
 }
 
-func scanCodexUserPrompt(data []byte, turnID, userPrompt string) (bool, error) {
+type codexPromptState struct {
+	turnFound              bool
+	turnComplete           bool
+	turnSuperseded         bool
+	canonicalPromptSeen    bool
+	canonicalPromptMatched bool
+}
+
+func scanCodexUserPrompt(data []byte, turnID, userPrompt string) (codexPromptState, error) {
 	wanted := normalizePromptForComparison(userPrompt)
-	foundTargetTurn := false
+	state := codexPromptState{}
 
 	scanner := bufio.NewScanner(bytes.NewReader(data))
 	scanner.Buffer(make([]byte, 64*1024), int(codexPromptProvenanceTailBytes))
@@ -116,35 +107,34 @@ func scanCodexUserPrompt(data []byte, turnID, userPrompt string) (bool, error) {
 
 		if record.Type == "event_msg" && record.Payload.Type == "task_started" {
 			if record.Payload.TurnID == turnID {
-				foundTargetTurn = true
+				state.turnFound = true
 				continue
 			}
-			if foundTargetTurn {
-				return false, nil
+			if state.turnFound {
+				state.turnSuperseded = true
 			}
 		}
-		if !foundTargetTurn {
+		if !state.turnFound || state.turnSuperseded {
 			continue
 		}
 
-		if record.Type == "event_msg" && record.Payload.Type == "user_message" &&
-			normalizePromptForComparison(record.Payload.Message) == wanted {
-			return true, nil
+		if record.Type == "event_msg" && record.Payload.Type == "task_complete" &&
+			record.Payload.TurnID == turnID {
+			state.turnComplete = true
+			continue
 		}
-		if record.Type == "response_item" && record.Payload.Type == "message" && record.Payload.Role == "user" {
-			metadataTurnID := record.Payload.Metadata.TurnID
-			if metadataTurnID != "" && metadataTurnID != turnID {
-				continue
+		if record.Type == "event_msg" && record.Payload.Type == "user_message" {
+			state.canonicalPromptSeen = true
+			if normalizePromptForComparison(record.Payload.Message) == wanted {
+				state.canonicalPromptMatched = true
 			}
-			if normalizePromptForComparison(codexMessageText(record.Payload.Content)) == wanted {
-				return true, nil
-			}
+			continue
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		return false, fmt.Errorf("scan Codex transcript: %w", err)
+		return codexPromptState{}, fmt.Errorf("scan Codex transcript: %w", err)
 	}
-	return false, nil
+	return state, nil
 }
 
 type codexTranscriptRecord struct {
@@ -152,29 +142,8 @@ type codexTranscriptRecord struct {
 	Payload struct {
 		Type    string `json:"type"`
 		TurnID  string `json:"turn_id"`
-		Role    string `json:"role"`
 		Message string `json:"message"`
-		Content []struct {
-			Type string `json:"type"`
-			Text string `json:"text"`
-		} `json:"content"`
-		Metadata struct {
-			TurnID string `json:"turn_id"`
-		} `json:"internal_chat_message_metadata_passthrough"`
 	} `json:"payload"`
-}
-
-func codexMessageText(content []struct {
-	Type string `json:"type"`
-	Text string `json:"text"`
-}) string {
-	parts := make([]string, 0, len(content))
-	for _, item := range content {
-		if item.Type == "input_text" || item.Type == "text" {
-			parts = append(parts, item.Text)
-		}
-	}
-	return strings.Join(parts, "\n")
 }
 
 func normalizePromptForComparison(value string) string {
