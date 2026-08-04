@@ -30,6 +30,29 @@ func TestCodexBinaryPathUsesBundledCandidateWhenPATHMisses(t *testing.T) {
 	}
 }
 
+func TestCollectCodexRowsDiscoversTurnsBeyondTranscriptLimit(t *testing.T) {
+	var rows []map[string]interface{}
+	for index := 0; index < codexMaxTranscriptRows+1; index++ {
+		rollout := filepath.Join(t.TempDir(), fmt.Sprintf("rollout-%d.jsonl", index))
+		if err := os.WriteFile(rollout, nil, 0o600); err != nil {
+			t.Fatalf("write rollout: %v", err)
+		}
+		rows = append(rows, map[string]interface{}{
+			"session_id":   fmt.Sprintf("session-%d", index),
+			"rollout_path": rollout,
+			"total_tokens": 1,
+		})
+	}
+
+	_, transcripts, sessions := collectCodexRows(rows, nil, nil)
+	if len(sessions) != codexMaxTranscriptRows+1 {
+		t.Fatalf("turn sessions = %d, want %d", len(sessions), codexMaxTranscriptRows+1)
+	}
+	if len(transcripts) != 0 {
+		t.Fatalf("transcripts = %d, want empty transcripts for empty rollouts", len(transcripts))
+	}
+}
+
 func TestCodexBinaryPathIgnoresNonExecutableCandidate(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 	binPath := filepath.Join(t.TempDir(), "codex")

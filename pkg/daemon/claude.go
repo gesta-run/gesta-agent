@@ -9,6 +9,7 @@ import (
 
 	"github.com/gesta-run/gesta-agent/pkg/model"
 	"github.com/gesta-run/gesta-agent/pkg/privacy"
+	turnusage "github.com/gesta-run/gesta-agent/pkg/turn"
 	"github.com/gesta-run/gesta-agent/pkg/util"
 )
 
@@ -63,16 +64,34 @@ func claudeEventsFromSessions(
 	sessions []claudeSessionUsage,
 	observedAt time.Time,
 ) ([]model.EventEnvelope, func() error) {
+	var events []model.EventEnvelope
+	var commits []func() error
+	turnEvents, turnCommit, turnErr := turnusage.CollectClaude(turnusage.Config{
+		DataDir: cfg.DataDir, DaemonID: cfg.DaemonID,
+	}, claudeTurnSessions(sessions), observedAt)
+	if turnErr != nil {
+		events = append(events, snapshotEvent(cfg, "adapter.warning", claudeCodeUsageSource, claudeCodeAgentType, map[string]interface{}{
+			"scope": "turn_usage", "error": privacy.RedactAndTruncate(turnErr.Error(), 2048),
+		}))
+	} else {
+		for _, usage := range turnEvents {
+			event := baseEvent(cfg, turnusage.EventType, claudeCodeUsageSource, claudeCodeAgentType, usage.Payload())
+			event.EventID = usage.EventID
+			event.CreatedAt = usage.EndedAt
+			events = append(events, event)
+		}
+		if turnCommit != nil {
+			commits = append(commits, turnCommit)
+		}
+	}
 	collection, err := collectClaudeEventsFromSessions(cfg, sessions, observedAt)
 	if err != nil {
-		return []model.EventEnvelope{
-			snapshotEvent(cfg, "adapter.warning", claudeCodeUsageSource, claudeCodeAgentType, map[string]interface{}{
-				"scope": "session_baseline",
-				"error": privacy.RedactAndTruncate(err.Error(), 2048),
-			}),
-		}, nil
+		events = append(events, snapshotEvent(cfg, "adapter.warning", claudeCodeUsageSource, claudeCodeAgentType, map[string]interface{}{
+			"scope": "session_baseline",
+			"error": privacy.RedactAndTruncate(err.Error(), 2048),
+		}))
+		return events, combineAdapterCommits(commits)
 	}
-	var events []model.EventEnvelope
 	if len(collection.Meta) > 0 {
 		events = append(events, snapshotEvent(cfg, "claude_code.usage_summary", claudeCodeUsageSource, claudeCodeAgentType, collection.Meta))
 	}
@@ -85,7 +104,34 @@ func claudeEventsFromSessions(
 		events = append(events, event)
 	}
 	events = append(events, collection.MCPEvents...)
-	return events, collection.Commit
+	if collection.Commit != nil {
+		commits = append(commits, collection.Commit)
+	}
+	return events, combineAdapterCommits(commits)
+}
+
+func claudeTurnSessions(sessions []claudeSessionUsage) []turnusage.ClaudeSession {
+	out := make([]turnusage.ClaudeSession, 0, len(sessions))
+	for _, session := range sessions {
+		converted := turnusage.ClaudeSession{
+			SessionIDHash: util.ShortHash(session.SessionID),
+			FirstEventAt:  session.FirstEventAt,
+			Turns:         make([]turnusage.ClaudeTurn, 0, len(session.Turns)),
+		}
+		for _, turn := range session.Turns {
+			converted.Turns = append(converted.Turns, turnusage.ClaudeTurn{
+				TurnID: turn.TurnID, Status: turn.Status, StartedAt: turn.StartedAt, EndedAt: turn.EndedAt,
+				Model: turn.Model, Repo: claudeRepoHash(session.CWD), ModelProvider: "anthropic",
+				Tokens: turnusage.TokenTotals{
+					Input: turn.Usage.InputTokens, Output: turn.Usage.OutputTokens,
+					CacheRead: turn.Usage.CacheReadTokens, CacheWrite: turn.Usage.CacheCreationTokens,
+				},
+				Evidence: turn.Evidence,
+			})
+		}
+		out = append(out, converted)
+	}
+	return out
 }
 
 func dirEntryCount(dir string) int {

@@ -53,7 +53,7 @@ func (a CodexAdapter) Collect(ctx context.Context, cfg Config) (AdapterResult, [
 	}
 
 	var events []model.EventEnvelope
-	var commit func() error
+	var commits []func() error
 	discovery := map[string]interface{}{
 		"version": version,
 	}
@@ -76,51 +76,11 @@ func (a CodexAdapter) Collect(ctx context.Context, cfg Config) (AdapterResult, [
 	}
 
 	if stateDB != "" {
-		if aggregate, usageEvents, transcriptEvents, err := readCodexState(ctx, stateDB); err == nil {
-			sensitiveRules := codexSensitiveRulesForCollection(cfg)
-			sensitiveEvents := codexSensitiveFindingEventsFromTranscripts(cfg, transcriptEvents, sensitiveRules)
-			baselineResult, err := filterCodexSessionBackfill(cfg, stateDB, usageEvents, transcriptEvents, time.Now().UTC())
-			for key, value := range baselineResult.Meta {
-				aggregate[key] = value
-			}
-			if err != nil {
-				events = append(events, snapshotEvent(cfg, "adapter.warning", "codex", "codex", map[string]interface{}{
-					"state_db_hash": util.ShortHash(stateDB),
-					"error":         privacy.RedactAndTruncate(err.Error(), 2048),
-					"scope":         "session_baseline",
-				}))
-				usageEvents = nil
-				transcriptEvents = nil
-			} else {
-				usageEvents = baselineResult.UsageEvents
-				transcriptEvents = baselineResult.TranscriptEvents
-				commit = baselineResult.Commit
-			}
-			events = append(events, snapshotEvent(cfg, "codex.usage_summary", "codex", "codex", aggregate))
-			for _, usage := range usageEvents {
-				events = append(events, baseEvent(cfg, "usage.summary", "codex", "codex", usage))
-			}
-			toolCallsCollected := map[string]struct{}{}
-			for _, transcript := range transcriptEvents {
-				sessionID := firstString(transcript, "session_id", "session_id_hash")
-				if _, ok := toolCallsCollected[sessionID]; !ok {
-					events = append(events, codexToolCallEventsFromTranscript(cfg, transcript)...)
-					toolCallsCollected[sessionID] = struct{}{}
-				}
-				publicTranscript := codexPublicTranscriptPayload(transcript)
-				event := baseEvent(cfg, transcriptChunkEventType, "codex", "codex", publicTranscript)
-				event.EventID = transcriptChunkEventID(publicTranscript)
-				events = append(events, event)
-			}
-			events = append(events, sensitiveEvents...)
-		} else {
-			events = append(events, snapshotEvent(cfg, "adapter.warning", "codex", "codex", map[string]interface{}{
-				"state_db_hash": util.ShortHash(stateDB),
-				"error":         privacy.RedactAndTruncate(err.Error(), 2048),
-			}))
-		}
+		stateEvents, stateCommits := collectCodexStateEvents(ctx, cfg, stateDB, observedAt)
+		events = append(events, stateEvents...)
+		commits = append(commits, stateCommits...)
 	}
-	return AdapterResult{Status: status, Commit: commit}, events
+	return AdapterResult{Status: status, Commit: combineAdapterCommits(commits)}, events
 }
 
 func codexBinaryPath() string {
