@@ -235,9 +235,17 @@ func status(args []string) error {
 	if err != nil {
 		return fmt.Errorf("load daemon state: %w\nnote: run install first or pass --apikey when starting the daemon", err)
 	}
-	fmt.Printf("version=%s\nstate_path=%s\ndaemon_id=%s\ncustomer_id=%s\ndeployment_id=%s\napi_key=%s\nserver_url=%s\nenrollment_key_id=%s\npolicy_version=%s\ndata_dir=%s\n",
-		model.DaemonVersion, daemon.DefaultStatePath(), cfg.DaemonID, cfg.CustomerID, cfg.DeploymentID, cfg.APIKey, cfg.EffectiveServerURL(), cfg.EnrollmentKeyID, cfg.PolicyVersion, cfg.DataDir)
+	fmt.Print(statusOutput(cfg))
 	return nil
+}
+
+func statusOutput(cfg daemon.Config) string {
+	auth := "not_configured"
+	if strings.TrimSpace(cfg.APIKey) != "" {
+		auth = "configured"
+	}
+	return fmt.Sprintf("version=%s\nstate_path=%s\ndaemon_id=%s\nauth=%s\nserver_url=%s\npolicy_version=%s\ndata_dir=%s\n",
+		model.DaemonVersion, daemon.DefaultStatePath(), cfg.DaemonID, auth, cfg.EffectiveServerURL(), cfg.PolicyVersion, cfg.DataDir)
 }
 
 func configForRun(opts options.RunOptions, allowSaved bool) (daemon.Config, error) {

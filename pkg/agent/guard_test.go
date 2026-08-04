@@ -137,11 +137,9 @@ func TestGuardExecutesAllowedUnmatchedCommandWithoutRecordingDecision(t *testing
 func TestRecordGuardDecisionKeepsMatchedAllowDecision(t *testing.T) {
 	dataDir := t.TempDir()
 	cfg := daemon.Config{
-		DataDir:      dataDir,
-		CustomerID:   "default",
-		DeploymentID: "local",
-		DaemonID:     "daemon_test",
-		DeviceID:     "device_test",
+		DataDir:  dataDir,
+		DaemonID: "daemon_test",
+		DeviceID: "device_test",
 	}
 	evaluation := policy.Evaluation{
 		AgentType:      "codex",

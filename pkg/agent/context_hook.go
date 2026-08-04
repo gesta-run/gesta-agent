@@ -77,7 +77,7 @@ func recordContextRuleMatch(
 		"prompt_text_stored": false,
 	}
 	event := model.EventEnvelope{
-		EventID: util.NewID("evt"), CustomerID: cfg.CustomerID, DeploymentID: cfg.DeploymentID,
+		EventID:  util.NewID("evt"),
 		DaemonID: cfg.DaemonID, DeviceID: cfg.DeviceID, TeamID: cfg.TeamID,
 		EventType: "context_rule.matched", Source: source, AgentType: agentType,
 		CreatedAt: time.Now().UTC(), Payload: payload,

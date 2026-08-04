@@ -93,17 +93,15 @@ func combineAdapterCommits(commits []func() error) func() error {
 
 func baseEvent(cfg Config, eventType, source, agentType string, payload map[string]interface{}) model.EventEnvelope {
 	return model.EventEnvelope{
-		EventID:      util.NewID("evt"),
-		CustomerID:   cfg.CustomerID,
-		DeploymentID: cfg.DeploymentID,
-		DaemonID:     cfg.DaemonID,
-		DeviceID:     cfg.DeviceID,
-		TeamID:       cfg.TeamID,
-		EventType:    eventType,
-		Source:       source,
-		AgentType:    agentType,
-		CreatedAt:    time.Now().UTC(),
-		Payload:      payload,
+		EventID:   util.NewID("evt"),
+		DaemonID:  cfg.DaemonID,
+		DeviceID:  cfg.DeviceID,
+		TeamID:    cfg.TeamID,
+		EventType: eventType,
+		Source:    source,
+		AgentType: agentType,
+		CreatedAt: time.Now().UTC(),
+		Payload:   payload,
 	}
 }
 

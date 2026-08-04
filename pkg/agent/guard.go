@@ -200,17 +200,15 @@ func recordGuardDecisionWithConfig(cfg daemon.Config, shouldFlush bool, evaluati
 		return nil
 	}
 	event := model.EventEnvelope{
-		EventID:      util.NewID("evt"),
-		CustomerID:   cfg.CustomerID,
-		DeploymentID: cfg.DeploymentID,
-		DaemonID:     cfg.DaemonID,
-		DeviceID:     cfg.DeviceID,
-		TeamID:       cfg.TeamID,
-		EventType:    "policy.decision",
-		Source:       "guard",
-		AgentType:    evaluation.AgentType,
-		CreatedAt:    time.Now().UTC(),
-		Payload:      evaluation.Payload(executed, exitCode),
+		EventID:   util.NewID("evt"),
+		DaemonID:  cfg.DaemonID,
+		DeviceID:  cfg.DeviceID,
+		TeamID:    cfg.TeamID,
+		EventType: "policy.decision",
+		Source:    "guard",
+		AgentType: evaluation.AgentType,
+		CreatedAt: time.Now().UTC(),
+		Payload:   evaluation.Payload(executed, exitCode),
 	}
 	queue := eventqueue.NewQueue(cfg.DataDir)
 	if err := queue.Append([]model.EventEnvelope{event}); err != nil {
