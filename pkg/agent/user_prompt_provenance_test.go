@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 )
 
 func TestVerifyUserPromptSubmissionMatchesPersistedCodexMessage(t *testing.T) {
@@ -27,31 +26,12 @@ func TestVerifyUserPromptSubmissionRejectsSyntheticPayloadForRealTurn(t *testing
 		`{"type":"event_msg","payload":{"type":"task_started","turn_id":"turn-real"}}`,
 		`{"type":"event_msg","payload":{"type":"user_message","message":"real user prompt"}}`,
 	)
-	ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond)
-	defer cancel()
-
-	err := verifyUserPromptSubmission(ctx, agentHookEvent{
+	err := verifyUserPromptSubmission(context.Background(), agentHookEvent{
 		TranscriptPath: transcriptPath,
 		TurnID:         "turn-real",
 	}, "codex", "synthetic payload")
-	if !errors.Is(err, errCodexPromptNotPersisted) {
+	if !errors.Is(err, errCodexPromptMismatch) {
 		t.Fatalf("expected prompt provenance rejection, got %v", err)
-	}
-}
-
-func TestVerifyUserPromptSubmissionUsesTurnMetadata(t *testing.T) {
-	transcriptPath := writeCodexTranscript(t,
-		`{"type":"event_msg","payload":{"type":"task_started","turn_id":"turn-real"}}`,
-		`{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}],"internal_chat_message_metadata_passthrough":{"turn_id":"turn-other"}}}`,
-		`{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}],"internal_chat_message_metadata_passthrough":{"turn_id":"turn-real"}}}`,
-	)
-
-	matched, err := codexTranscriptHasUserPrompt(transcriptPath, "turn-real", "hello")
-	if err != nil {
-		t.Fatalf("scan transcript: %v", err)
-	}
-	if !matched {
-		t.Fatal("message carrying the target turn metadata should match")
 	}
 }
 
@@ -75,38 +55,57 @@ func TestCodexPromptLookupUsesRecentTail(t *testing.T) {
 		t.Fatalf("write transcript: %v", err)
 	}
 
-	matched, err := codexTranscriptHasUserPrompt(transcriptPath, "turn-recent", "recent prompt")
+	state, err := codexTranscriptPromptState(transcriptPath, "turn-recent", "recent prompt")
 	if err != nil {
 		t.Fatalf("scan recent transcript tail: %v", err)
 	}
-	if !matched {
+	if !state.canonicalPromptMatched {
 		t.Fatal("prompt in the recent transcript tail should be found")
 	}
 }
 
-func TestVerifyUserPromptSubmissionWaitsForDelayedTranscriptWrite(t *testing.T) {
+func TestVerifyUserPromptSubmissionAllowsPendingActiveTurn(t *testing.T) {
 	transcriptPath := writeCodexTranscript(t,
-		`{"type":"event_msg","payload":{"type":"task_started","turn_id":"turn-delayed"}}`,
+		`{"type":"event_msg","payload":{"type":"task_started","turn_id":"turn-pending"}}`,
 	)
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		time.Sleep(75 * time.Millisecond)
-		file, err := os.OpenFile(transcriptPath, os.O_APPEND|os.O_WRONLY, 0o600)
-		if err != nil {
-			return
-		}
-		defer file.Close()
-		_, _ = file.WriteString(`{"type":"event_msg","payload":{"type":"user_message","message":"delayed prompt"}}` + "\n")
-	}()
 
 	err := verifyUserPromptSubmission(context.Background(), agentHookEvent{
 		TranscriptPath: transcriptPath,
-		TurnID:         "turn-delayed",
-	}, "codex", "delayed prompt")
-	<-done
+		TurnID:         "turn-pending",
+	}, "codex", "pending prompt")
 	if err != nil {
-		t.Fatalf("verify delayed prompt: %v", err)
+		t.Fatalf("verify pending prompt: %v", err)
+	}
+}
+
+func TestVerifyUserPromptSubmissionRejectsSupersededTurn(t *testing.T) {
+	transcriptPath := writeCodexTranscript(t,
+		`{"type":"event_msg","payload":{"type":"task_started","turn_id":"turn-old"}}`,
+		`{"type":"event_msg","payload":{"type":"task_started","turn_id":"turn-current"}}`,
+	)
+
+	err := verifyUserPromptSubmission(context.Background(), agentHookEvent{
+		TranscriptPath: transcriptPath,
+		TurnID:         "turn-old",
+	}, "codex", "stale prompt")
+	if !errors.Is(err, errCodexTurnNotActive) {
+		t.Fatalf("expected superseded turn rejection, got %v", err)
+	}
+}
+
+func TestVerifyUserPromptSubmissionRejectsCompletedTurn(t *testing.T) {
+	transcriptPath := writeCodexTranscript(t,
+		`{"type":"event_msg","payload":{"type":"task_started","turn_id":"turn-complete"}}`,
+		`{"type":"event_msg","payload":{"type":"user_message","message":"hello"}}`,
+		`{"type":"event_msg","payload":{"type":"task_complete","turn_id":"turn-complete"}}`,
+	)
+
+	err := verifyUserPromptSubmission(context.Background(), agentHookEvent{
+		TranscriptPath: transcriptPath,
+		TurnID:         "turn-complete",
+	}, "codex", "hello")
+	if !errors.Is(err, errCodexTurnNotActive) {
+		t.Fatalf("expected completed turn rejection, got %v", err)
 	}
 }
 

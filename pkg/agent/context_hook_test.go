@@ -87,6 +87,36 @@ func TestCodexHookInjectsOrganizationContextWithoutUploadingPrompt(t *testing.T)
 	}
 }
 
+func TestCodexHookInjectsOrganizationContextBeforePromptPersistence(t *testing.T) {
+	setupContextHookTest(t, []model.ContextRule{{
+		RuleID: "crule_test", Name: "Test", Status: "active", MatchType: "regex",
+		Pattern: ".*test.*", AgentType: "all", Priority: 100,
+		ContextContent: "Context has been appended.",
+	}})
+	transcriptPath := writeCodexTranscript(t,
+		`{"type":"event_msg","payload":{"type":"task_started","turn_id":"turn-pending"}}`,
+	)
+	input, err := json.Marshal(agentHookEvent{
+		HookEventName:  "UserPromptSubmit",
+		Prompt:         "test",
+		SessionID:      "session-pending",
+		TurnID:         "turn-pending",
+		TranscriptPath: transcriptPath,
+	})
+	if err != nil {
+		t.Fatalf("marshal pending prompt: %v", err)
+	}
+
+	response := processAgentHook(context.Background(), input, "codex", "codex")
+	data, err := json.Marshal(response)
+	if err != nil {
+		t.Fatalf("marshal hook response: %v", err)
+	}
+	if !strings.Contains(string(data), "Context has been appended.") {
+		t.Fatalf("pending prompt context missing from response: %s", data)
+	}
+}
+
 func TestCodexHookMatchesOnlyRequestBodyInFileEnvelope(t *testing.T) {
 	cfg := setupContextHookTest(t, []model.ContextRule{
 		{RuleID: "crule_path", Name: "Path only", Status: "active", MatchType: "keyword_any", Keywords: []string{"refactor"}, AgentType: "codex", Priority: 100, ContextContent: "PATH CONTEXT MUST NOT APPEAR"},
