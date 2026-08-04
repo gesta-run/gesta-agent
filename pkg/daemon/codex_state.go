@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	turnusage "github.com/gesta-run/gesta-agent/pkg/turn"
 	"github.com/gesta-run/gesta-agent/pkg/util"
 )
 
@@ -31,22 +32,22 @@ func latestCodexStateDB() string {
 	return matches[0]
 }
 
-func readCodexState(ctx context.Context, dbPath string) (map[string]interface{}, []map[string]interface{}, []map[string]interface{}, error) {
+func readCodexState(ctx context.Context, dbPath string) (map[string]interface{}, []map[string]interface{}, []map[string]interface{}, []turnusage.CodexSession, error) {
 	if _, err := exec.LookPath("sqlite3"); err != nil {
 		return map[string]interface{}{
 			"state_db_present": true,
 			"state_db_hash":    util.ShortHash(dbPath),
 			"sqlite3_present":  false,
-		}, nil, nil, nil
+		}, nil, nil, nil, nil
 	}
 	columns, err := sqliteColumns(ctx, dbPath, "threads")
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	aggregateSQL := codexAggregateSQL(columns)
 	aggregateRows, err := sqliteJSON(ctx, dbPath, aggregateSQL)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	aggregate := map[string]interface{}{
 		"state_db_present": true,
@@ -68,16 +69,22 @@ func readCodexState(ctx context.Context, dbPath string) (map[string]interface{},
 
 	usageSQL := codexUsageSQL(columns)
 	if usageSQL == "" {
-		return aggregate, nil, nil, nil
+		return aggregate, nil, nil, nil, nil
 	}
 	usageRows, err := sqliteJSON(ctx, dbPath, usageSQL)
 	if err != nil {
-		return aggregate, nil, nil, err
+		return aggregate, nil, nil, nil, err
 	}
 	spawnParents := codexThreadSpawnParents(ctx, dbPath)
 	sessionTitles := codexSessionIndexTitles(codexSessionIndexPath())
+	usage, transcripts, turnSessions := collectCodexRows(usageRows, spawnParents, sessionTitles)
+	return aggregate, usage, transcripts, turnSessions, nil
+}
+
+func collectCodexRows(usageRows []map[string]interface{}, spawnParents, sessionTitles map[string]string) ([]map[string]interface{}, []map[string]interface{}, []turnusage.CodexSession) {
 	usage := make([]map[string]interface{}, 0, len(usageRows))
 	transcripts := make([]map[string]interface{}, 0, len(usageRows))
+	turnSessions := make([]turnusage.CodexSession, 0, len(usageRows))
 	for index, row := range usageRows {
 		if sessionID := firstString(row, "session_id", "id"); sessionID != "" {
 			if parentID := spawnParents[sessionID]; parentID != "" {
@@ -88,6 +95,9 @@ func readCodexState(ctx context.Context, dbPath string) (map[string]interface{},
 		if len(payload) > 0 {
 			usage = append(usage, payload)
 		}
+		if session, ok := codexTurnSession(row, payload); ok {
+			turnSessions = append(turnSessions, session)
+		}
 		if index >= codexMaxTranscriptRows {
 			continue
 		}
@@ -95,7 +105,18 @@ func readCodexState(ctx context.Context, dbPath string) (map[string]interface{},
 			transcripts = append(transcripts, transcript)
 		}
 	}
-	return aggregate, usage, transcripts, nil
+	return usage, transcripts, turnSessions
+}
+
+func codexTurnSession(row, usagePayload map[string]interface{}) (turnusage.CodexSession, bool) {
+	session := turnusage.CodexSession{
+		SessionID:     firstString(usagePayload, "session_id_hash", "session_id"),
+		RolloutPath:   firstString(row, "rollout_path"),
+		Model:         firstString(row, "model", "model_name", "model_id"),
+		Repo:          firstString(usagePayload, "repo", "repo_path_hash", "cwd_hash", "source_hash", "workspace_hash"),
+		ModelProvider: firstString(row, "model_provider"),
+	}
+	return session, session.SessionID != "" && session.RolloutPath != ""
 }
 
 func codexThreadSpawnParents(ctx context.Context, dbPath string) map[string]string {

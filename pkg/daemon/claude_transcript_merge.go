@@ -53,6 +53,7 @@ func mergeClaudeSessionsByID(sessions []claudeSessionUsage) []claudeSessionUsage
 				Messages:            cloneClaudeTranscriptMessages(file.Messages),
 				TranscriptTruncated: file.TranscriptTruncated,
 				MCPToolCalls:        mergeClaudeMCPToolCalls(nil, file.MCPToolCalls),
+				Turns:               mergeClaudeTurns(nil, file.Turns),
 				ByModelDay:          map[claudeModelDayKey]claudeAssistantUsage{},
 			}
 			for key, usage := range file.ByModelDay {
@@ -91,6 +92,7 @@ func mergeClaudeSessionsByID(sessions []claudeSessionUsage) []claudeSessionUsage
 		existing.Total = existing.Total.add(file.Total)
 		existing.Messages, existing.TranscriptTruncated = mergeClaudeTranscriptMessages(existing.Messages, file.Messages, existing.TranscriptTruncated || file.TranscriptTruncated)
 		existing.MCPToolCalls = mergeClaudeMCPToolCalls(existing.MCPToolCalls, file.MCPToolCalls)
+		existing.Turns = mergeClaudeTurns(existing.Turns, file.Turns)
 		for key, usage := range file.ByModelDay {
 			existing.ByModelDay[key] = existing.ByModelDay[key].add(usage)
 		}
@@ -114,6 +116,39 @@ func mergeClaudeSessionsByID(sessions []claudeSessionUsage) []claudeSessionUsage
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].SessionID < result[j].SessionID })
 	return result
+}
+
+func mergeClaudeTurns(existing, next []claudeTurnUsage) []claudeTurnUsage {
+	merged := make([]claudeTurnUsage, 0, len(existing)+len(next))
+	indexes := map[string]int{}
+	add := func(turn claudeTurnUsage) {
+		key := strings.TrimSpace(turn.TurnID)
+		if key == "" {
+			return
+		}
+		if index, ok := indexes[key]; ok {
+			if turn.Usage.TotalTokens() > merged[index].Usage.TotalTokens() ||
+				(turn.Usage.TotalTokens() == merged[index].Usage.TotalTokens() && turn.Status == "completed") {
+				merged[index] = turn
+			}
+			return
+		}
+		indexes[key] = len(merged)
+		merged = append(merged, turn)
+	}
+	for _, turn := range existing {
+		add(turn)
+	}
+	for _, turn := range next {
+		add(turn)
+	}
+	sort.SliceStable(merged, func(i, j int) bool {
+		if !merged[i].EndedAt.Equal(merged[j].EndedAt) {
+			return merged[i].EndedAt.Before(merged[j].EndedAt)
+		}
+		return merged[i].TurnID < merged[j].TurnID
+	})
+	return merged
 }
 
 func mergeClaudeMCPToolCalls(existing, next []claudeTranscriptToolCall) []claudeTranscriptToolCall {

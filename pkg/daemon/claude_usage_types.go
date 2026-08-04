@@ -2,6 +2,8 @@ package daemon
 
 import (
 	"time"
+
+	turnusage "github.com/gesta-run/gesta-agent/pkg/turn"
 )
 
 const (
@@ -62,6 +64,17 @@ type claudeSessionUsage struct {
 	Messages            []map[string]interface{}
 	TranscriptTruncated bool
 	MCPToolCalls        []claudeTranscriptToolCall
+	Turns               []claudeTurnUsage
+}
+
+type claudeTurnUsage struct {
+	TurnID    string
+	Status    string
+	StartedAt time.Time
+	EndedAt   time.Time
+	Model     string
+	Usage     claudeAssistantUsage
+	Evidence  []turnusage.Evidence
 }
 
 type claudeModelDayKey struct {

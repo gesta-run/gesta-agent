@@ -10,15 +10,20 @@ import (
 	"time"
 
 	"github.com/gesta-run/gesta-agent/pkg/mcpmeta"
+	turnusage "github.com/gesta-run/gesta-agent/pkg/turn"
+	"github.com/gesta-run/gesta-agent/pkg/util"
 )
 
 type claudeTranscriptRecord struct {
-	Type      string `json:"type"`
-	SessionID string `json:"sessionId"`
-	CWD       string `json:"cwd"`
-	GitBranch string `json:"gitBranch"`
-	Timestamp string `json:"timestamp"`
-	Message   struct {
+	UUID        string `json:"uuid"`
+	Type        string `json:"type"`
+	SessionID   string `json:"sessionId"`
+	CWD         string `json:"cwd"`
+	GitBranch   string `json:"gitBranch"`
+	Timestamp   string `json:"timestamp"`
+	IsMeta      bool   `json:"isMeta"`
+	IsSidechain bool   `json:"isSidechain"`
+	Message     struct {
 		ID         string `json:"id"`
 		Model      string `json:"model"`
 		StopReason string `json:"stop_reason"`
@@ -69,6 +74,16 @@ type claudeTranscriptAccumulator struct {
 	transcriptCandidateIndexes map[string]int
 	transcriptCandidates       []claudeTranscriptCandidate
 	firstUserText              string
+	activeTurn                 *claudeTurnAccumulator
+}
+
+type claudeTurnAccumulator struct {
+	TurnID    string
+	StartedAt time.Time
+	EndedAt   time.Time
+	Model     string
+	Usage     claudeAssistantUsage
+	Evidence  []turnusage.Evidence
 }
 
 func newClaudeTranscriptAccumulator() *claudeTranscriptAccumulator {
@@ -92,6 +107,9 @@ func (a *claudeTranscriptAccumulator) add(record claudeTranscriptRecord) {
 		a.session.GitBranch = record.GitBranch
 	}
 	role := strings.ToLower(strings.TrimSpace(record.Type))
+	if role == "user" {
+		a.startClaudeTurn(record)
+	}
 	if role == "user" || role == "assistant" {
 		a.addContent(record, role)
 	}
@@ -101,7 +119,10 @@ func (a *claudeTranscriptAccumulator) add(record claudeTranscriptRecord) {
 		}
 	}
 	if role == "assistant" {
-		a.addAssistantUsage(record)
+		usage, added := a.addAssistantUsage(record)
+		if added && !record.IsSidechain {
+			a.addClaudeAssistantTurnUsage(record, usage)
+		}
 	}
 }
 
@@ -134,14 +155,14 @@ func (a *claudeTranscriptAccumulator) addContent(record claudeTranscriptRecord, 
 	}
 }
 
-func (a *claudeTranscriptAccumulator) addAssistantUsage(record claudeTranscriptRecord) {
+func (a *claudeTranscriptAccumulator) addAssistantUsage(record claudeTranscriptRecord) (claudeAssistantUsage, bool) {
 	modelName := strings.TrimSpace(record.Message.Model)
 	if modelName == "" || modelName == claudeSyntheticModel {
-		return
+		return claudeAssistantUsage{}, false
 	}
 	if messageID := strings.TrimSpace(record.Message.ID); messageID != "" {
 		if _, duplicate := a.seenMessageIDs[messageID]; duplicate {
-			return
+			return claudeAssistantUsage{}, false
 		}
 		a.seenMessageIDs[messageID] = struct{}{}
 	}
@@ -156,7 +177,7 @@ func (a *claudeTranscriptAccumulator) addAssistantUsage(record claudeTranscriptR
 	}
 	a.session.AssistantEvents++
 	a.modelsSeen[modelName] = struct{}{}
-	a.addUsage(record, modelName, observedAt, hasTime)
+	return a.addUsage(record, modelName, observedAt, hasTime)
 }
 
 func (a *claudeTranscriptAccumulator) addUsage(
@@ -164,7 +185,7 @@ func (a *claudeTranscriptAccumulator) addUsage(
 	modelName string,
 	observedAt time.Time,
 	hasTime bool,
-) {
+) (claudeAssistantUsage, bool) {
 	usage := claudeAssistantUsage{
 		InputTokens:         record.Message.Usage.InputTokens,
 		OutputTokens:        record.Message.Usage.OutputTokens,
@@ -172,7 +193,7 @@ func (a *claudeTranscriptAccumulator) addUsage(
 		CacheReadTokens:     record.Message.Usage.CacheReadInputTokens,
 	}
 	if usage.isZero() {
-		return
+		return claudeAssistantUsage{}, false
 	}
 	day := ""
 	if hasTime {
@@ -181,6 +202,95 @@ func (a *claudeTranscriptAccumulator) addUsage(
 	key := claudeModelDayKey{Model: modelName, Day: day}
 	a.session.ByModelDay[key] = a.session.ByModelDay[key].add(usage)
 	a.session.Total = a.session.Total.add(usage)
+	return usage, true
+}
+
+func (a *claudeTranscriptAccumulator) startClaudeTurn(record claudeTranscriptRecord) {
+	if record.IsMeta || record.IsSidechain {
+		return
+	}
+	text := strings.TrimSpace(claudeTranscriptContentText(record.Message.Content))
+	if text == "" || isCodexNonChatText(text) {
+		return
+	}
+	a.finishClaudeTurn("aborted")
+	startedAt, _ := parseClaudeTimestamp(record.Timestamp)
+	turnID := strings.TrimSpace(record.UUID)
+	if turnID == "" {
+		turnID = util.HashString(strings.Join([]string{record.SessionID, record.Timestamp, text}, "\x00"))
+	}
+	a.activeTurn = &claudeTurnAccumulator{
+		TurnID:    turnID,
+		StartedAt: startedAt,
+		Evidence:  []turnusage.Evidence{{Text: text, Weight: 5}},
+	}
+}
+
+func (a *claudeTranscriptAccumulator) addClaudeAssistantTurnUsage(record claudeTranscriptRecord, usage claudeAssistantUsage) {
+	endedAt, hasTime := parseClaudeTimestamp(record.Timestamp)
+	if !hasTime {
+		return
+	}
+	if a.activeTurn == nil {
+		return
+	}
+	a.activeTurn.EndedAt = endedAt
+	a.activeTurn.Model = strings.TrimSpace(record.Message.Model)
+	a.activeTurn.Usage = a.activeTurn.Usage.add(usage)
+	a.activeTurn.Evidence = append(a.activeTurn.Evidence, claudeToolEvidence(record.Message.Content)...)
+	if !claudeAssistantContinues(record.Message.StopReason, record.Message.Content) {
+		a.finishClaudeTurn("completed")
+	}
+}
+
+func (a *claudeTranscriptAccumulator) finishClaudeTurn(status string) {
+	if a.activeTurn == nil {
+		return
+	}
+	active := a.activeTurn
+	a.activeTurn = nil
+	if active.Usage.isZero() || active.StartedAt.IsZero() || active.EndedAt.Before(active.StartedAt) {
+		return
+	}
+	a.session.Turns = append(a.session.Turns, claudeTurnUsage{
+		TurnID: active.TurnID, Status: status, StartedAt: active.StartedAt, EndedAt: active.EndedAt,
+		Model: active.Model, Usage: active.Usage, Evidence: active.Evidence,
+	})
+}
+
+func claudeAssistantContinues(stopReason string, content interface{}) bool {
+	stopReason = strings.ToLower(strings.TrimSpace(stopReason))
+	if stopReason == "tool_use" || stopReason == "pause_turn" {
+		return true
+	}
+	blocks, _ := content.([]interface{})
+	for _, item := range blocks {
+		block, _ := item.(map[string]interface{})
+		blockType := strings.ToLower(strings.TrimSpace(firstString(block, "type")))
+		if blockType == "tool_use" || blockType == "server_tool_use" || blockType == "mcp_tool_use" {
+			return true
+		}
+	}
+	return false
+}
+
+func claudeToolEvidence(content interface{}) []turnusage.Evidence {
+	blocks, _ := content.([]interface{})
+	var evidence []turnusage.Evidence
+	for _, item := range blocks {
+		block, _ := item.(map[string]interface{})
+		blockType := strings.ToLower(strings.TrimSpace(firstString(block, "type")))
+		if blockType != "tool_use" && blockType != "server_tool_use" && blockType != "mcp_tool_use" {
+			continue
+		}
+		if name := firstString(block, "name", "tool_name"); name != "" {
+			evidence = append(evidence, turnusage.Evidence{Text: name, Weight: 3})
+		}
+		if input, err := json.Marshal(block["input"]); err == nil && string(input) != "null" {
+			evidence = append(evidence, turnusage.Evidence{Text: string(input), Weight: 7})
+		}
+	}
+	return evidence
 }
 
 func (a *claudeTranscriptAccumulator) result() (claudeSessionUsage, bool) {
