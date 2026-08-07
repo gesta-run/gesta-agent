@@ -47,7 +47,7 @@ func TestClaudeTurnUsageGroupsToolLoop(t *testing.T) {
 		t.Fatalf("turn usage events=%d, want one", len(usageEvents))
 	}
 	payload := usageEvents[0].Payload
-	if payload["work_type"] != "SRE" || payloadInt(payload, "total_tokens") != 31 {
+	if payload["work_type"] != "SRE" || payloadInt(payload, "total_tokens") != 25 {
 		t.Fatalf("payload=%#v", payload)
 	}
 	encoded := string(mustJSON(payload))

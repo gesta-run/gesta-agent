@@ -37,8 +37,8 @@ func TestCollectCodexEmitsCompletedTurnsAfterInitialization(t *testing.T) {
 	if err != nil || len(events) != 1 {
 		t.Fatalf("events=%d err=%v, want one", len(events), err)
 	}
-	if events[0].WorkType != "SRE" || events[0].Tokens.Total() != 130 {
-		t.Fatalf("event=%+v, want SRE and 130 tokens", events[0])
+	if events[0].WorkType != "SRE" || events[0].Tokens.Total() != 80 || events[0].Tokens.BilledTotal() != 130 {
+		t.Fatalf("event=%+v, want SRE with 80 effective and 130 billed tokens", events[0])
 	}
 	if err := commit(); err != nil {
 		t.Fatalf("commit turn: %v", err)
@@ -92,8 +92,8 @@ func TestCollectCodexPersistsActiveTurnAcrossCollections(t *testing.T) {
 	if err != nil || len(events) != 1 {
 		t.Fatalf("terminal collection events=%d err=%v", len(events), err)
 	}
-	if events[0].Status != "aborted" || events[0].WorkType != "SRE" || events[0].Tokens.Total() != 100 {
-		t.Fatalf("event = %+v, want aborted SRE turn with 100 tokens", events[0])
+	if events[0].Status != "aborted" || events[0].WorkType != "SRE" || events[0].Tokens.Total() != 80 || events[0].Tokens.BilledTotal() != 100 {
+		t.Fatalf("event = %+v, want aborted SRE turn with 80 effective and 100 billed tokens", events[0])
 	}
 }
 

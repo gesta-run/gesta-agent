@@ -57,7 +57,11 @@ type TokenTotals struct {
 }
 
 func (t TokenTotals) Total() int64 {
-	return nonNegative(t.Input) + nonNegative(t.Output) + nonNegative(t.CacheRead) + nonNegative(t.CacheWrite)
+	return nonNegative(t.Input) + nonNegative(t.Output)
+}
+
+func (t TokenTotals) BilledTotal() int64 {
+	return t.Total() + nonNegative(t.CacheRead) + nonNegative(t.CacheWrite)
 }
 
 func (t TokenTotals) Delta(previous TokenTotals) TokenTotals {
