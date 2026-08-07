@@ -36,7 +36,7 @@ func TestCollectClaudeEmitsOnlyNewTurnsAfterCommit(t *testing.T) {
 	if err != nil || len(events) != 1 {
 		t.Fatalf("events=%d err=%v, want one", len(events), err)
 	}
-	if events[0].Status != "aborted" || events[0].WorkType != "SRE" || events[0].Tokens.Total() != 35 {
+	if events[0].Status != "aborted" || events[0].WorkType != "SRE" || events[0].Tokens.Total() != 30 || events[0].Tokens.BilledTotal() != 35 {
 		t.Fatalf("event=%+v", events[0])
 	}
 	retry, _, err := CollectClaude(Config{DataDir: dataDir, DaemonID: "daemon"}, []ClaudeSession{historical}, observedAt.Add(4*time.Minute))
