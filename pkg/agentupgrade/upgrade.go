@@ -17,7 +17,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/gesta-run/gesta-agent/pkg/atomicfile"
@@ -80,6 +79,9 @@ func ApplyAgentUpgrade(policy model.AgentUpgradePolicy) error {
 }
 
 func ApplyAgentUpgradeToPath(ctx context.Context, policy model.AgentUpgradePolicy, targetPath string) error {
+	if !AutomaticUpgradeSupported() {
+		return errors.New("automatic upgrades are not supported on Windows RC; rerun the current Connect command")
+	}
 	targetPath = strings.TrimSpace(targetPath)
 	if targetPath == "" {
 		return errors.New("target path is required")
@@ -236,37 +238,6 @@ func verifyDownloadedAgentVersion(ctx context.Context, path, targetVersion strin
 	version := strings.TrimSpace(string(out))
 	if version != targetVersion {
 		return fmt.Errorf("downloaded version = %q, want %q", version, targetVersion)
-	}
-	return nil
-}
-
-func replaceAgentBinary(tmpPath, targetPath string) error {
-	info, err := os.Stat(targetPath)
-	if err != nil {
-		return fmt.Errorf("stat current agent binary: %w", err)
-	}
-	mode := info.Mode().Perm()
-	if mode == 0 {
-		mode = 0o755
-	}
-	backupPath := targetPath + ".prev"
-	_ = os.Remove(backupPath)
-	if err := os.Rename(targetPath, backupPath); err != nil {
-		return fmt.Errorf("backup current agent binary: %w; automatic upgrades need write access to %s, rerun the installer once with sudo to normalize ownership", err, targetPath)
-	}
-	if err := os.Rename(tmpPath, targetPath); err != nil {
-		_ = os.Rename(backupPath, targetPath)
-		return fmt.Errorf("install upgraded agent binary: %w", err)
-	}
-	if os.Geteuid() == 0 {
-		if stat, ok := info.Sys().(*syscall.Stat_t); ok {
-			if err := os.Chown(targetPath, int(stat.Uid), int(stat.Gid)); err != nil {
-				return fmt.Errorf("preserve upgraded agent ownership: %w", err)
-			}
-		}
-	}
-	if err := os.Chmod(targetPath, mode|0o111); err != nil {
-		return err
 	}
 	return nil
 }

@@ -69,14 +69,13 @@ cd "${HOME:-/tmp}" && curl -fsSL https://artifacts.gesta.run/gesta/install-agent
 
 The installer requires both `--control-url` and `--apikey`. It saves daemon state under
 `~/.gesta/state.json` so the Codex hook can fetch current policies before the
-daemon loop is running. It prints the effective API key and a copyable
-`gesta-agent run` command. By default it also starts the daemon in the
+daemon loop is running. It does not print the API key or include it in the
+long-running process arguments. By default it also starts the daemon in the
 background. Published installs place the binary at `~/.gesta/bin/gesta-agent`
 unless `--install-dir` or `--agent-bin` is provided. The installer detects the
 host platform and downloads the matching published binary, including
 `linux/amd64` for x86_64 Linux hosts and `darwin/arm64` for Apple Silicon Macs.
-The daemon process reads the saved state and does not include
-`--apikey` in its long-running process arguments. Use `--no-daemon` to install
+Use `--no-daemon` to install
 only the hook and saved config. On macOS, the default daemon mode installs and
 loads `~/Library/LaunchAgents/com.gesta.agent.plist` with `KeepAlive` enabled so
 launchd restarts the agent after logout/login, sleep/wake recovery, or an

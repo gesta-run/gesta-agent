@@ -20,13 +20,14 @@ const (
 	BaseURL           = "http://" + Address
 	healthHeaderName  = "X-Gesta-Agent"
 	healthHeaderValue = "activity-ui-v1"
+	daemonHeaderName  = "X-Gesta-Daemon-ID"
 )
 
 type Server struct {
 	httpServer *http.Server
 }
 
-func Start(dataDir string, logger *slog.Logger) (*Server, error) {
+func Start(dataDir, daemonID string, logger *slog.Logger) (*Server, error) {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -34,7 +35,7 @@ func Start(dataDir string, logger *slog.Logger) (*Server, error) {
 	if err != nil {
 		return nil, fmt.Errorf("listen on %s: %w", Address, err)
 	}
-	handler := newHandler(activitydetail.NewStore(dataDir))
+	handler := newHandlerWithDaemonID(activitydetail.NewStore(dataDir), daemonID)
 	server := &Server{
 		httpServer: &http.Server{
 			Addr:              Address,
@@ -68,6 +69,10 @@ func ActivityURL(activityID string) string {
 }
 
 func Healthy(parent context.Context) bool {
+	return HealthyFor(parent, "")
+}
+
+func HealthyFor(parent context.Context, daemonID string) bool {
 	ctx, cancel := context.WithTimeout(parent, 75*time.Millisecond)
 	defer cancel()
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, BaseURL+"/healthz", nil)
@@ -85,19 +90,25 @@ func Healthy(parent context.Context) bool {
 		return false
 	}
 	defer response.Body.Close()
-	return response.StatusCode == http.StatusNoContent &&
-		response.Header.Get(healthHeaderName) == healthHeaderValue
+	if response.StatusCode != http.StatusNoContent ||
+		response.Header.Get(healthHeaderName) != healthHeaderValue {
+		return false
+	}
+	daemonID = strings.TrimSpace(daemonID)
+	return daemonID == "" || response.Header.Get(daemonHeaderName) == daemonID
 }
 
 type handler struct {
 	store    activitydetail.Store
 	template *template.Template
+	daemonID string
 }
 
-func newHandler(store activitydetail.Store) http.Handler {
+func newHandlerWithDaemonID(store activitydetail.Store, daemonID string) http.Handler {
 	return handler{
 		store:    store,
 		template: pageTemplates,
+		daemonID: strings.TrimSpace(daemonID),
 	}
 }
 
@@ -114,6 +125,9 @@ func (h handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	}
 	if request.URL.Path == "/healthz" {
 		writer.Header().Set(healthHeaderName, healthHeaderValue)
+		if h.daemonID != "" {
+			writer.Header().Set(daemonHeaderName, h.daemonID)
+		}
 		writer.WriteHeader(http.StatusNoContent)
 		return
 	}

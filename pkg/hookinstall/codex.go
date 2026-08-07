@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 
 	"github.com/gesta-run/gesta-agent/pkg/atomicfile"
@@ -349,6 +350,13 @@ func tomlBasicString(value string) string {
 }
 
 func shellQuote(value string) string {
+	return quoteCommandPath(value, runtime.GOOS)
+}
+
+func quoteCommandPath(value, goos string) string {
+	if goos == "windows" {
+		return `"` + strings.ReplaceAll(value, `"`, `\"`) + `"`
+	}
 	if value == "" {
 		return "''"
 	}

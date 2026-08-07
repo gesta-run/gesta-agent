@@ -11,6 +11,7 @@ type RunOptions struct {
 	APIKey      string
 	Token       string
 	Agent       string
+	DataDir     string
 	Interval    time.Duration
 	UsageWindow time.Duration
 }
@@ -30,6 +31,7 @@ func (o *RunOptions) AddFlags(fs *flag.FlagSet) {
 	fs.StringVar(&o.APIKey, "apikey", o.APIKey, "API key used to send daemon telemetry")
 	fs.StringVar(&o.Token, "token", o.Token, "deprecated alias for --apikey")
 	fs.StringVar(&o.Agent, "agent", o.Agent, "agent type used when run is given a guarded command")
+	fs.StringVar(&o.DataDir, "data-dir", o.DataDir, "agent state directory")
 	fs.DurationVar(&o.Interval, "interval", o.Interval, "collection interval")
 	fs.DurationVar(&o.UsageWindow, "usage-window", o.UsageWindow, "token usage accounting window")
 }

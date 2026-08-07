@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"os"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/gesta-run/gesta-agent/pkg/agent/options"
@@ -61,7 +60,7 @@ func run(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := daemon.SaveConfig("", cfg); err != nil {
+	if err := daemon.SaveConfig(daemon.StatePath(opts.DataDir), cfg); err != nil {
 		return fmt.Errorf("save daemon state: %w", err)
 	}
 	if len(commandArgs) > 0 {
@@ -78,7 +77,7 @@ func run(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	localActivityServer, localActivityErr := localactivity.Start(cfg.DataDir, slog.Default())
+	localActivityServer, localActivityErr := localactivity.Start(cfg.DataDir, cfg.DaemonID, slog.Default())
 	if localActivityErr != nil {
 		slog.Warn("local activity server unavailable", "error", localActivityErr)
 	} else {
@@ -96,14 +95,6 @@ func run(ctx context.Context, args []string) error {
 		return err
 	}
 	return nil
-}
-
-func reexecAgent() error {
-	agentPath, err := os.Executable()
-	if err != nil {
-		return fmt.Errorf("resolve upgraded agent executable: %w", err)
-	}
-	return syscall.Exec(agentPath, os.Args, os.Environ())
 }
 
 func version(args []string) error {
@@ -168,10 +159,12 @@ func upgrade(args []string) error {
 func install(args []string) error {
 	fs := flag.NewFlagSet("install", flag.ExitOnError)
 	var agentPath string
+	var dataDir string
 	controlURL := os.Getenv("GESTA_CONTROL_URL")
 	apiKey := firstNonEmpty(os.Getenv("GESTA_API_KEY"), os.Getenv("GESTA_APIKEY"))
 	var usageWindow time.Duration
 	fs.StringVar(&agentPath, "agent-bin", "", "gesta-agent binary path to install into the Codex hook")
+	fs.StringVar(&dataDir, "data-dir", "", "agent state directory")
 	fs.StringVar(&controlURL, "control-url", controlURL, "control plane URL to save for hook policy fetches")
 	fs.StringVar(&apiKey, "apikey", apiKey, "API key to save for hook policy fetches")
 	fs.DurationVar(&usageWindow, "usage-window", 10*time.Minute, "token usage accounting window saved with daemon config")
@@ -197,10 +190,14 @@ func install(args []string) error {
 		return err
 	}
 	cfg := daemon.NewDirectRuntimeConfig(controlURL, apiKey)
+	dataDir = strings.TrimSpace(dataDir)
+	if dataDir != "" {
+		cfg.DataDir = dataDir
+	}
 	if usageWindow > 0 {
 		cfg.UsageWindow = usageWindow.String()
 	}
-	if err := daemon.SaveConfig("", cfg); err != nil {
+	if err := daemon.SaveConfig(daemon.StatePath(dataDir), cfg); err != nil {
 		return fmt.Errorf("save daemon state: %w", err)
 	}
 	uiOK("Daemon config saved", controlURL)
@@ -227,25 +224,64 @@ func installAgentHooks(agentPath string) error {
 
 func status(args []string) error {
 	fs := flag.NewFlagSet("status", flag.ExitOnError)
+	var requireRunning bool
+	var wait time.Duration
+	var dataDir string
+	fs.StringVar(&dataDir, "data-dir", "", "agent state directory")
+	fs.BoolVar(&requireRunning, "require-running", false, "return an error unless the configured daemon is running")
+	fs.DurationVar(&wait, "wait", 0, "wait up to this duration for the configured daemon to become healthy")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	if wait < 0 {
+		return fmt.Errorf("--wait must not be negative")
+	}
 
-	cfg, err := daemon.LoadConfig("")
+	statePath := daemon.DefaultStatePath()
+	configPath := ""
+	if strings.TrimSpace(dataDir) != "" {
+		statePath = daemon.StatePath(dataDir)
+		configPath = statePath
+	}
+	cfg, err := daemon.LoadConfig(configPath)
 	if err != nil {
 		return fmt.Errorf("load daemon state: %w\nnote: run install first or pass --apikey when starting the daemon", err)
 	}
-	fmt.Print(statusOutput(cfg))
+	running := waitForRuntime(cfg.DaemonID, wait)
+	fmt.Print(statusOutput(cfg, statePath))
+	if running {
+		fmt.Println("runtime=running")
+	} else {
+		fmt.Println("runtime=not_running")
+	}
+	if requireRunning && !running {
+		return ExitError{Code: 1, Message: "configured Gesta Agent runtime is not running"}
+	}
 	return nil
 }
 
-func statusOutput(cfg daemon.Config) string {
+var runtimeHealthy = localactivity.HealthyFor
+
+func waitForRuntime(daemonID string, wait time.Duration) bool {
+	deadline := time.Now().Add(wait)
+	for {
+		if runtimeHealthy(context.Background(), daemonID) {
+			return true
+		}
+		if wait <= 0 || !time.Now().Before(deadline) {
+			return false
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+}
+
+func statusOutput(cfg daemon.Config, statePath string) string {
 	auth := "not_configured"
 	if strings.TrimSpace(cfg.APIKey) != "" {
 		auth = "configured"
 	}
 	return fmt.Sprintf("version=%s\nstate_path=%s\ndaemon_id=%s\nauth=%s\nserver_url=%s\npolicy_version=%s\ndata_dir=%s\n",
-		model.DaemonVersion, daemon.DefaultStatePath(), cfg.DaemonID, auth, cfg.EffectiveServerURL(), cfg.PolicyVersion, cfg.DataDir)
+		model.DaemonVersion, statePath, cfg.DaemonID, auth, cfg.EffectiveServerURL(), cfg.PolicyVersion, cfg.DataDir)
 }
 
 func configForRun(opts options.RunOptions, allowSaved bool) (daemon.Config, error) {
@@ -255,7 +291,11 @@ func configForRun(opts options.RunOptions, allowSaved bool) (daemon.Config, erro
 	}
 	if apiKey == "" {
 		if allowSaved {
-			cfg, err := daemon.LoadConfig("")
+			configPath := ""
+			if strings.TrimSpace(opts.DataDir) != "" {
+				configPath = daemon.StatePath(opts.DataDir)
+			}
+			cfg, err := daemon.LoadConfig(configPath)
 			if err == nil {
 				if opts.ControlURL != "" {
 					cfg.ServerURL = opts.ControlURL
@@ -270,6 +310,9 @@ func configForRun(opts options.RunOptions, allowSaved bool) (daemon.Config, erro
 		return daemon.Config{}, fmt.Errorf("--apikey is required")
 	}
 	cfg := daemon.NewDirectRuntimeConfig(opts.ControlURL, apiKey)
+	if strings.TrimSpace(opts.DataDir) != "" {
+		cfg.DataDir = strings.TrimSpace(opts.DataDir)
+	}
 	if opts.UsageWindow > 0 {
 		cfg.UsageWindow = opts.UsageWindow.String()
 	}
@@ -289,11 +332,11 @@ func usageError() error {
 	return fmt.Errorf(`usage: gesta-agent
 
 Commands:
-  run --control-url http://localhost:8080 --apikey user_api_key
+  run [--data-dir /path/to/state] --control-url http://localhost:8080 --apikey user_api_key
   run --control-url http://localhost:8080 --apikey user_api_key -- <command...>
-  install [--agent-bin /path/to/gesta-agent] --control-url http://localhost:8080 --apikey user_api_key
+  install [--agent-bin /path/to/gesta-agent] [--data-dir /path/to/state] --control-url http://localhost:8080 --apikey user_api_key
   upgrade --url https://.../gesta-agent-darwin-arm64 --target-version 0.0.1-rc22 --checksum-url https://.../SHA256SUMS
-  status
+  status [--data-dir /path/to/state] [--require-running] [--wait 15s]
   version
   guard --agent codex -- <command...>
 

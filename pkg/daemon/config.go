@@ -39,7 +39,15 @@ func DefaultDataDir() string {
 }
 
 func DefaultStatePath() string {
-	return filepath.Join(DefaultDataDir(), "state.json")
+	return StatePath("")
+}
+
+func StatePath(dataDir string) string {
+	dataDir = strings.TrimSpace(dataDir)
+	if dataDir == "" {
+		dataDir = DefaultDataDir()
+	}
+	return filepath.Join(dataDir, "state.json")
 }
 
 func legacyAgentSecConfigPath() string {

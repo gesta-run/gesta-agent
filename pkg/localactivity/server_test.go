@@ -11,7 +11,7 @@ import (
 )
 
 func TestHandlerServesHealthAndSecurityHeaders(t *testing.T) {
-	handler := newHandler(activitydetail.NewStore(t.TempDir()))
+	handler := newHandlerWithDaemonID(activitydetail.NewStore(t.TempDir()), "")
 	request := httptest.NewRequest(http.MethodGet, BaseURL+"/healthz", nil)
 	request.Host = Address
 	response := httptest.NewRecorder()
@@ -31,6 +31,20 @@ func TestHandlerServesHealthAndSecurityHeaders(t *testing.T) {
 		if response.Header().Get(header) == "" {
 			t.Fatalf("missing security header %s", header)
 		}
+	}
+}
+
+func TestHandlerHealthIdentifiesConfiguredDaemon(t *testing.T) {
+	handler := newHandlerWithDaemonID(activitydetail.NewStore(t.TempDir()), "daemon_test")
+	request := httptest.NewRequest(http.MethodGet, BaseURL+"/healthz", nil)
+	request.Host = Address
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("health status = %d", response.Code)
+	}
+	if got := response.Header().Get(daemonHeaderName); got != "daemon_test" {
+		t.Fatalf("daemon header = %q, want daemon_test", got)
 	}
 }
 
@@ -55,7 +69,7 @@ func TestHandlerRendersEscapedActivityDetailWithoutRemoteResources(t *testing.T)
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	handler := newHandler(store)
+	handler := newHandlerWithDaemonID(store, "")
 	request := httptest.NewRequest(http.MethodGet, ActivityURL(detail.ActivityID), nil)
 	request.Host = Address
 	response := httptest.NewRecorder()
@@ -102,7 +116,7 @@ func TestHandlerRendersEscapedActivityDetailWithoutRemoteResources(t *testing.T)
 }
 
 func TestHandlerRendersEmbeddedUnavailablePage(t *testing.T) {
-	handler := newHandler(activitydetail.NewStore(t.TempDir()))
+	handler := newHandlerWithDaemonID(activitydetail.NewStore(t.TempDir()), "")
 	request := httptest.NewRequest(
 		http.MethodGet,
 		BaseURL+"/activity/activity_0123456789abcdef0123456789abcdef",
@@ -130,7 +144,7 @@ func TestHandlerRendersEmbeddedUnavailablePage(t *testing.T) {
 }
 
 func TestHandlerRejectsInvalidHostMethodAndMissingActivity(t *testing.T) {
-	handler := newHandler(activitydetail.NewStore(t.TempDir()))
+	handler := newHandlerWithDaemonID(activitydetail.NewStore(t.TempDir()), "")
 	tests := []struct {
 		name   string
 		method string
@@ -172,7 +186,7 @@ func TestHandlerHeadResponsesHaveNoBody(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	handler := newHandler(store)
+	handler := newHandlerWithDaemonID(store, "")
 	for _, path := range []string{
 		"/activity/" + detail.ActivityID,
 		"/activity/activity_0123456789abcdef0123456789abcdef",

@@ -35,6 +35,27 @@ func (r *Runner) applyUpgradeFromHeartbeat(resp model.HeartbeatResponse) error {
 		)
 		return nil
 	}
+	if !agentupgrade.AutomaticUpgradeSupported() {
+		statePath := filepath.Join(r.cfg.DataDir, "upgrade-state.json")
+		state, _ := agentupgrade.LoadUpgradeState(statePath)
+		unsupportedError := "automatic upgrades are not supported on Windows RC; rerun the current Connect command"
+		if state.State == "unsupported" &&
+			state.TargetVersion == resp.Upgrade.TargetVersion &&
+			state.Error == unsupportedError {
+			return nil
+		}
+		state.Enabled = false
+		state.TargetVersion = resp.Upgrade.TargetVersion
+		state.State = "unsupported"
+		state.Error = unsupportedError
+		state.LastCheckedAt = time.Now().UTC()
+		_ = agentupgrade.SaveUpgradeState(statePath, state)
+		r.logger.Warn("agent auto-upgrade unsupported on this platform",
+			"target_version", resp.Upgrade.TargetVersion,
+			"remediation", "rerun the current Connect command",
+		)
+		return nil
+	}
 	if agentupgrade.AutoUpdateDisabled() {
 		r.logger.Warn("agent auto-upgrade disabled locally",
 			"target_version", resp.Upgrade.TargetVersion,
