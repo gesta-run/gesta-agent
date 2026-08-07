@@ -442,6 +442,26 @@ func TestDaemonRunConfigLoadsSavedConfigWithoutAPIKey(t *testing.T) {
 	}
 }
 
+func TestDaemonRunConfigLoadsSavedConfigFromExplicitDataDir(t *testing.T) {
+	dataDir := t.TempDir()
+	cfg := daemon.NewDirectRuntimeConfig("https://control.example", "dtok_saved_daemon")
+	cfg.DataDir = dataDir
+	if err := daemon.SaveConfig(daemon.StatePath(dataDir), cfg); err != nil {
+		t.Fatalf("SaveConfig: %v", err)
+	}
+
+	loaded, err := configForRun(options.RunOptions{DataDir: dataDir, UsageWindow: time.Minute}, true)
+	if err != nil {
+		t.Fatalf("configForRun: %v", err)
+	}
+	if loaded.Token != "dtok_saved_daemon" {
+		t.Fatalf("api key = %q", loaded.Token)
+	}
+	if loaded.DataDir != dataDir {
+		t.Fatalf("data dir = %q, want %q", loaded.DataDir, dataDir)
+	}
+}
+
 func cfgTime() time.Time {
 	return time.Date(2026, 6, 23, 8, 0, 0, 0, time.UTC)
 }

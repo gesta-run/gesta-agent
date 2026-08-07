@@ -14,7 +14,7 @@ if ! printf '%s\n' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+
 fi
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 repo_root=$(CDPATH= cd -- "$script_dir/.." && pwd)
-targets=${GESTA_AGENT_TARGETS:-"darwin/amd64 darwin/arm64 linux/amd64 linux/arm64"}
+targets=${GESTA_AGENT_TARGETS:-"darwin/amd64 darwin/arm64 linux/amd64 linux/arm64 windows/amd64"}
 
 mkdir -p "$out_dir"
 abs_out_dir=$(CDPATH= cd -- "$out_dir" && pwd)
@@ -23,7 +23,7 @@ for target in $targets; do
   goos=${target%/*}
   goarch=${target#*/}
   case "$goos/$goarch" in
-    darwin/amd64|darwin/arm64|linux/amd64|linux/arm64)
+    darwin/amd64|darwin/arm64|linux/amd64|linux/arm64|windows/amd64)
       ;;
     *)
       printf 'unsupported agent target: %s\n' "$target" >&2
@@ -31,7 +31,11 @@ for target in $targets; do
       ;;
   esac
 
-  out="$abs_out_dir/gesta-agent-$goos-$goarch"
+  suffix=
+  if [ "$goos" = "windows" ]; then
+    suffix=.exe
+  fi
+  out="$abs_out_dir/gesta-agent-$goos-$goarch$suffix"
   printf 'building %s\n' "$out"
   (
     cd "$repo_root"

@@ -89,3 +89,9 @@ func TestDefaultStatePathLivesUnderDefaultDataDir(t *testing.T) {
 		t.Fatalf("default state path mismatch: got %q want %q", got, want)
 	}
 }
+
+func TestStatePathUsesExplicitDataDir(t *testing.T) {
+	if got, want := StatePath(" custom-data "), filepath.Join("custom-data", "state.json"); got != want {
+		t.Fatalf("explicit state path mismatch: got %q want %q", got, want)
+	}
+}

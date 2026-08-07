@@ -54,7 +54,7 @@ func replace(path string, data []byte, sync bool) error {
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("close temporary file for %s: %w", path, err)
 	}
-	if err := os.Rename(tmpPath, path); err != nil {
+	if err := replaceFile(tmpPath, path); err != nil {
 		return fmt.Errorf("replace %s: %w", path, err)
 	}
 	return nil

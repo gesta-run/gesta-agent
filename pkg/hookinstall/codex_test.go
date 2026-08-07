@@ -397,6 +397,14 @@ func TestCodexPolicyHookTrustedHashMatchesCodexCanonicalIdentity(t *testing.T) {
 	}
 }
 
+func TestQuoteCommandPathForWindows(t *testing.T) {
+	got := quoteCommandPath(`C:\Users\Jane Doe\.gesta\bin\gesta-agent.exe`, "windows")
+	want := `"C:\Users\Jane Doe\.gesta\bin\gesta-agent.exe"`
+	if got != want {
+		t.Fatalf("quoteCommandPath = %q, want %q", got, want)
+	}
+}
+
 func TestCodexHooksDisabledDetectsFeatureFlag(t *testing.T) {
 	tmp := t.TempDir()
 	home := filepath.Join(tmp, "home")
