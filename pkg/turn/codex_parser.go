@@ -73,7 +73,7 @@ func completeCodexTurn(session CodexSession, daemonID string, cursor *Cursor, pa
 	active := *cursor.Active
 	cursor.Active = nil
 	delta := active.Latest.Delta(active.Baseline)
-	if !emit || delta.Total() <= 0 {
+	if !emit || delta.BilledTotal() <= 0 {
 		return Usage{}, false
 	}
 	status := "completed"
