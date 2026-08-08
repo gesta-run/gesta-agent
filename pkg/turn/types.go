@@ -8,22 +8,37 @@ import (
 )
 
 const (
-	EventType         = "turn.usage"
-	ClassifierVersion = "turn-v1"
-	cursorFile        = "turn-cursors-v1.json"
+	EventType              = "turn.usage"
+	ClassifierVersion      = "turn-v1"
+	cursorFile             = "turn-cursors-v1.json"
+	TotalEncodingEffective = "effective"
+	TotalEncodingAllTier   = "all_tier"
 )
 
 type Config struct {
-	DataDir  string
-	DaemonID string
+	DataDir        string
+	DaemonID       string
+	TotalEncoding  string
+	OnCounterReset func(CounterReset)
+}
+
+type CounterReset struct {
+	SessionIDHash string
+	TurnIDHash    string
+	Previous      TokenTotals
+	Current       TokenTotals
 }
 
 type CodexSession struct {
-	SessionID     string
-	RolloutPath   string
-	Model         string
-	Repo          string
-	ModelProvider string
+	SessionID             string
+	ParentSessionID       string
+	RolloutPath           string
+	Model                 string
+	Repo                  string
+	ModelProvider         string
+	InheritedTurnIDHashes map[string]struct{}
+	TotalEncoding         string
+	OnCounterReset        func(CounterReset)
 }
 
 type Evidence struct {
@@ -57,11 +72,7 @@ type TokenTotals struct {
 }
 
 func (t TokenTotals) Total() int64 {
-	return nonNegative(t.Input) + nonNegative(t.Output)
-}
-
-func (t TokenTotals) BilledTotal() int64 {
-	return t.Total() + nonNegative(t.CacheRead) + nonNegative(t.CacheWrite)
+	return nonNegative(t.Input) + nonNegative(t.Output) + nonNegative(t.CacheRead) + nonNegative(t.CacheWrite)
 }
 
 func (t TokenTotals) Delta(previous TokenTotals) TokenTotals {
@@ -71,6 +82,13 @@ func (t TokenTotals) Delta(previous TokenTotals) TokenTotals {
 		CacheRead:  nonNegative(t.CacheRead - previous.CacheRead),
 		CacheWrite: nonNegative(t.CacheWrite - previous.CacheWrite),
 	}
+}
+
+func (t TokenTotals) decreasedFrom(previous TokenTotals) bool {
+	return t.Input < previous.Input ||
+		t.Output < previous.Output ||
+		t.CacheRead < previous.CacheRead ||
+		t.CacheWrite < previous.CacheWrite
 }
 
 type Usage struct {
@@ -85,16 +103,21 @@ type Usage struct {
 	ModelProvider string
 	Tokens        TokenTotals
 	WorkType      string
+	TotalEncoding string
 }
 
 func (u Usage) Payload() map[string]interface{} {
+	total := u.Tokens.Total()
+	if u.TotalEncoding == TotalEncodingEffective {
+		total = nonNegative(u.Tokens.Input) + nonNegative(u.Tokens.Output)
+	}
 	payload := map[string]interface{}{
 		"session_id_hash":              u.SessionIDHash,
 		"turn_id_hash":                 u.TurnIDHash,
 		"status":                       u.Status,
 		"started_at":                   u.StartedAt.UTC().Format(time.RFC3339Nano),
 		"ended_at":                     u.EndedAt.UTC().Format(time.RFC3339Nano),
-		"total_tokens":                 u.Tokens.Total(),
+		"total_tokens":                 total,
 		"input_tokens":                 u.Tokens.Input,
 		"output_tokens":                u.Tokens.Output,
 		"cache_read_tokens":            u.Tokens.CacheRead,

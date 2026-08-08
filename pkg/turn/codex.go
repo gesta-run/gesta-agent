@@ -25,8 +25,15 @@ func CollectCodex(cfg Config, sessions []CodexSession, observedAt time.Time) ([]
 	next := cloneCursorStore(store)
 	firstCollection := strings.TrimSpace(store.InitializedAt) == ""
 	initializedAt, _ := time.Parse(time.RFC3339Nano, store.InitializedAt)
+	sessionsByID := make(map[string]CodexSession, len(sessions))
+	for _, session := range sessions {
+		sessionsByID[session.SessionID] = session
+	}
+	inheritedByParent := map[string]map[string]struct{}{}
 	var events []Usage
 	for _, session := range sessions {
+		session.TotalEncoding = cfg.TotalEncoding
+		session.OnCounterReset = cfg.OnCounterReset
 		if strings.TrimSpace(session.SessionID) == "" || strings.TrimSpace(session.RolloutPath) == "" {
 			continue
 		}
@@ -41,10 +48,23 @@ func CollectCodex(cfg Config, sessions []CodexSession, observedAt time.Time) ([]
 			} else if !codexRolloutStartedAtOrAfter(session.RolloutPath, initializedAt) {
 				cursor, err = seedCodexCursor(session.RolloutPath, pathHash, observedAt)
 			} else {
-				cursor = Cursor{RolloutPathHash: pathHash}
-				var collected []Usage
-				cursor, collected, err = scanCodex(session, cfg.DaemonID, cursor, observedAt, true)
-				events = append(events, collected...)
+				if session.ParentSessionID != "" {
+					var parentFound bool
+					session.InheritedTurnIDHashes, parentFound, err = inheritedCodexTurnIDHashes(
+						session.ParentSessionID,
+						sessionsByID,
+						inheritedByParent,
+					)
+					if err == nil && !parentFound {
+						cursor, err = seedCodexCursor(session.RolloutPath, pathHash, observedAt)
+					}
+				}
+				if err == nil && cursor.RolloutPathHash == "" {
+					cursor = Cursor{RolloutPathHash: pathHash}
+					var collected []Usage
+					cursor, collected, err = scanCodex(session, cfg.DaemonID, cursor, observedAt, true)
+					events = append(events, collected...)
+				}
 			}
 		} else {
 			info, statErr := os.Stat(session.RolloutPath)
@@ -69,6 +89,69 @@ func CollectCodex(cfg Config, sessions []CodexSession, observedAt time.Time) ([]
 	}
 	commit := func() error { return saveCursorStore(cfg.DataDir, next) }
 	return events, commit, nil
+}
+
+func inheritedCodexTurnIDHashes(
+	parentSessionID string,
+	sessionsByID map[string]CodexSession,
+	cache map[string]map[string]struct{},
+) (map[string]struct{}, bool, error) {
+	if inherited, ok := cache[parentSessionID]; ok {
+		return inherited, true, nil
+	}
+	parent, ok := sessionsByID[parentSessionID]
+	if !ok || strings.TrimSpace(parent.RolloutPath) == "" {
+		return nil, false, nil
+	}
+	inherited, err := completedCodexTurnIDHashes(parent.RolloutPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, false, nil
+		}
+		return nil, false, err
+	}
+	cache[parentSessionID] = inherited
+	return inherited, true, nil
+}
+
+func completedCodexTurnIDHashes(path string) (map[string]struct{}, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	completed := map[string]struct{}{}
+	reader := bufio.NewReaderSize(file, 64*1024)
+	activeTurnID := ""
+	for {
+		line, readErr := reader.ReadString('\n')
+		if readErr != nil && !errors.Is(readErr, io.EOF) {
+			return nil, readErr
+		}
+		if strings.TrimSpace(line) != "" {
+			var record codexRecord
+			if json.Unmarshal([]byte(line), &record) == nil && record.Type == "event_msg" {
+				switch strings.ToLower(strings.TrimSpace(stringValue(record.Payload, "type"))) {
+				case "task_started":
+					activeTurnID = stringValue(record.Payload, "turn_id")
+				case "task_complete", "turn_aborted":
+					turnID := stringValue(record.Payload, "turn_id")
+					if turnID == "" {
+						turnID = activeTurnID
+					}
+					if turnID != "" && (activeTurnID == "" || turnID == activeTurnID) {
+						completed[util.HashString(turnID)] = struct{}{}
+					}
+					activeTurnID = ""
+				}
+			}
+		}
+		if errors.Is(readErr, io.EOF) {
+			break
+		}
+	}
+	return completed, nil
 }
 
 func codexRolloutStartedAtOrAfter(path string, cutover time.Time) bool {

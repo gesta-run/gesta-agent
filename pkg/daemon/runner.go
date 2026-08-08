@@ -17,6 +17,7 @@ import (
 	"github.com/gesta-run/gesta-agent/pkg/model"
 	"github.com/gesta-run/gesta-agent/pkg/rulecache"
 	"github.com/gesta-run/gesta-agent/pkg/statecleanup"
+	turnusage "github.com/gesta-run/gesta-agent/pkg/turn"
 )
 
 var ErrUpgradeApplied = errors.New("agent upgrade applied")
@@ -47,6 +48,10 @@ func NewRunner(cfg Config) (*Runner, error) {
 		queue:  eventqueue.NewQueue(cfg.DataDir),
 		logger: slog.Default(),
 	}
+	// An older Control does not advertise all-tier turn totals and validates the
+	// legacy effective total. Start in the backward-compatible wire mode; a new
+	// Control upgrades it through the heartbeat capability before collection.
+	runner.cfg.TurnUsageTotal = turnusage.TotalEncodingEffective
 	if removedBytes, err := statecleanup.CleanupDeprecatedState(cfg.DataDir); err != nil {
 		runner.logger.Warn("deprecated local state cleanup failed", "error", err)
 	} else if removedBytes > 0 {
@@ -290,6 +295,10 @@ func (r *Runner) sendHeartbeat(health string, adapters []model.AdapterStatus) (m
 		return model.HeartbeatResponse{}, err
 	}
 	r.cfg.DailyWorkTimezone = strings.TrimSpace(response.DailyWorkTimezone)
+	r.cfg.TurnUsageTotal = strings.TrimSpace(response.TurnUsageTotal)
+	if r.cfg.TurnUsageTotal != turnusage.TotalEncodingAllTier {
+		r.cfg.TurnUsageTotal = turnusage.TotalEncodingEffective
+	}
 	if response.OutputClassification == nil {
 		return response, nil
 	}
