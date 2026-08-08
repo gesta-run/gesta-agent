@@ -21,9 +21,14 @@ func collectCodexStateEvents(ctx context.Context, cfg Config, stateDB string, ob
 
 	var events []model.EventEnvelope
 	var commits []func() error
+	var counterResets []turnusage.CounterReset
 	turnEvents, turnCommit, turnErr := turnusage.CollectCodex(turnusage.Config{
-		DataDir:  cfg.DataDir,
-		DaemonID: cfg.DaemonID,
+		DataDir:       cfg.DataDir,
+		DaemonID:      cfg.DaemonID,
+		TotalEncoding: cfg.TurnUsageTotal,
+		OnCounterReset: func(reset turnusage.CounterReset) {
+			counterResets = append(counterResets, reset)
+		},
 	}, turnSessions, observedAt)
 	if turnErr != nil {
 		events = append(events, snapshotEvent(cfg, "adapter.warning", "codex", "codex", map[string]interface{}{
@@ -41,6 +46,13 @@ func collectCodexStateEvents(ctx context.Context, cfg Config, stateDB string, ob
 		if turnCommit != nil {
 			commits = append(commits, turnCommit)
 		}
+	}
+	for _, reset := range counterResets {
+		events = append(events, snapshotEvent(cfg, "adapter.warning", "codex", "codex", map[string]interface{}{
+			"scope":           "turn_usage_counter_reset",
+			"session_id_hash": reset.SessionIDHash,
+			"turn_id_hash":    reset.TurnIDHash,
+		}))
 	}
 
 	sensitiveRules := codexSensitiveRulesForCollection(cfg)

@@ -22,12 +22,15 @@ func processCodexRecord(session CodexSession, daemonID string, cursor *Cursor, r
 		case "task_started":
 			turnID := stringValue(record.Payload, "turn_id")
 			if turnID != "" {
+				turnIDHash := util.HashString(turnID)
+				_, inherited := session.InheritedTurnIDHashes[turnIDHash]
 				cursor.Active = &activeTurn{
-					TurnIDHash: util.HashString(turnID),
+					TurnIDHash: turnIDHash,
 					StartedAt:  recordedAt,
 					Baseline:   cursor.LastTokens,
 					Latest:     cursor.LastTokens,
 					Scores:     map[string]int{},
+					Inherited:  inherited,
 				}
 			}
 		case "token_count":
@@ -56,6 +59,11 @@ func updateCodexTokenTotals(cursor *Cursor, payload map[string]interface{}) {
 		}
 		return
 	}
+	if cursor.Active != nil && totals.decreasedFrom(cursor.LastTokens) {
+		cursor.Active.CounterReset = true
+		cursor.Active.ResetPrevious = cursor.LastTokens
+		cursor.Active.ResetCurrent = totals
+	}
 	cursor.LastTokens = totals
 	if cursor.Active != nil {
 		cursor.Active.Latest = totals
@@ -72,8 +80,28 @@ func completeCodexTurn(session CodexSession, daemonID string, cursor *Cursor, pa
 	}
 	active := *cursor.Active
 	cursor.Active = nil
+	if active.Inherited {
+		return Usage{}, false
+	}
+	if active.CounterReset || active.Latest.decreasedFrom(active.Baseline) {
+		previous := active.ResetPrevious
+		current := active.ResetCurrent
+		if !active.CounterReset {
+			previous = active.Baseline
+			current = active.Latest
+		}
+		if session.OnCounterReset != nil {
+			session.OnCounterReset(CounterReset{
+				SessionIDHash: session.SessionID,
+				TurnIDHash:    active.TurnIDHash,
+				Previous:      previous,
+				Current:       current,
+			})
+		}
+		return Usage{}, false
+	}
 	delta := active.Latest.Delta(active.Baseline)
-	if !emit || delta.BilledTotal() <= 0 {
+	if !emit || delta.Total() <= 0 {
 		return Usage{}, false
 	}
 	status := "completed"
@@ -92,6 +120,7 @@ func completeCodexTurn(session CodexSession, daemonID string, cursor *Cursor, pa
 		ModelProvider: session.ModelProvider,
 		Tokens:        delta,
 		WorkType:      classify(active.Scores),
+		TotalEncoding: session.TotalEncoding,
 	}, true
 }
 

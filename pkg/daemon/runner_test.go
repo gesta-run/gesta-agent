@@ -14,6 +14,7 @@ import (
 	"github.com/gesta-run/gesta-agent/pkg/eventqueue"
 	"github.com/gesta-run/gesta-agent/pkg/model"
 	"github.com/gesta-run/gesta-agent/pkg/rulecache"
+	turnusage "github.com/gesta-run/gesta-agent/pkg/turn"
 )
 
 func TestFlushWithHeartbeatAppliesUpgradeBeforeFlush(t *testing.T) {
@@ -98,6 +99,7 @@ func TestEnsureRuntimeSettingsSyncsClassificationOnce(t *testing.T) {
 		heartbeats++
 		_ = json.NewEncoder(w).Encode(model.HeartbeatResponse{
 			DailyWorkTimezone: "Asia/Shanghai",
+			TurnUsageTotal:    turnusage.TotalEncodingAllTier,
 			OutputClassification: &model.OutputClassificationSettings{
 				Revision:      5,
 				CodeSuffixes:  []string{".html"},
@@ -130,6 +132,9 @@ func TestEnsureRuntimeSettingsSyncsClassificationOnce(t *testing.T) {
 	}
 	if runner.cfg.DailyWorkTimezone != "Asia/Shanghai" {
 		t.Fatalf("daily work timezone = %q", runner.cfg.DailyWorkTimezone)
+	}
+	if runner.cfg.TurnUsageTotal != turnusage.TotalEncodingAllTier {
+		t.Fatalf("turn usage total encoding = %q", runner.cfg.TurnUsageTotal)
 	}
 	cache, err := rulecache.LoadOutputClassificationCache(dataDir)
 	if err != nil || cache.Revision != 5 {
@@ -179,5 +184,8 @@ func TestHeartbeatWithoutClassificationPreservesLastValidCache(t *testing.T) {
 	}
 	if runner.runtimeSettingsSynced {
 		t.Fatal("runtime settings should remain eligible for retry")
+	}
+	if runner.cfg.TurnUsageTotal != turnusage.TotalEncodingEffective {
+		t.Fatalf("legacy Control encoding = %q, want effective", runner.cfg.TurnUsageTotal)
 	}
 }
