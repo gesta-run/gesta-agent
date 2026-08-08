@@ -29,6 +29,7 @@ type Config struct {
 	DataDir           string `json:"data_dir"`
 	UsageWindow       string `json:"usage_window"`
 	DailyWorkTimezone string `json:"-"`
+	TurnUsageTotal    string `json:"-"`
 }
 
 func DefaultDataDir() string {

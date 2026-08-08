@@ -23,11 +23,15 @@ type Cursor struct {
 }
 
 type activeTurn struct {
-	TurnIDHash string         `json:"turn_id_hash"`
-	StartedAt  time.Time      `json:"started_at"`
-	Baseline   TokenTotals    `json:"baseline"`
-	Latest     TokenTotals    `json:"latest"`
-	Scores     map[string]int `json:"scores"`
+	TurnIDHash    string         `json:"turn_id_hash"`
+	StartedAt     time.Time      `json:"started_at"`
+	Baseline      TokenTotals    `json:"baseline"`
+	Latest        TokenTotals    `json:"latest"`
+	Scores        map[string]int `json:"scores"`
+	Inherited     bool           `json:"inherited,omitempty"`
+	CounterReset  bool           `json:"counter_reset,omitempty"`
+	ResetPrevious TokenTotals    `json:"reset_previous,omitempty"`
+	ResetCurrent  TokenTotals    `json:"reset_current,omitempty"`
 }
 
 func loadCursorStore(dataDir string) (cursorStore, error) {
