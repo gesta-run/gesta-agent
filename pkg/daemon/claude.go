@@ -67,7 +67,7 @@ func claudeEventsFromSessions(
 	var events []model.EventEnvelope
 	var commits []func() error
 	turnEvents, turnCommit, turnErr := turnusage.CollectClaude(turnusage.Config{
-		DataDir: cfg.DataDir, DaemonID: cfg.DaemonID,
+		DataDir: cfg.DataDir, DaemonID: cfg.DaemonID, TotalEncoding: cfg.TurnUsageTotal,
 	}, claudeTurnSessions(sessions), observedAt)
 	if turnErr != nil {
 		events = append(events, snapshotEvent(cfg, "adapter.warning", claudeCodeUsageSource, claudeCodeAgentType, map[string]interface{}{

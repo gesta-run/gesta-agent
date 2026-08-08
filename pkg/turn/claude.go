@@ -59,7 +59,7 @@ func CollectClaude(cfg Config, sessions []ClaudeSession, observedAt time.Time) (
 		})
 		for _, turn := range session.Turns {
 			turnIDHash := util.HashString(strings.TrimSpace(turn.TurnID))
-			if turn.TurnID == "" || turn.Tokens.BilledTotal() <= 0 || turn.StartedAt.IsZero() || turn.EndedAt.Before(turn.StartedAt) {
+			if turn.TurnID == "" || turn.Tokens.Total() <= 0 || turn.StartedAt.IsZero() || turn.EndedAt.Before(turn.StartedAt) {
 				continue
 			}
 			if !claudeTurnAfterCursor(cursor, turn.EndedAt, turnIDHash) {
@@ -82,6 +82,7 @@ func CollectClaude(cfg Config, sessions []ClaudeSession, observedAt time.Time) (
 					ModelProvider: turn.ModelProvider,
 					Tokens:        turn.Tokens,
 					WorkType:      classifyEvidence(turn.Evidence),
+					TotalEncoding: cfg.TotalEncoding,
 				})
 			}
 			advanceClaudeCursor(&cursor, turn.EndedAt, turnIDHash)

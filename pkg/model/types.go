@@ -55,6 +55,7 @@ type HeartbeatResponse struct {
 	Upgrade              *AgentUpgradePolicy           `json:"upgrade,omitempty"`
 	OutputClassification *OutputClassificationSettings `json:"output_classification,omitempty"`
 	DailyWorkTimezone    string                        `json:"daily_work_timezone,omitempty"`
+	TurnUsageTotal       string                        `json:"turn_usage_total,omitempty"`
 }
 
 type OutputClassificationSettings struct {

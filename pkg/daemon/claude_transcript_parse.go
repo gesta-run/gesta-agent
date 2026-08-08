@@ -120,8 +120,14 @@ func (a *claudeTranscriptAccumulator) add(record claudeTranscriptRecord) {
 	}
 	if role == "assistant" {
 		usage, added := a.addAssistantUsage(record)
-		if added && !record.IsSidechain {
-			a.addClaudeAssistantTurnUsage(record, usage)
+		if added {
+			assigned := false
+			if !record.IsMeta && !record.IsSidechain {
+				assigned = a.addClaudeAssistantTurnUsage(record, usage)
+			}
+			if !assigned {
+				a.addClaudeInternalTurnUsage(record, usage)
+			}
 		}
 	}
 }
@@ -226,13 +232,13 @@ func (a *claudeTranscriptAccumulator) startClaudeTurn(record claudeTranscriptRec
 	}
 }
 
-func (a *claudeTranscriptAccumulator) addClaudeAssistantTurnUsage(record claudeTranscriptRecord, usage claudeAssistantUsage) {
+func (a *claudeTranscriptAccumulator) addClaudeAssistantTurnUsage(record claudeTranscriptRecord, usage claudeAssistantUsage) bool {
 	endedAt, hasTime := parseClaudeTimestamp(record.Timestamp)
 	if !hasTime {
-		return
+		return false
 	}
 	if a.activeTurn == nil {
-		return
+		return false
 	}
 	a.activeTurn.EndedAt = endedAt
 	a.activeTurn.Model = strings.TrimSpace(record.Message.Model)
@@ -241,6 +247,37 @@ func (a *claudeTranscriptAccumulator) addClaudeAssistantTurnUsage(record claudeT
 	if !claudeAssistantContinues(record.Message.StopReason, record.Message.Content) {
 		a.finishClaudeTurn("completed")
 	}
+	return true
+}
+
+func (a *claudeTranscriptAccumulator) addClaudeInternalTurnUsage(record claudeTranscriptRecord, usage claudeAssistantUsage) {
+	observedAt, ok := parseClaudeTimestamp(record.Timestamp)
+	if !ok {
+		return
+	}
+	identity := strings.TrimSpace(record.Message.ID)
+	if identity == "" {
+		identity = strings.TrimSpace(record.UUID)
+	}
+	if identity == "" {
+		identity = util.HashString(strings.Join([]string{
+			record.SessionID,
+			record.Timestamp,
+			record.Message.Model,
+			strconv.FormatInt(usage.InputTokens, 10),
+			strconv.FormatInt(usage.OutputTokens, 10),
+			strconv.FormatInt(usage.CacheCreationTokens, 10),
+			strconv.FormatInt(usage.CacheReadTokens, 10),
+		}, "\x00"))
+	}
+	a.session.Turns = append(a.session.Turns, claudeTurnUsage{
+		TurnID:    "internal:" + identity,
+		Status:    "completed",
+		StartedAt: observedAt,
+		EndedAt:   observedAt,
+		Model:     strings.TrimSpace(record.Message.Model),
+		Usage:     usage,
+	})
 }
 
 func (a *claudeTranscriptAccumulator) finishClaudeTurn(status string) {
