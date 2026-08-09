@@ -32,6 +32,8 @@ func Run(ctx context.Context, args []string) error {
 		return version(args[1:])
 	case "upgrade":
 		return upgrade(args[1:])
+	case agentupgrade.HelperCommand:
+		return agentupgrade.RunUpgradeHelper(args[1:])
 	case "guard":
 		return guard(ctx, args[1:])
 	case "codex-hook":
@@ -152,7 +154,11 @@ func upgrade(args []string) error {
 	if err := agentupgrade.ApplyAgentUpgradeToPath(context.Background(), policy, targetPath); err != nil {
 		return err
 	}
-	uiOK("Agent upgraded", policy.TargetVersion)
+	if agentupgrade.UpgradeCompletesAfterExit() {
+		uiOK("Agent upgrade staged", policy.TargetVersion)
+	} else {
+		uiOK("Agent upgraded", policy.TargetVersion)
+	}
 	return nil
 }
 

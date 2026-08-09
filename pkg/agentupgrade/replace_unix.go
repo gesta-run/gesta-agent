@@ -8,7 +8,7 @@ import (
 	"syscall"
 )
 
-func replaceAgentBinary(tmpPath, targetPath string) error {
+func replaceAgentBinary(tmpPath, targetPath string, _ replacementOptions) error {
 	info, err := os.Stat(targetPath)
 	if err != nil {
 		return fmt.Errorf("stat current agent binary: %w", err)
@@ -36,6 +36,6 @@ func replaceAgentBinary(tmpPath, targetPath string) error {
 	return os.Chmod(targetPath, mode|0o111)
 }
 
-func AutomaticUpgradeSupported() bool {
-	return true
+func UpgradeCompletesAfterExit() bool {
+	return false
 }
