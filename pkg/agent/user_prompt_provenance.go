@@ -105,7 +105,7 @@ func scanCodexUserPrompt(data []byte, turnID, userPrompt string) (codexPromptSta
 			continue
 		}
 
-		if record.Type == "event_msg" && record.Payload.Type == "task_started" {
+		if codexTranscriptTurnStart(record) {
 			if record.Payload.TurnID == turnID {
 				state.turnFound = true
 				continue
@@ -135,6 +135,11 @@ func scanCodexUserPrompt(data []byte, turnID, userPrompt string) (codexPromptSta
 		return codexPromptState{}, fmt.Errorf("scan Codex transcript: %w", err)
 	}
 	return state, nil
+}
+
+func codexTranscriptTurnStart(record codexTranscriptRecord) bool {
+	return record.Type == "turn_context" ||
+		(record.Type == "event_msg" && record.Payload.Type == "task_started")
 }
 
 type codexTranscriptRecord struct {

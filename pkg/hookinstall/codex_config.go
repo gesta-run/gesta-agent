@@ -14,11 +14,12 @@ type codexHookGroup struct {
 }
 
 type codexHookCommand struct {
-	Type          string
-	Command       string
-	Timeout       int
-	StatusMessage string
-	Extra         map[string]json.RawMessage
+	Type           string
+	Command        string
+	CommandWindows string
+	Timeout        int
+	StatusMessage  string
+	Extra          map[string]json.RawMessage
 }
 
 func (value *codexHooksFile) UnmarshalJSON(data []byte) error {
@@ -94,6 +95,7 @@ func (value *codexHookCommand) UnmarshalJSON(data []byte) error {
 	}{
 		{name: "type", target: &value.Type},
 		{name: "command", target: &value.Command},
+		{name: "commandWindows", target: &value.CommandWindows},
 		{name: "timeout", target: &value.Timeout},
 		{name: "statusMessage", target: &value.StatusMessage},
 	}
@@ -118,6 +120,11 @@ func (value codexHookCommand) MarshalJSON() ([]byte, error) {
 	}
 	if value.Command != "" {
 		if err := setRawField(raw, "command", value.Command); err != nil {
+			return nil, err
+		}
+	}
+	if value.CommandWindows != "" {
+		if err := setRawField(raw, "commandWindows", value.CommandWindows); err != nil {
 			return nil, err
 		}
 	}

@@ -48,6 +48,25 @@ func TestAcquireNonWaitingCallerReturnsExists(t *testing.T) {
 	}
 }
 
+func TestAcquireCanReacquireImmediatelyAfterUnlock(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "store.lock")
+	options := testOptions()
+	unlockFirst, err := Acquire(path, true, options)
+	if err != nil {
+		t.Fatalf("first Acquire: %v", err)
+	}
+	unlockFirst()
+
+	unlockSecond, err := Acquire(path, false, options)
+	if err != nil {
+		t.Fatalf("second Acquire: %v", err)
+	}
+	unlockSecond()
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("lock stat error = %v, want not exist", err)
+	}
+}
+
 func TestAcquirePreservesWaitDeadline(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "store.lock")
 	options := testOptions()
