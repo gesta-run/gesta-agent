@@ -7,3 +7,5 @@ gesta-agent
 gesta-daemon
 *.log
 .DS_Store
+.toolchain/
+work-go*.zip

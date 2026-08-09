@@ -113,6 +113,7 @@ func codexTurnSession(row, usagePayload map[string]interface{}) (turnusage.Codex
 		SessionID:       firstString(usagePayload, "session_id_hash", "session_id"),
 		ParentSessionID: firstString(usagePayload, "parent_session_id_hash", "parent_session_id"),
 		RolloutPath:     firstString(row, "rollout_path"),
+		Title:           firstString(usagePayload, "title", "session_title", "conversation_title", "thread_title"),
 		Model:           firstString(row, "model", "model_name", "model_id"),
 		Repo:            firstString(usagePayload, "repo", "repo_path_hash", "cwd_hash", "source_hash", "workspace_hash"),
 		ModelProvider:   firstString(row, "model_provider"),

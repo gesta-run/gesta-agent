@@ -17,6 +17,7 @@ type cursorStore struct {
 type Cursor struct {
 	RolloutPathHash  string      `json:"rollout_path_hash"`
 	Offset           int64       `json:"offset"`
+	Model            string      `json:"model,omitempty"`
 	LastTokens       TokenTotals `json:"last_tokens"`
 	AwaitingBaseline bool        `json:"awaiting_baseline,omitempty"`
 	Active           *activeTurn `json:"active,omitempty"`
