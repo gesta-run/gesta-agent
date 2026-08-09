@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gesta-run/gesta-agent/pkg/codexapp"
 	"github.com/gesta-run/gesta-agent/pkg/model"
 	"github.com/gesta-run/gesta-agent/pkg/privacy"
 	"github.com/gesta-run/gesta-agent/pkg/util"
@@ -34,7 +35,8 @@ func (a CodexAdapter) Collect(ctx context.Context, cfg Config) (AdapterResult, [
 	now := observedAt.Format(time.RFC3339)
 	path := codexBinaryPath()
 	stateDB := latestCodexStateDB()
-	if path == "" && stateDB == "" {
+	sessionsPresent := codexSessionsPresent(defaultCodexSessionsRoot())
+	if path == "" && stateDB == "" && !sessionsPresent {
 		return AdapterResult{Status: model.AdapterStatus{
 			Name: a.Name(), Detected: false, Status: "not_found", UpdatedAt: now,
 			MCPInventory: unsupportedMCPInventory(observedAt),
@@ -44,8 +46,10 @@ func (a CodexAdapter) Collect(ctx context.Context, cfg Config) (AdapterResult, [
 	version := ""
 	if path != "" {
 		version = safeVersion(ctx, path, "--version")
-	} else {
+	} else if stateDB != "" {
 		statusText = "state_db_only"
+	} else {
+		statusText = "transcript_only"
 	}
 	status := model.AdapterStatus{
 		Name: a.Name(), Detected: true, Version: version, Status: statusText, UpdatedAt: now,
@@ -60,9 +64,12 @@ func (a CodexAdapter) Collect(ctx context.Context, cfg Config) (AdapterResult, [
 	if path != "" {
 		discovery["binary_path_hash"] = util.ShortHash(path)
 		discovery["binary_found"] = true
-	} else {
+	} else if stateDB != "" {
 		discovery["binary_found"] = false
 		discovery["state_db_hash"] = util.ShortHash(stateDB)
+	} else {
+		discovery["binary_found"] = false
+		discovery["transcript_sessions_found"] = true
 	}
 	events = append(events, snapshotEvent(cfg, "agent.discovery", "daemon", "codex", discovery))
 
@@ -75,15 +82,21 @@ func (a CodexAdapter) Collect(ctx context.Context, cfg Config) (AdapterResult, [
 		}
 	}
 
-	if stateDB != "" {
-		stateEvents, stateCommits := collectCodexStateEvents(ctx, cfg, stateDB, observedAt)
-		events = append(events, stateEvents...)
-		commits = append(commits, stateCommits...)
-	}
+	stateEvents, stateCommits := collectCodexStateEvents(ctx, cfg, stateDB, observedAt)
+	events = append(events, stateEvents...)
+	commits = append(commits, stateCommits...)
 	return AdapterResult{Status: status, Commit: combineAdapterCommits(commits)}, events
 }
 
+func codexSessionsPresent(root string) bool {
+	info, err := os.Stat(root)
+	return err == nil && info.IsDir()
+}
+
 func codexBinaryPath() string {
+	if path, err := codexapp.PrepareExecutable(); err == nil && path != "" {
+		return path
+	}
 	return codexBinaryPathWithCandidates(defaultCodexBinaryCandidates())
 }
 

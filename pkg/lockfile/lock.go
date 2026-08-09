@@ -62,11 +62,13 @@ func Acquire(path string, wait bool, options Options) (func(), error) {
 			var once sync.Once
 			unlock := func() {
 				once.Do(func() {
+					// Windows cannot remove an open file. Close our handle before
+					// checking that the path still names the lock we created.
+					_ = lock.Close()
 					currentInfo, currentErr := os.Stat(path)
 					if currentErr == nil && os.SameFile(createdInfo, currentInfo) {
 						_ = os.Remove(path)
 					}
-					_ = lock.Close()
 					releaseProcessLock()
 				})
 			}

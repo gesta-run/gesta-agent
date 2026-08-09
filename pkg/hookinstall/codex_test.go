@@ -397,11 +397,78 @@ func TestCodexPolicyHookTrustedHashMatchesCodexCanonicalIdentity(t *testing.T) {
 	}
 }
 
+func TestCodexPolicyHookTrustedHashDoesNotHTMLEscapeWindowsCallOperator(t *testing.T) {
+	command := `& 'C:\Users\jwces\.gesta\bin\gesta-agent.exe' codex-hook`
+	want := "sha256:0212d7125b45c7a60d3e1a39ffeb1cb462fbccdc33a62d0f50053b55e33b1666"
+	if got := codexHookTrustedHash("pre_tool_use", command, "*"); got != want {
+		t.Fatalf("trusted hash = %s, want %s", got, want)
+	}
+}
+
 func TestQuoteCommandPathForWindows(t *testing.T) {
 	got := quoteCommandPath(`C:\Users\Jane Doe\.gesta\bin\gesta-agent.exe`, "windows")
 	want := `"C:\Users\Jane Doe\.gesta\bin\gesta-agent.exe"`
 	if got != want {
 		t.Fatalf("quoteCommandPath = %q, want %q", got, want)
+	}
+}
+
+func TestCodexHookCommandsForWindows(t *testing.T) {
+	agentPath := `C:\Users\Jane O'Brien\.gesta\bin\gesta-agent.exe`
+	command, commandWindows, trustedCommand := codexHookCommands(agentPath, "windows")
+	if want := `"C:\Users\Jane O'Brien\.gesta\bin\gesta-agent.exe" codex-hook`; command != want {
+		t.Fatalf("command = %q, want %q", command, want)
+	}
+	if want := `& 'C:\Users\Jane O''Brien\.gesta\bin\gesta-agent.exe' codex-hook`; commandWindows != want {
+		t.Fatalf("commandWindows = %q, want %q", commandWindows, want)
+	}
+	if trustedCommand != commandWindows {
+		t.Fatalf("trusted command = %q, want Windows command %q", trustedCommand, commandWindows)
+	}
+}
+
+func TestCodexHookGroupRunsGestaWithWindowsCommandOnly(t *testing.T) {
+	group := codexHookGroup{Hooks: []codexHookCommand{{
+		Type:           "command",
+		CommandWindows: `& 'C:\gesta-agent.exe' codex-hook`,
+	}}}
+	if !codexHookGroupRunsGesta(group) {
+		t.Fatal("Windows-only GESTA hook was not recognized")
+	}
+}
+
+func TestCodexHookCommandsForUnixPreserveExistingFormat(t *testing.T) {
+	agentPath := `/opt/gesta agent/gesta-agent`
+	command, commandWindows, trustedCommand := codexHookCommands(agentPath, "linux")
+	if want := `'/opt/gesta agent/gesta-agent' codex-hook`; command != want {
+		t.Fatalf("command = %q, want %q", command, want)
+	}
+	if commandWindows != "" {
+		t.Fatalf("commandWindows = %q, want empty", commandWindows)
+	}
+	if trustedCommand != command {
+		t.Fatalf("trusted command = %q, want command %q", trustedCommand, command)
+	}
+}
+
+func TestCodexHookCommandJSONRoundTripPreservesWindowsCommand(t *testing.T) {
+	want := codexHookCommand{
+		Type:           "command",
+		Command:        `"C:\gesta-agent.exe" codex-hook`,
+		CommandWindows: `& 'C:\gesta-agent.exe' codex-hook`,
+		Timeout:        30,
+		StatusMessage:  gestaCodexHookStatus,
+	}
+	data, err := json.Marshal(want)
+	if err != nil {
+		t.Fatalf("marshal hook command: %v", err)
+	}
+	var got codexHookCommand
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("unmarshal hook command: %v", err)
+	}
+	if got.Type != want.Type || got.Command != want.Command || got.CommandWindows != want.CommandWindows || got.Timeout != want.Timeout || got.StatusMessage != want.StatusMessage {
+		t.Fatalf("round trip = %#v, want %#v", got, want)
 	}
 }
 

@@ -21,6 +21,28 @@ func TestVerifyUserPromptSubmissionMatchesPersistedCodexMessage(t *testing.T) {
 	}
 }
 
+func TestVerifyUserPromptSubmissionSupportsTurnContextAndLegacyTaskStarted(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		turnStart string
+	}{
+		{name: "turn context", turnStart: `{"type":"turn_context","payload":{"turn_id":"turn-real"}}`},
+		{name: "legacy task started", turnStart: `{"type":"event_msg","payload":{"type":"task_started","turn_id":"turn-real"}}`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			transcriptPath := writeCodexTranscript(t,
+				test.turnStart,
+				`{"type":"event_msg","payload":{"type":"user_message","message":"hello"}}`,
+			)
+			event := agentHookEvent{TranscriptPath: transcriptPath, TurnID: "turn-real"}
+
+			if err := verifyUserPromptSubmission(context.Background(), event, "codex", "hello"); err != nil {
+				t.Fatalf("verify persisted prompt: %v", err)
+			}
+		})
+	}
+}
+
 func TestVerifyUserPromptSubmissionRejectsSyntheticPayloadForRealTurn(t *testing.T) {
 	transcriptPath := writeCodexTranscript(t,
 		`{"type":"event_msg","payload":{"type":"task_started","turn_id":"turn-real"}}`,
