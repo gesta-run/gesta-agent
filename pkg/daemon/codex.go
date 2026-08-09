@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -94,10 +95,16 @@ func codexSessionsPresent(root string) bool {
 }
 
 func codexBinaryPath() string {
-	if path, err := codexapp.PrepareExecutable(); err == nil && path != "" {
-		return path
+	return codexBinaryPathForOS(runtime.GOOS, codexapp.PrepareExecutable, defaultCodexBinaryCandidates())
+}
+
+func codexBinaryPathForOS(goos string, prepareExecutable func() (string, error), candidates []string) string {
+	if goos == "windows" {
+		if path, err := prepareExecutable(); err == nil && path != "" {
+			return path
+		}
 	}
-	return codexBinaryPathWithCandidates(defaultCodexBinaryCandidates())
+	return codexBinaryPathWithCandidates(candidates)
 }
 
 func codexBinaryPathWithCandidates(candidates []string) string {
