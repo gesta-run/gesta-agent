@@ -58,6 +58,22 @@ func TestCodexBinaryPathPreservesNonWindowsPATHPreference(t *testing.T) {
 	}
 }
 
+func TestCodexBinaryPathHonorsExplicitNonWindowsBinary(t *testing.T) {
+	t.Setenv("GESTA_CODEX_BIN", "/custom/codex")
+	t.Setenv("CODEX_BIN", "")
+	prepareCalled := false
+	got := codexBinaryPathForOS("darwin", func() (string, error) {
+		prepareCalled = true
+		return "/custom/codex", nil
+	}, []string{"/Applications/Codex.app/Contents/Resources/codex"})
+	if !prepareCalled {
+		t.Fatal("explicit non-Windows Codex binary was ignored")
+	}
+	if got != "/custom/codex" {
+		t.Fatalf("codex binary path = %q, want explicit binary", got)
+	}
+}
+
 func TestCollectCodexRowsDiscoversTurnsBeyondTranscriptLimit(t *testing.T) {
 	var rows []map[string]interface{}
 	for index := 0; index < codexMaxTranscriptRows+1; index++ {

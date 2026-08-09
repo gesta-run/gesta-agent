@@ -99,12 +99,17 @@ func codexBinaryPath() string {
 }
 
 func codexBinaryPathForOS(goos string, prepareExecutable func() (string, error), candidates []string) string {
-	if goos == "windows" {
+	if goos == "windows" || explicitCodexBinaryConfigured() {
 		if path, err := prepareExecutable(); err == nil && path != "" {
 			return path
 		}
 	}
 	return codexBinaryPathWithCandidates(candidates)
+}
+
+func explicitCodexBinaryConfigured() bool {
+	return strings.TrimSpace(os.Getenv("GESTA_CODEX_BIN")) != "" ||
+		strings.TrimSpace(os.Getenv("CODEX_BIN")) != ""
 }
 
 func codexBinaryPathWithCandidates(candidates []string) string {
