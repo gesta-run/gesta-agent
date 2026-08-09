@@ -4,11 +4,15 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 )
 
 func TestStaleLockOwnerCannotRemoveReplacementLock(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows cannot replace a lock file while its owner still has it open")
+	}
 	lockPath := filepath.Join(t.TempDir(), "receipt.lock")
 	unlockFirst, err := acquireReceiptLock(lockPath, true)
 	if err != nil {

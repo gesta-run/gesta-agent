@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -27,6 +28,49 @@ func TestCodexBinaryPathUsesBundledCandidateWhenPATHMisses(t *testing.T) {
 
 	if got := codexBinaryPathWithCandidates([]string{filepath.Join(t.TempDir(), "missing"), binPath}); got != binPath {
 		t.Fatalf("codex binary path = %q, want %q", got, binPath)
+	}
+}
+
+func TestCodexBinaryPathPreservesNonWindowsPATHPreference(t *testing.T) {
+	directory := t.TempDir()
+	name := "codex"
+	contents := "#!/bin/sh\nexit 0\n"
+	if runtime.GOOS == "windows" {
+		name = "codex.cmd"
+		contents = "@exit /b 0\r\n"
+		t.Setenv("PATHEXT", ".CMD")
+	}
+	path := filepath.Join(directory, name)
+	if err := os.WriteFile(path, []byte(contents), 0o700); err != nil {
+		t.Fatalf("write PATH codex: %v", err)
+	}
+	t.Setenv("PATH", directory)
+	prepareCalled := false
+	got := codexBinaryPathForOS("darwin", func() (string, error) {
+		prepareCalled = true
+		return filepath.Join(t.TempDir(), "bundled-codex"), nil
+	}, nil)
+	if prepareCalled {
+		t.Fatal("non-Windows lookup used Windows executable preparation")
+	}
+	if got != path {
+		t.Fatalf("codex binary path = %q, want PATH candidate %q", got, path)
+	}
+}
+
+func TestCodexBinaryPathHonorsExplicitNonWindowsBinary(t *testing.T) {
+	t.Setenv("GESTA_CODEX_BIN", "/custom/codex")
+	t.Setenv("CODEX_BIN", "")
+	prepareCalled := false
+	got := codexBinaryPathForOS("darwin", func() (string, error) {
+		prepareCalled = true
+		return "/custom/codex", nil
+	}, []string{"/Applications/Codex.app/Contents/Resources/codex"})
+	if !prepareCalled {
+		t.Fatal("explicit non-Windows Codex binary was ignored")
+	}
+	if got != "/custom/codex" {
+		t.Fatalf("codex binary path = %q, want explicit binary", got)
 	}
 }
 

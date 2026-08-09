@@ -133,6 +133,72 @@ func TestCollectCodexSuppressesTierReclassification(t *testing.T) {
 	}
 }
 
+func TestCollectCodexSupportsTurnContextAndLegacyTaskStarted(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		turnStart string
+	}{
+		{name: "turn context", turnStart: `{"timestamp":"2026-08-04T00:01:00Z","type":"turn_context","payload":{"turn_id":"turn"}}`},
+		{name: "legacy task started", turnStart: turnLine("2026-08-04T00:01:00Z", "task_started", "turn")},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			dataDir := t.TempDir()
+			rollout := filepath.Join(t.TempDir(), "rollout.jsonl")
+			writeLines(t, rollout, []string{tokenLine("2026-08-04T00:00:00Z", 100, 20, 20, 0)})
+			session := CodexSession{SessionID: "session-hash", RolloutPath: rollout}
+			_, commit, err := CollectCodex(Config{DataDir: dataDir, DaemonID: "daemon"}, []CodexSession{session}, time.Now())
+			if err != nil {
+				t.Fatalf("initialize collector: %v", err)
+			}
+			if err := commit(); err != nil {
+				t.Fatalf("commit initialization: %v", err)
+			}
+
+			appendLines(t, rollout, []string{
+				test.turnStart,
+				tokenLine("2026-08-04T00:01:01Z", 130, 30, 20, 0),
+				turnLine("2026-08-04T00:01:02Z", "task_complete", "turn"),
+			})
+			events, _, err := CollectCodex(Config{DataDir: dataDir, DaemonID: "daemon"}, []CodexSession{session}, time.Now())
+			if err != nil || len(events) != 1 {
+				t.Fatalf("events=%d err=%v, want one", len(events), err)
+			}
+			if events[0].Tokens.Total() != 40 {
+				t.Fatalf("tokens=%+v, want 40 total", events[0].Tokens)
+			}
+		})
+	}
+}
+
+func TestCollectCodexDoesNotResetTurnForDuplicateStartFormats(t *testing.T) {
+	cursor := Cursor{LastTokens: TokenTotals{Input: 10}}
+	startedAt := time.Date(2026, 8, 4, 0, 1, 0, 0, time.UTC)
+	startCodexTurn(&cursor, "turn", startedAt)
+	cursor.LastTokens = TokenTotals{Input: 30}
+	startCodexTurn(&cursor, "turn", startedAt.Add(time.Second))
+
+	if cursor.Active == nil || cursor.Active.Baseline.Input != 10 || !cursor.Active.StartedAt.Equal(startedAt) {
+		t.Fatalf("duplicate start reset active turn: %+v", cursor.Active)
+	}
+}
+
+func TestCodexTurnContextModelOverridesSessionMetadata(t *testing.T) {
+	cursor := Cursor{}
+	now := time.Date(2026, 8, 4, 0, 1, 0, 0, time.UTC)
+	processCodexRecord(CodexSession{}, "daemon", &cursor, codexRecord{
+		Timestamp: now.Format(time.RFC3339Nano),
+		Type:      "turn_context",
+		Payload:   map[string]interface{}{"turn_id": "turn", "model": "gpt-5.6-sol"},
+	}, now, true)
+	updateCodexTokenTotals(&cursor, map[string]interface{}{"info": map[string]interface{}{
+		"total_token_usage": map[string]interface{}{"input_tokens": 10, "output_tokens": 2},
+	}})
+	usage, ok := completeCodexTurn(CodexSession{SessionID: "session", Model: "old-model"}, "daemon", &cursor, map[string]interface{}{"turn_id": "turn"}, "task_complete", now.Add(time.Second), true)
+	if !ok || usage.Model != "gpt-5.6-sol" {
+		t.Fatalf("usage = %+v, emitted = %v", usage, ok)
+	}
+}
+
 func TestCollectCodexKeepsTurnsFromMultipleNewSessions(t *testing.T) {
 	dataDir := t.TempDir()
 	cutover := time.Date(2026, 8, 4, 0, 0, 0, 0, time.UTC)

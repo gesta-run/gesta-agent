@@ -33,6 +33,7 @@ type CodexSession struct {
 	SessionID             string
 	ParentSessionID       string
 	RolloutPath           string
+	Title                 string
 	Model                 string
 	Repo                  string
 	ModelProvider         string
@@ -96,6 +97,7 @@ type Usage struct {
 	SessionIDHash string
 	TurnIDHash    string
 	Status        string
+	Title         string
 	StartedAt     time.Time
 	EndedAt       time.Time
 	Model         string
@@ -127,6 +129,9 @@ func (u Usage) Payload() map[string]interface{} {
 	}
 	if u.Model != "" {
 		payload["model"] = u.Model
+	}
+	if u.Title != "" {
+		payload["title"] = u.Title
 	}
 	if u.Repo != "" {
 		payload["repo"] = u.Repo

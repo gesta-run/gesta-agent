@@ -17,22 +17,16 @@ type codexRecord struct {
 func processCodexRecord(session CodexSession, daemonID string, cursor *Cursor, record codexRecord, observedAt time.Time, emit bool) (Usage, bool) {
 	payloadType := strings.ToLower(strings.TrimSpace(stringValue(record.Payload, "type")))
 	recordedAt := parseTime(record.Timestamp, observedAt)
+	if record.Type == "turn_context" {
+		if model := stringValue(record.Payload, "model"); model != "" {
+			cursor.Model = model
+		}
+		startCodexTurn(cursor, stringValue(record.Payload, "turn_id"), recordedAt, session.InheritedTurnIDHashes)
+	}
 	if record.Type == "event_msg" {
 		switch payloadType {
 		case "task_started":
-			turnID := stringValue(record.Payload, "turn_id")
-			if turnID != "" {
-				turnIDHash := util.HashString(turnID)
-				_, inherited := session.InheritedTurnIDHashes[turnIDHash]
-				cursor.Active = &activeTurn{
-					TurnIDHash: turnIDHash,
-					StartedAt:  recordedAt,
-					Baseline:   cursor.LastTokens,
-					Latest:     cursor.LastTokens,
-					Scores:     map[string]int{},
-					Inherited:  inherited,
-				}
-			}
+			startCodexTurn(cursor, stringValue(record.Payload, "turn_id"), recordedAt, session.InheritedTurnIDHashes)
 		case "token_count":
 			updateCodexTokenTotals(cursor, record.Payload)
 		case "task_complete", "turn_aborted":
@@ -43,6 +37,28 @@ func processCodexRecord(session CodexSession, daemonID string, cursor *Cursor, r
 		scoreCodexRecord(cursor.Active.Scores, record, payloadType)
 	}
 	return Usage{}, false
+}
+
+func startCodexTurn(cursor *Cursor, turnID string, startedAt time.Time, inheritedTurnIDHashes ...map[string]struct{}) {
+	if turnID == "" {
+		return
+	}
+	turnIDHash := util.HashString(turnID)
+	if cursor.Active != nil && cursor.Active.TurnIDHash == turnIDHash {
+		return
+	}
+	inherited := false
+	if len(inheritedTurnIDHashes) > 0 {
+		_, inherited = inheritedTurnIDHashes[0][turnIDHash]
+	}
+	cursor.Active = &activeTurn{
+		TurnIDHash: turnIDHash,
+		StartedAt:  startedAt,
+		Baseline:   cursor.LastTokens,
+		Latest:     cursor.LastTokens,
+		Scores:     map[string]int{},
+		Inherited:  inherited,
+	}
 }
 
 func updateCodexTokenTotals(cursor *Cursor, payload map[string]interface{}) {
@@ -113,15 +129,25 @@ func completeCodexTurn(session CodexSession, daemonID string, cursor *Cursor, pa
 		SessionIDHash: session.SessionID,
 		TurnIDHash:    active.TurnIDHash,
 		Status:        status,
+		Title:         session.Title,
 		StartedAt:     active.StartedAt,
 		EndedAt:       endedAt,
-		Model:         session.Model,
+		Model:         firstCodexModel(cursor.Model, session.Model),
 		Repo:          session.Repo,
 		ModelProvider: session.ModelProvider,
 		Tokens:        delta,
 		WorkType:      classify(active.Scores),
 		TotalEncoding: session.TotalEncoding,
 	}, true
+}
+
+func firstCodexModel(values ...string) string {
+	for _, value := range values {
+		if value = strings.TrimSpace(value); value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func codexTokenTotals(payload map[string]interface{}) (TokenTotals, bool) {
