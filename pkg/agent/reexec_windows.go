@@ -2,8 +2,8 @@
 
 package agent
 
-import "errors"
-
 func reexecAgent() error {
-	return errors.New("automatic upgrades are not supported on Windows RC; rerun the current Connect command")
+	// The detached upgrade helper replaces and restarts the agent after this
+	// process exits and releases the running executable.
+	return nil
 }

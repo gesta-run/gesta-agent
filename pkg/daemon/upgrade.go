@@ -35,27 +35,6 @@ func (r *Runner) applyUpgradeFromHeartbeat(resp model.HeartbeatResponse) error {
 		)
 		return nil
 	}
-	if !agentupgrade.AutomaticUpgradeSupported() {
-		statePath := filepath.Join(r.cfg.DataDir, "upgrade-state.json")
-		state, _ := agentupgrade.LoadUpgradeState(statePath)
-		unsupportedError := "automatic upgrades are not supported on Windows RC; rerun the current Connect command"
-		if state.State == "unsupported" &&
-			state.TargetVersion == resp.Upgrade.TargetVersion &&
-			state.Error == unsupportedError {
-			return nil
-		}
-		state.Enabled = false
-		state.TargetVersion = resp.Upgrade.TargetVersion
-		state.State = "unsupported"
-		state.Error = unsupportedError
-		state.LastCheckedAt = time.Now().UTC()
-		_ = agentupgrade.SaveUpgradeState(statePath, state)
-		r.logger.Warn("agent auto-upgrade unsupported on this platform",
-			"target_version", resp.Upgrade.TargetVersion,
-			"remediation", "rerun the current Connect command",
-		)
-		return nil
-	}
 	if agentupgrade.AutoUpdateDisabled() {
 		r.logger.Warn("agent auto-upgrade disabled locally",
 			"target_version", resp.Upgrade.TargetVersion,
@@ -91,12 +70,19 @@ func (r *Runner) applyUpgradeFromHeartbeat(resp model.HeartbeatResponse) error {
 		"current_version", model.DaemonVersion,
 		"url", resp.Upgrade.URL,
 	)
-	if err := agentupgrade.ApplyAgentUpgrade(*resp.Upgrade); err != nil {
+	if err := agentupgrade.ApplyAgentUpgradeWithState(*resp.Upgrade, statePath); err != nil {
 		state.State = "failed"
 		state.Error = err.Error()
 		_ = agentupgrade.SaveUpgradeState(statePath, state)
 		r.logger.Error("agent upgrade failed", "target_version", resp.Upgrade.TargetVersion, "error", err)
 		return nil
+	}
+	if agentupgrade.UpgradeCompletesAfterExit() {
+		state.State = "staged"
+		state.Error = ""
+		_ = agentupgrade.SaveUpgradeState(statePath, state)
+		r.logger.Info("agent upgrade staged", "target_version", resp.Upgrade.TargetVersion)
+		return ErrUpgradeApplied
 	}
 	state.State = "succeeded"
 	state.Error = ""

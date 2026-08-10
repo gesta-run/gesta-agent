@@ -68,7 +68,7 @@ jobs:
       - name: Run Windows platform tests
         run: |
           go test ./pkg/hookinstall -run TestQuoteCommandPathForWindows
-          go test ./pkg/agentupgrade -run "TestAutomaticUpgradeSupported|TestApplyUpgradeFailsBeforeDownloadOnWindows"
+          go test ./pkg/agentupgrade
           go test ./pkg/atomicfile -run TestReplaceOverwritesExistingFileOnWindows
           go test ./pkg/eventqueue -run "TestQueueAppendAndDrain|TestQueueConcurrentDrainsCannotSendSameBatch"
 
