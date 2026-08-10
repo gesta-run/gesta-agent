@@ -41,6 +41,11 @@ type UpgradeDecision struct {
 	Reason      string
 }
 
+type replacementOptions struct {
+	StatePath     string
+	TargetVersion string
+}
+
 func DecideAgentUpgrade(policy model.AgentUpgradePolicy, currentVersion string) UpgradeDecision {
 	mode := normalizeUpgradeMode(policy.Mode)
 	if mode == "off" {
@@ -67,7 +72,15 @@ func DecideAgentUpgrade(policy model.AgentUpgradePolicy, currentVersion string) 
 	}
 }
 
-func ApplyAgentUpgrade(policy model.AgentUpgradePolicy) error {
+func ApplyAgentUpgradeWithState(policy model.AgentUpgradePolicy, statePath string) error {
+	statePath = strings.TrimSpace(statePath)
+	if statePath == "" {
+		return errors.New("upgrade state path is required")
+	}
+	absStatePath, err := filepath.Abs(statePath)
+	if err != nil {
+		return fmt.Errorf("resolve upgrade state path: %w", err)
+	}
 	targetPath, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("resolve executable: %w", err)
@@ -75,13 +88,17 @@ func ApplyAgentUpgrade(policy model.AgentUpgradePolicy) error {
 	if resolved, err := filepath.EvalSymlinks(targetPath); err == nil && resolved != "" {
 		targetPath = resolved
 	}
-	return ApplyAgentUpgradeToPath(context.Background(), policy, targetPath)
+	return applyAgentUpgradeToPath(context.Background(), policy, targetPath, replacementOptions{
+		StatePath:     absStatePath,
+		TargetVersion: strings.TrimSpace(policy.TargetVersion),
+	})
 }
 
 func ApplyAgentUpgradeToPath(ctx context.Context, policy model.AgentUpgradePolicy, targetPath string) error {
-	if !AutomaticUpgradeSupported() {
-		return errors.New("automatic upgrades are not supported on Windows RC; rerun the current Connect command")
-	}
+	return applyAgentUpgradeToPath(ctx, policy, targetPath, replacementOptions{})
+}
+
+func applyAgentUpgradeToPath(ctx context.Context, policy model.AgentUpgradePolicy, targetPath string, options replacementOptions) error {
 	targetPath = strings.TrimSpace(targetPath)
 	if targetPath == "" {
 		return errors.New("target path is required")
@@ -123,7 +140,7 @@ func ApplyAgentUpgradeToPath(ctx context.Context, policy model.AgentUpgradePolic
 	if err := verifyDownloadedAgentVersion(ctx, tmpPath, targetVersion); err != nil {
 		return err
 	}
-	return replaceAgentBinary(tmpPath, targetPath)
+	return replaceAgentBinary(tmpPath, targetPath, options)
 }
 
 func expectedUpgradeSHA(ctx context.Context, policy model.AgentUpgradePolicy) (string, error) {
