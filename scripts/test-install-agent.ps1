@@ -101,6 +101,25 @@ try {
     if ((Get-FileHash -LiteralPath $installedAgent -Algorithm SHA256).Hash -ne $installedHash) {
         throw "Checksum failure changed the installed agent."
     }
+
+    $dataDir = Join-Path $testHome ".gesta"
+    & "$PSScriptRoot/uninstall-agent.ps1" -Yes -DataDir $dataDir -InstallDir $installDir
+    if (Test-Path -LiteralPath $installedAgent) {
+        throw "Windows uninstaller did not remove the installed agent."
+    }
+    if ($null -ne (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue)) {
+        throw "Windows uninstaller did not remove the scheduled task."
+    }
+    foreach ($settingsPath in @(
+        (Join-Path $testHome ".codex\hooks.json"),
+        (Join-Path $testHome ".codex\config.toml"),
+        (Join-Path $testHome ".claude\settings.json")
+    )) {
+        if ((Test-Path -LiteralPath $settingsPath) -and
+            (Select-String -LiteralPath $settingsPath -Pattern "gesta-agent|hooks\.state" -Quiet)) {
+            throw "Windows uninstaller left Gesta hook configuration in $settingsPath."
+        }
+    }
 } finally {
     if ($null -ne $daemon -and -not $daemon.HasExited) {
         Stop-Process -Id $daemon.Id -Force -ErrorAction SilentlyContinue

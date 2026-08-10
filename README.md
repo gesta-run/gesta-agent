@@ -91,6 +91,26 @@ The script asks before restarting Codex Desktop so hook changes are picked up.
 Set `GESTA_RESTART_CODEX=1` to restart without prompting, or
 `GESTA_RESTART_CODEX=0` to skip the restart in automation.
 
+## Uninstall
+
+The uninstall scripts remove the background service, installed binary, Gesta's
+Codex and Claude Code hook entries, trusted Codex hook state, and local agent
+data. They preserve unrelated hooks and settings and require confirmation by
+default:
+
+```bash
+curl -fsSL https://artifacts.gesta.run/gesta/uninstall-agent.sh | sh
+```
+
+```powershell
+irm https://artifacts.gesta.run/gesta/uninstall-agent.ps1 | iex
+```
+
+Download the script first and run it with `--keep-data` on macOS/Linux or
+`-KeepData` on Windows to preserve local state and logs. Automation can use
+`--yes` or `-Yes` to skip the prompt. Uninstalling local software does not
+delete activity already uploaded to the Gesta control plane.
+
 When Codex hooks are enabled, `PreToolUse` evaluates shell command tool calls
 before they run, including arbitrary Bash commands such as `ls -al`.
 `UserPromptSubmit` evaluates prompts before submission so sensitive-data rules
