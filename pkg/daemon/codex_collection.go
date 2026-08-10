@@ -41,6 +41,9 @@ func collectCodexStateEvents(ctx context.Context, cfg Config, stateDB string, ob
 	}
 	aggregate["transcript_fallback_sessions"] = len(discoveredSessions)
 	turnSessions := mergeCodexTurnSessions(stateSessions, discoveredSessions)
+	var transcriptFallbacks int
+	transcriptEvents, transcriptFallbacks = mergeCodexTranscriptFallbacks(transcriptEvents, turnSessions)
+	aggregate["transcript_fallback_payloads"] = transcriptFallbacks
 	turnEvents, turnCommit, turnErr := turnusage.CollectCodex(turnusage.Config{
 		DataDir:       cfg.DataDir,
 		DaemonID:      cfg.DaemonID,
@@ -70,10 +73,9 @@ func collectCodexStateEvents(ctx context.Context, cfg Config, stateDB string, ob
 		}))
 	}
 
-	sensitiveRules := codexSensitiveRulesForCollection(cfg)
-	sensitiveEvents := codexSensitiveFindingEventsFromTranscripts(cfg, transcriptEvents, sensitiveRules)
-	if stateDB != "" && stateReadOK {
-		baselineResult, baselineErr := filterCodexSessionBackfill(cfg, stateDB, usageEvents, transcriptEvents, observedAt)
+	baselineSource := codexBaselineSourceForCollection(stateDB, stateReadOK, transcriptFallbacks, transcriptEvents)
+	if baselineSource != "" {
+		baselineResult, baselineErr := filterCodexSessionBackfill(cfg, baselineSource, usageEvents, transcriptEvents, observedAt)
 		for key, value := range baselineResult.Meta {
 			aggregate[key] = value
 		}
@@ -101,8 +103,25 @@ func collectCodexStateEvents(ctx context.Context, cfg Config, stateDB string, ob
 		event.EventID = transcriptChunkEventID(publicTranscript)
 		events = append(events, event)
 	}
-	events = append(events, sensitiveEvents...)
 	return events, commits
+}
+
+func codexBaselineSourceForCollection(
+	stateDB string,
+	stateReadOK bool,
+	transcriptFallbacks int,
+	transcriptEvents []map[string]interface{},
+) string {
+	if !stateReadOK && transcriptFallbacks == 0 {
+		return ""
+	}
+	if stateDB != "" {
+		return stateDB
+	}
+	if len(transcriptEvents) > 0 {
+		return codexRolloutBaselineSource
+	}
+	return ""
 }
 
 func codexWarningEvent(cfg Config, stateDB, scope string, err error) model.EventEnvelope {

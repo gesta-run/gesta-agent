@@ -24,7 +24,6 @@ const (
 	codexMaxTranscriptTotalBytes   = 256 * 1024
 	codexMaxTranscriptRows         = 40
 	codexTranscriptTailBytes       = 8 * 1024 * 1024
-	codexSensitiveTranscriptWindow = time.Hour
 )
 
 type CodexAdapter struct{}

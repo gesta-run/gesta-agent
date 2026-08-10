@@ -8,16 +8,18 @@ import (
 )
 
 const (
-	internalCursorOnlyPayloadKey        = "_gesta_internal_cursor_only"
-	internalInitialDeltaPayloadKey      = "_gesta_internal_initial_delta"
-	internalPreviousTotalTokensKey      = "_gesta_internal_previous_total_tokens"
-	internalPreviousInputTokensKey      = "_gesta_internal_previous_input_tokens"
-	internalPreviousOutputTokensKey     = "_gesta_internal_previous_output_tokens"
-	internalPreviousCacheReadTokensKey  = "_gesta_internal_previous_cache_read_tokens"
-	internalPreviousCacheWriteTokensKey = "_gesta_internal_previous_cache_write_tokens"
-	internalPreviousObservedAtKey       = "_gesta_internal_previous_observed_at"
-	internalPreviousAccountingKey       = "_gesta_internal_previous_accounting"
-	codexSessionBackfillModeValue       = "disabled"
+	codexRolloutBaselineSource           = "codex-rollout-jsonl"
+	internalCursorOnlyPayloadKey         = "_gesta_internal_cursor_only"
+	internalInitialDeltaPayloadKey       = "_gesta_internal_initial_delta"
+	internalPreviousTotalTokensKey       = "_gesta_internal_previous_total_tokens"
+	internalPreviousInputTokensKey       = "_gesta_internal_previous_input_tokens"
+	internalPreviousOutputTokensKey      = "_gesta_internal_previous_output_tokens"
+	internalPreviousCacheReadTokensKey   = "_gesta_internal_previous_cache_read_tokens"
+	internalPreviousCacheWriteTokensKey  = "_gesta_internal_previous_cache_write_tokens"
+	internalPreviousObservedAtKey        = "_gesta_internal_previous_observed_at"
+	internalPreviousAccountingKey        = "_gesta_internal_previous_accounting"
+	internalTranscriptFallbackPayloadKey = "_gesta_transcript_fallback"
+	codexSessionBackfillModeValue        = "disabled"
 )
 
 type codexBaselineResult struct {
@@ -168,6 +170,9 @@ func filterCodexTranscriptBaseline(
 			continue
 		}
 		cursor, exists := baseline.Sessions[sessionID]
+		if !exists && transcriptFallbackPayload(payload) {
+			cursor = seedTranscriptCursorBeforeBaseline(payload, cursor, baseline.InitializedAt)
+		}
 		if exists && !cursor.TranscriptCursorInitialized {
 			cursor = seedTranscriptCursor(payload, cursor)
 			updates = append(updates, transcriptCursorPayload(payload, cursor))
@@ -183,6 +188,40 @@ func filterCodexTranscriptBaseline(
 		updates = append(updates, transcriptCursorPayload(payload, cursor))
 	}
 	return filtered, updates
+}
+
+func transcriptFallbackPayload(payload map[string]interface{}) bool {
+	value, _ := payload[internalTranscriptFallbackPayloadKey].(bool)
+	return value
+}
+
+func seedTranscriptCursorBeforeBaseline(payload map[string]interface{}, existing baselineSession, initializedAt string) baselineSession {
+	cutoff, ok := parseBaselineTimestamp(initializedAt)
+	if !ok {
+		return existing
+	}
+	sessionID := sessionIDFromPayload(payload)
+	seen := make(map[string]struct{}, len(existing.TranscriptMessageVersions))
+	for _, version := range existing.TranscriptMessageVersions {
+		if version != "" {
+			seen[version] = struct{}{}
+		}
+	}
+	for _, message := range normalizedTranscriptMessages(sessionID, payload) {
+		messageTime, parsed := parseBaselineTimestamp(firstString(message, "timestamp"))
+		if parsed && messageTime.After(cutoff) {
+			continue
+		}
+		version := transcriptMessageVersion(message)
+		if _, ok := seen[version]; ok {
+			continue
+		}
+		seen[version] = struct{}{}
+		existing.TranscriptMessageVersions = append(existing.TranscriptMessageVersions, version)
+	}
+	existing.TranscriptMessageVersions = boundedTranscriptVersions(existing.TranscriptMessageVersions)
+	existing.TranscriptCursorInitialized = true
+	return existing
 }
 
 func commitCodexBaseline(dataDir, stateDBHash string, baseline codexSessionBaseline) func() error {
