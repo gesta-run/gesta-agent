@@ -228,6 +228,9 @@ func TestPrepareExecutableCandidatesReturnsWindowsStoreCacheError(t *testing.T) 
 	}
 	t.Setenv("LOCALAPPDATA", invalidCacheRoot)
 	t.Setenv("XDG_CACHE_HOME", invalidCacheRoot)
+	// os.UserCacheDir uses HOME/Library/Caches on macOS and ignores both
+	// Windows and XDG cache environment variables.
+	t.Setenv("HOME", invalidCacheRoot)
 	candidates, err := prepareExecutableCandidates("windows", []executableCandidate{{Path: source, Source: "test"}})
 	if err == nil || len(candidates) != 0 {
 		t.Fatalf("candidates = %#v, err = %v; want cache failure", candidates, err)

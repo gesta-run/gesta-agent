@@ -44,9 +44,29 @@ func Run(ctx context.Context, args []string) error {
 		return install(args[1:])
 	case "install-codex":
 		return install(args[1:])
+	case "uninstall-hooks":
+		return uninstallHooks(args[1:])
 	default:
 		return usageError()
 	}
+}
+
+func uninstallHooks(args []string) error {
+	if len(args) > 0 {
+		return fmt.Errorf("uninstall-hooks does not accept arguments")
+	}
+	paths, err := hookinstall.UninstallPolicyHooks()
+	if err != nil {
+		return fmt.Errorf("uninstall Gesta policy hooks: %w", err)
+	}
+	if len(paths) == 0 {
+		uiOK("Gesta policy hooks already removed", "no changes needed")
+		return nil
+	}
+	for _, path := range paths {
+		uiOK("Gesta policy hooks removed", path)
+	}
+	return nil
 }
 
 func run(ctx context.Context, args []string) error {
@@ -349,6 +369,7 @@ Commands:
 Internal commands:
   codex-hook    invoked by the Codex hook integration
   claude-hook   invoked by the Claude Code hook integration
+  uninstall-hooks  invoked by the uninstall scripts
 
 Environment:
   GESTA_CONTROL_URL  control plane URL used by run/install
