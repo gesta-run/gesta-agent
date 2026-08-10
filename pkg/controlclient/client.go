@@ -63,13 +63,28 @@ func (c *Client) Heartbeat(req model.HeartbeatRequest) (model.HeartbeatResponse,
 }
 
 func (c *Client) SendEvents(events []model.EventEnvelope) error {
+	return c.SendEventsForDaemon(events, "", "")
+}
+
+// SendEventsForDaemon binds queued events to the currently authenticated
+// daemon. This keeps events created before a local re-enrollment from blocking
+// the current daemon's queue with a stale identity.
+func (c *Client) SendEventsForDaemon(events []model.EventEnvelope, daemonID, deviceID string) error {
 	events = filterUploadEvents(events)
 	if len(events) == 0 {
 		return nil
 	}
+	daemonID = strings.TrimSpace(daemonID)
+	deviceID = strings.TrimSpace(deviceID)
 	for i := range events {
 		events[i].UserID = ""
 		events[i].UserName = ""
+		if daemonID != "" {
+			events[i].DaemonID = daemonID
+		}
+		if deviceID != "" {
+			events[i].DeviceID = deviceID
+		}
 	}
 	headers := map[string]string{
 		model.EventProtocolHeader: model.EventProtocolVersion,

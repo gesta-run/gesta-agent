@@ -191,6 +191,37 @@ func TestClientSendEventsSkipsPostWhenOnlyUnmatchedPolicyDecisions(t *testing.T)
 	}
 }
 
+func TestClientSendEventsForDaemonRebindsQueuedIdentity(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var batch model.EventBatch
+		if err := json.NewDecoder(r.Body).Decode(&batch); err != nil {
+			t.Fatalf("decode events: %v", err)
+		}
+		if len(batch.Events) != 2 {
+			t.Fatalf("events sent = %d, want 2", len(batch.Events))
+		}
+		for _, event := range batch.Events {
+			if event.DaemonID != "daemon_current" || event.DeviceID != "device_current" {
+				t.Fatalf("event identity = (%q, %q), want current identity", event.DaemonID, event.DeviceID)
+			}
+		}
+		_ = json.NewEncoder(w).Encode(map[string]int{"accepted": len(batch.Events)})
+	}))
+	defer server.Close()
+
+	events := []model.EventEnvelope{
+		{EventID: "evt_stale", DaemonID: "daemon_stale", DeviceID: "device_stale", EventType: "tool.call"},
+		{EventID: "evt_current", DaemonID: "daemon_current", DeviceID: "device_current", EventType: "turn.usage"},
+	}
+	client := NewClient(server.URL, "dtok_123")
+	if err := client.SendEventsForDaemon(events, "daemon_current", "device_current"); err != nil {
+		t.Fatalf("SendEventsForDaemon: %v", err)
+	}
+	if events[0].DaemonID != "daemon_stale" || events[0].DeviceID != "device_stale" {
+		t.Fatalf("SendEventsForDaemon mutated queued event: %#v", events[0])
+	}
+}
+
 func TestClientSendEventsSplitsRequestsByEncodedSize(t *testing.T) {
 	requests := 0
 	received := 0
