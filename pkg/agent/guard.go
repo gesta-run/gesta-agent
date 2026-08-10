@@ -218,7 +218,9 @@ func recordGuardDecisionWithConfig(cfg daemon.Config, shouldFlush bool, evaluati
 		return nil
 	}
 	client := controlclient.NewClient(cfg.EffectiveServerURL(), cfg.Token)
-	if err := queue.Drain(client.SendEvents); err != nil {
+	if err := queue.Drain(func(events []model.EventEnvelope) error {
+		return client.SendEventsForDaemon(events, cfg.DaemonID, cfg.DeviceID)
+	}); err != nil {
 		fmt.Fprintf(os.Stderr, "gesta-agent guard: queued decision locally; flush failed: %v\n", err)
 		return nil
 	}

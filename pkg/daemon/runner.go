@@ -360,7 +360,9 @@ func (r *Runner) Flush() error {
 		"oldest_age", time.Since(stats.OldestQueuedAt).Round(time.Second),
 	)
 	startedAt := time.Now()
-	err = r.queue.Drain(r.client.SendEvents)
+	err = r.queue.Drain(func(events []model.EventEnvelope) error {
+		return r.client.SendEventsForDaemon(events, r.cfg.DaemonID, r.cfg.DeviceID)
+	})
 	if err != nil {
 		return err
 	}
