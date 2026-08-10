@@ -6,12 +6,10 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/gesta-run/gesta-agent/pkg/model"
 	"github.com/gesta-run/gesta-agent/pkg/util"
 )
 
@@ -395,159 +393,6 @@ func TestCodexToolCallEventsFromTranscriptKeepMetadataOnly(t *testing.T) {
 	text := string(serialized)
 	if strings.Contains(text, "secret/private") || strings.Contains(text, "cat .env") || strings.Contains(text, "do not store this") || strings.Contains(text, rolloutPath) {
 		t.Fatalf("tool call metadata leaked arguments, output, or local path: %s", text)
-	}
-}
-
-func TestCodexSensitiveFindingEventsUseOriginalTranscriptText(t *testing.T) {
-	rolloutPath := filepath.Join(t.TempDir(), "rollout.jsonl")
-	secret := "sk-" + strings.Repeat("a", 24)
-	lines := []string{
-		`{"timestamp":"2026-06-12T00:01:00Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"text","text":"please inspect ` + secret + `"}]}}`,
-		`{"timestamp":"2026-06-12T00:02:00Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"text","text":"done"}]}}`,
-	}
-	if err := os.WriteFile(rolloutPath, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
-		t.Fatalf("write rollout: %v", err)
-	}
-
-	cfg := NewDirectRuntimeConfig("http://127.0.0.1:1", "dtok_sensitive_transcript")
-	cfg.DataDir = t.TempDir()
-	usagePayload := codexUsagePayload(map[string]interface{}{
-		"id":           "raw-session-id",
-		"model":        "gpt-5-codex",
-		"rollout_path": rolloutPath,
-	}, nil)
-	transcript := codexTranscriptPayload(map[string]interface{}{
-		"id":           "raw-session-id",
-		"model":        "gpt-5-codex",
-		"rollout_path": rolloutPath,
-		"updated_at":   "2026-06-12T00:02:00Z",
-	}, usagePayload, nil)
-
-	publicTranscript, err := json.Marshal(codexPublicTranscriptPayload(transcript))
-	if err != nil {
-		t.Fatalf("marshal public transcript: %v", err)
-	}
-	if strings.Contains(string(publicTranscript), secret) {
-		t.Fatalf("public transcript leaked raw secret: %s", publicTranscript)
-	}
-	if !strings.Contains(string(publicTranscript), "[REDACTED]") {
-		t.Fatalf("public transcript should keep redacted copy: %s", publicTranscript)
-	}
-
-	rules := []model.SensitiveRule{
-		{
-			RuleID:       "srule_test_openai",
-			Name:         "Test OpenAI",
-			Status:       "active",
-			Source:       "user_prompt",
-			DetectorType: "regex",
-			Pattern:      `sk-[A-Za-z0-9_-]+`,
-			Category:     "sensitive_data",
-			Severity:     "high",
-			Action:       "warn",
-			SampleMode:   "original",
-			Confidence:   0.9,
-			Priority:     1,
-		},
-	}
-	observedAt := time.Date(2026, 6, 12, 0, 3, 0, 0, time.UTC)
-	events := codexSensitiveFindingEventsAt(cfg, transcript, rules, observedAt)
-	if len(events) != 1 {
-		t.Fatalf("events = %#v, want one sensitive finding", events)
-	}
-	event := events[0]
-	if event.EventType != "sensitive.finding" || event.Source != "codex" || event.AgentType != "codex" {
-		t.Fatalf("unexpected event envelope: %#v", event)
-	}
-	if event.CreatedAt.Format("2006-01-02T15:04:05Z") != "2026-06-12T00:01:00Z" {
-		t.Fatalf("created_at = %s", event.CreatedAt)
-	}
-	payload := event.Payload
-	if payload["detection_source"] != "session_transcript" ||
-		payload["action"] != "warn" ||
-		payload["sample_mode"] != "original" ||
-		payload["raw_content_stored"] != true ||
-		payload["rule_id"] != "srule_test_openai" {
-		t.Fatalf("unexpected finding payload: %#v", payload)
-	}
-	if sample, ok := payload["sample"].(string); !ok || !strings.Contains(sample, secret) {
-		t.Fatalf("finding should keep original sample: %#v", payload)
-	}
-	if payload["fingerprint"] == "" || payload["message_hash"] == "" || payload["transcript_path_hash"] == "" {
-		t.Fatalf("missing derived metadata: %#v", payload)
-	}
-	if events[0].EventID != codexSensitiveFindingEventsAt(cfg, transcript, rules, observedAt)[0].EventID {
-		t.Fatal("sensitive finding event id should be deterministic")
-	}
-}
-
-func TestCodexSensitiveTranscriptFallbackSkipsWhenUserPromptHookActive(t *testing.T) {
-	home := filepath.Join(t.TempDir(), "home")
-	codexDir := filepath.Join(home, ".codex")
-	if err := os.MkdirAll(codexDir, 0o700); err != nil {
-		t.Fatalf("mkdir codex dir: %v", err)
-	}
-	t.Setenv("HOME", home)
-
-	hookPath := filepath.Join(codexDir, "hooks.json")
-	hooks := `{
-  "hooks": {
-    "UserPromptSubmit": [
-      {
-        "hooks": [
-          {"type": "command", "command": "'/tmp/gesta-agent' codex-hook"}
-        ]
-      }
-    ]
-  }
-}`
-	if err := os.WriteFile(hookPath, []byte(hooks), 0o600); err != nil {
-		t.Fatalf("write hooks: %v", err)
-	}
-	config := `[features]
-hooks = true
-
-[hooks.state.` + strconv.Quote(hookPath+":user_prompt_submit:0:0") + `]
-trusted_hash = "sha256:test"
-`
-	if err := os.WriteFile(filepath.Join(codexDir, "config.toml"), []byte(config), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
-
-	rolloutPath := filepath.Join(t.TempDir(), "rollout.jsonl")
-	secret := "sk-" + strings.Repeat("b", 24)
-	now := time.Now().UTC().Format(time.RFC3339Nano)
-	line := `{"timestamp":"` + now + `","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"text","text":"please inspect ` + secret + `"}]}}`
-	if err := os.WriteFile(rolloutPath, []byte(line+"\n"), 0o600); err != nil {
-		t.Fatalf("write rollout: %v", err)
-	}
-
-	cfg := NewDirectRuntimeConfig("http://127.0.0.1:1", "dtok_sensitive_transcript_active_hook")
-	cfg.DataDir = t.TempDir()
-	transcript := codexTranscriptPayload(map[string]interface{}{
-		"id":           "raw-session-id",
-		"model":        "gpt-5-codex",
-		"rollout_path": rolloutPath,
-		"updated_at":   now,
-	}, map[string]interface{}{}, nil)
-	rules := []model.SensitiveRule{
-		{
-			RuleID:       "srule_test_openai",
-			Name:         "Test OpenAI",
-			Status:       "active",
-			Source:       "user_prompt",
-			DetectorType: "regex",
-			Pattern:      `sk-[A-Za-z0-9_-]+`,
-			Category:     "sensitive_data",
-			Severity:     "high",
-			Action:       "warn",
-			SampleMode:   "original",
-			Confidence:   0.9,
-			Priority:     1,
-		},
-	}
-	if events := codexSensitiveFindingEventsFromTranscripts(cfg, []map[string]interface{}{transcript}, rules); len(events) != 0 {
-		t.Fatalf("fallback produced events while prompt hook is active: %#v", events)
 	}
 }
 

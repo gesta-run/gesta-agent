@@ -4,16 +4,96 @@ import (
 	"bufio"
 	"encoding/json"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/gesta-run/gesta-agent/pkg/privacy"
+	turnusage "github.com/gesta-run/gesta-agent/pkg/turn"
 	"github.com/gesta-run/gesta-agent/pkg/util"
 )
 
-type codexSensitiveTranscriptMessage struct {
-	Text      string
-	Timestamp string
+type codexTranscriptFallbackCandidate struct {
+	Session    turnusage.CodexSession
+	ModifiedAt time.Time
+}
+
+func mergeCodexTranscriptFallbacks(
+	existing []map[string]interface{},
+	sessions []turnusage.CodexSession,
+) ([]map[string]interface{}, int) {
+	seen := make(map[string]struct{}, len(existing))
+	for _, payload := range existing {
+		if sessionID := sessionIDFromPayload(payload); sessionID != "" {
+			seen[sessionID] = struct{}{}
+		}
+	}
+	candidates := make([]codexTranscriptFallbackCandidate, 0, len(sessions))
+	for _, session := range sessions {
+		if strings.TrimSpace(session.RolloutPath) == "" {
+			continue
+		}
+		if _, ok := seen[session.SessionID]; ok {
+			continue
+		}
+		candidates = append(candidates, codexTranscriptFallbackCandidate{
+			Session:    session,
+			ModifiedAt: codexRolloutModTime(session.RolloutPath),
+		})
+	}
+	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].ModifiedAt.Equal(candidates[j].ModifiedAt) {
+			return candidates[i].Session.SessionID < candidates[j].Session.SessionID
+		}
+		return candidates[i].ModifiedAt.After(candidates[j].ModifiedAt)
+	})
+
+	merged := append([]map[string]interface{}(nil), existing...)
+	added := 0
+	for _, candidate := range candidates {
+		if added >= codexMaxTranscriptRows {
+			break
+		}
+		payload := codexTranscriptPayloadFromSession(candidate.Session, candidate.ModifiedAt)
+		if len(payload) == 0 {
+			continue
+		}
+		payload[internalTranscriptFallbackPayloadKey] = true
+		merged = append(merged, payload)
+		seen[candidate.Session.SessionID] = struct{}{}
+		added++
+	}
+	return merged, added
+}
+
+func codexTranscriptPayloadFromSession(session turnusage.CodexSession, modifiedAt time.Time) map[string]interface{} {
+	row := map[string]interface{}{
+		"rollout_path":   session.RolloutPath,
+		"model":          session.Model,
+		"model_provider": session.ModelProvider,
+		"title":          session.Title,
+	}
+	if !modifiedAt.IsZero() {
+		row["updated_at"] = modifiedAt.UTC().Format(time.RFC3339Nano)
+	}
+	usage := map[string]interface{}{
+		"session_id":             session.SessionID,
+		"session_id_hash":        session.SessionID,
+		"session_id_is_hashed":   true,
+		"parent_session_id":      session.ParentSessionID,
+		"parent_session_id_hash": session.ParentSessionID,
+		"repo":                   session.Repo,
+		"title":                  session.Title,
+	}
+	return codexTranscriptPayload(row, usage, nil)
+}
+
+func codexRolloutModTime(path string) time.Time {
+	info, err := os.Stat(path)
+	if err != nil {
+		return time.Time{}
+	}
+	return info.ModTime()
 }
 
 func codexTranscriptPayload(row map[string]interface{}, usagePayload map[string]interface{}, sessionTitles map[string]string) map[string]interface{} {
@@ -270,52 +350,6 @@ func mapFromInterface(value interface{}) map[string]interface{} {
 	return nil
 }
 
-func readCodexSensitiveTranscriptMessages(path string) ([]codexSensitiveTranscriptMessage, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-
-	scanner := bufio.NewScanner(transcriptReader(file))
-	scanner.Buffer(make([]byte, 64*1024), 10*1024*1024)
-	var messages []codexSensitiveTranscriptMessage
-	for scanner.Scan() {
-		var record struct {
-			Timestamp string                 `json:"timestamp"`
-			Type      string                 `json:"type"`
-			Payload   map[string]interface{} `json:"payload"`
-		}
-		if err := json.Unmarshal(scanner.Bytes(), &record); err != nil {
-			continue
-		}
-		if record.Type != "response_item" || record.Payload == nil {
-			continue
-		}
-		itemType := firstString(record.Payload, "type")
-		if itemType == "function_call" || itemType == "function_call_output" || itemType == "tool_call" {
-			continue
-		}
-		role := strings.ToLower(strings.TrimSpace(firstString(record.Payload, "role")))
-		if role != "user" {
-			continue
-		}
-		text := codexContentText(record.Payload["content"])
-		if isCodexNonChatText(text) {
-			continue
-		}
-		text = truncateCodexSensitiveScanText(text)
-		messages = append(messages, codexSensitiveTranscriptMessage{
-			Text:      text,
-			Timestamp: record.Timestamp,
-		})
-		for len(messages) > codexMaxTranscriptMessages {
-			messages = messages[1:]
-		}
-	}
-	return messages, scanner.Err()
-}
-
 func transcriptReader(file *os.File) *bufio.Reader {
 	info, err := file.Stat()
 	if err != nil || info.Size() <= codexTranscriptTailBytes {
@@ -393,23 +427,4 @@ func codexContentText(value interface{}) string {
 		}
 	}
 	return ""
-}
-
-func truncateCodexSensitiveScanText(value string) string {
-	value = strings.ToValidUTF8(value, "")
-	if len(value) <= codexMaxTranscriptMessageBytes {
-		return value
-	}
-	return strings.ToValidUTF8(value[:codexMaxTranscriptMessageBytes], "")
-}
-
-func parseCodexTimestamp(value string) (time.Time, bool) {
-	if strings.TrimSpace(value) == "" {
-		return time.Time{}, false
-	}
-	parsed, err := time.Parse(time.RFC3339Nano, value)
-	if err != nil {
-		return time.Time{}, false
-	}
-	return parsed.UTC(), true
 }
