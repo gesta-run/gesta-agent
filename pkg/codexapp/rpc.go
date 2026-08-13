@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/gesta-run/gesta-agent/pkg/processutil"
 )
 
 type threadReadResponse struct {
@@ -60,6 +62,7 @@ func readThread(
 	initializeTimeout time.Duration,
 ) ([]Turn, error) {
 	cmd := exec.CommandContext(ctx, executable, "app-server", "--stdio")
+	processutil.ConfigureBackgroundCommand(cmd)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, fmt.Errorf("open codex app-server stdin: %w", err)

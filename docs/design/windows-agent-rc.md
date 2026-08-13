@@ -84,9 +84,10 @@ provide equivalent protection on Windows.
 
 ### Release build
 
-Add `windows/amd64` to `scripts/build-agent-binaries.sh`. Windows output uses an
-`.exe` suffix and is included in the existing `SHA256SUMS`. Existing artifact
-names remain unchanged.
+The release build produces the console `gesta-agent-windows-amd64.exe` and the
+GUI-subsystem `gesta-agent-hook-launcher-windows-amd64.exe`. Both are included
+in `SHA256SUMS`; the release manifest associates the launcher with the Windows
+agent so installs and automatic upgrades verify and replace them together.
 
 ### File locking and atomic writes
 
@@ -102,13 +103,11 @@ readers never observe partial JSON state.
 `syscall.Exec`, Unix ownership restoration, and replacement of a running
 executable are separated behind platform files.
 
-Automatic in-process upgrades remain disabled for the Windows RC. The agent
-reports the available version and records an `unsupported` upgrade state that
-directs the employee to rerun the current Connect command. macOS and Linux
-automatic upgrades remain unchanged.
-
-A production Windows release must add a staged updater before enabling `auto`
-or `required` mode.
+Windows upgrades run through a detached helper and replace the agent and hook
+launcher as one rollback-safe bundle. After an older installation upgrades the
+main executable, the new agent detects a missing or outdated launcher and
+applies the same-version companion migration on its next heartbeat. macOS and
+Linux automatic upgrades remain unchanged.
 
 ### Hook commands
 

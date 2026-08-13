@@ -26,6 +26,8 @@ func RunUpgradeHelper(args []string) error {
 	parentPID := fs.Int("parent-pid", 0, "parent process ID")
 	sourcePath := fs.String("source", "", "staged agent path")
 	targetPath := fs.String("target", "", "installed agent path")
+	hookLauncherSource := fs.String("hook-launcher-source", "", "staged hook launcher path")
+	hookLauncherTarget := fs.String("hook-launcher-target", "", "installed hook launcher path")
 	workingDirectory := fs.String("working-dir", "", "agent working directory")
 	statePath := fs.String("state-path", "", "upgrade state path")
 	targetVersion := fs.String("target-version", "", "upgrade target version")
@@ -38,6 +40,9 @@ func RunUpgradeHelper(args []string) error {
 	if (strings.TrimSpace(*statePath) == "") != (strings.TrimSpace(*targetVersion) == "") {
 		return errors.New("state-path and target-version must be provided together")
 	}
+	if (strings.TrimSpace(*hookLauncherSource) == "") != (strings.TrimSpace(*hookLauncherTarget) == "") {
+		return errors.New("hook-launcher-source and hook-launcher-target must be provided together")
+	}
 	if err := verifyWindowsUpgradeHelperPath(*sourcePath); err != nil {
 		return err
 	}
@@ -45,8 +50,20 @@ func RunUpgradeHelper(args []string) error {
 		return err
 	}
 
+	replacements := []windowsUpgradeFile{{sourcePath: *sourcePath, targetPath: *targetPath}}
+	if strings.TrimSpace(*hookLauncherSource) != "" {
+		replacements = append(replacements, windowsUpgradeFile{
+			sourcePath: *hookLauncherSource,
+			targetPath: *hookLauncherTarget,
+		})
+	}
+	defer func() {
+		for _, replacement := range replacements {
+			_ = scheduleWindowsFileDeletion(replacement.sourcePath)
+		}
+	}()
 	restartArgs := fs.Args()
-	if err := retryWindowsAgentReplacement(*sourcePath, *targetPath, windowsReplacementRetryWait); err != nil {
+	if err := retryWindowsUpgradeBundle(replacements, windowsReplacementRetryWait); err != nil {
 		resultErr := recordWindowsUpgradeResult(*statePath, *targetVersion, err)
 		if len(restartArgs) > 0 {
 			if restartErr := startWindowsAgent(*targetPath, restartArgs, *workingDirectory); restartErr != nil {
@@ -56,13 +73,11 @@ func RunUpgradeHelper(args []string) error {
 		}
 		return resultErr
 	}
-	_ = scheduleWindowsFileDeletion(*sourcePath)
 	if len(restartArgs) == 0 {
 		return recordWindowsUpgradeResult(*statePath, *targetVersion, nil)
 	}
 	if err := startWindowsAgent(*targetPath, restartArgs, *workingDirectory); err != nil {
-		backupPath := *targetPath + ".prev"
-		if restoreErr := moveWindowsFile(backupPath, *targetPath); restoreErr != nil {
+		if restoreErr := restoreWindowsUpgradeBackups(replacements); restoreErr != nil {
 			return recordWindowsUpgradeResult(*statePath, *targetVersion, errors.Join(err, fmt.Errorf("restore previous binary: %w", restoreErr)))
 		}
 		resultErr := recordWindowsUpgradeResult(*statePath, *targetVersion, err)
@@ -139,11 +154,20 @@ func waitForWindowsProcessExit(pid int, timeout time.Duration) error {
 	return nil
 }
 
+type windowsUpgradeFile struct {
+	sourcePath string
+	targetPath string
+}
+
 func retryWindowsAgentReplacement(sourcePath, targetPath string, timeout time.Duration) error {
+	return retryWindowsUpgradeBundle([]windowsUpgradeFile{{sourcePath: sourcePath, targetPath: targetPath}}, timeout)
+}
+
+func retryWindowsUpgradeBundle(replacements []windowsUpgradeFile, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	var lastErr error
 	for {
-		lastErr = replaceWindowsAgentFromHelper(sourcePath, targetPath)
+		lastErr = replaceWindowsUpgradeBundleFromHelper(replacements)
 		if lastErr == nil {
 			return nil
 		}
@@ -155,23 +179,81 @@ func retryWindowsAgentReplacement(sourcePath, targetPath string, timeout time.Du
 }
 
 func replaceWindowsAgentFromHelper(sourcePath, targetPath string) error {
-	nextPath := targetPath + ".next"
-	backupPath := targetPath + ".prev"
-	_ = os.Remove(nextPath)
-	if err := copyWindowsUpgradeFile(sourcePath, nextPath); err != nil {
-		return fmt.Errorf("prepare replacement agent: %w", err)
+	return replaceWindowsUpgradeBundleFromHelper([]windowsUpgradeFile{{sourcePath: sourcePath, targetPath: targetPath}})
+}
+
+func replaceWindowsUpgradeBundleFromHelper(replacements []windowsUpgradeFile) error {
+	if len(replacements) == 0 {
+		return errors.New("upgrade bundle is empty")
 	}
-	defer os.Remove(nextPath)
-	if err := moveWindowsFile(targetPath, backupPath); err != nil {
-		return fmt.Errorf("backup current agent binary: %w", err)
-	}
-	if err := moveWindowsFile(nextPath, targetPath); err != nil {
-		if restoreErr := moveWindowsFile(backupPath, targetPath); restoreErr != nil {
-			return fmt.Errorf("install upgraded agent binary: %w; restore previous binary: %v", err, restoreErr)
+	for _, replacement := range replacements {
+		nextPath := replacement.targetPath + ".next"
+		_ = os.Remove(nextPath)
+		if err := copyWindowsUpgradeFile(replacement.sourcePath, nextPath); err != nil {
+			return fmt.Errorf("prepare replacement %s: %w", filepath.Base(replacement.targetPath), err)
 		}
-		return fmt.Errorf("install upgraded agent binary: %w", err)
+		defer os.Remove(nextPath)
+	}
+
+	backedUp := make([]windowsUpgradeFile, 0, len(replacements))
+	for _, replacement := range replacements {
+		backupPath := replacement.targetPath + ".prev"
+		if _, err := os.Stat(replacement.targetPath); errors.Is(err, os.ErrNotExist) {
+			if err := os.Remove(backupPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+				restoreErr := restoreWindowsUpgradeBackups(backedUp)
+				return errors.Join(
+					fmt.Errorf("remove stale backup %s: %w", filepath.Base(replacement.targetPath), err),
+					restoreErr,
+				)
+			}
+			backedUp = append(backedUp, replacement)
+			continue
+		} else if err != nil {
+			restoreErr := restoreWindowsUpgradeBackups(backedUp)
+			return errors.Join(
+				fmt.Errorf("inspect current %s: %w", filepath.Base(replacement.targetPath), err),
+				restoreErr,
+			)
+		}
+		if err := moveWindowsFile(replacement.targetPath, backupPath); err != nil {
+			restoreErr := restoreWindowsUpgradeBackups(backedUp)
+			return errors.Join(
+				fmt.Errorf("backup current %s: %w", filepath.Base(replacement.targetPath), err),
+				restoreErr,
+			)
+		}
+		backedUp = append(backedUp, replacement)
+	}
+
+	for _, replacement := range replacements {
+		if err := moveWindowsFile(replacement.targetPath+".next", replacement.targetPath); err != nil {
+			restoreErr := restoreWindowsUpgradeBackups(backedUp)
+			if restoreErr != nil {
+				return fmt.Errorf("install upgraded %s: %w; restore previous bundle: %v", filepath.Base(replacement.targetPath), err, restoreErr)
+			}
+			return fmt.Errorf("install upgraded %s: %w", filepath.Base(replacement.targetPath), err)
+		}
 	}
 	return nil
+}
+
+func restoreWindowsUpgradeBackups(replacements []windowsUpgradeFile) error {
+	var restoreErrors []error
+	for _, replacement := range replacements {
+		backupPath := replacement.targetPath + ".prev"
+		if _, err := os.Stat(backupPath); err == nil {
+			if err := moveWindowsFile(backupPath, replacement.targetPath); err != nil {
+				restoreErrors = append(restoreErrors, fmt.Errorf("restore %s: %w", filepath.Base(replacement.targetPath), err))
+			}
+		} else if errors.Is(err, os.ErrNotExist) {
+			if err := os.Remove(replacement.targetPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+				restoreErrors = append(restoreErrors, fmt.Errorf("remove new %s: %w", filepath.Base(replacement.targetPath), err))
+			}
+		} else {
+			restoreErrors = append(restoreErrors, fmt.Errorf("inspect backup %s: %w", filepath.Base(replacement.targetPath), err))
+		}
+	}
+	return errors.Join(restoreErrors...)
 }
 
 func copyWindowsUpgradeFile(sourcePath, targetPath string) error {

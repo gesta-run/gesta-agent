@@ -26,6 +26,7 @@ if ([string]::IsNullOrWhiteSpace($dataPath) -or $dataPath -eq $homePath -or $dat
 }
 
 $agentPath = Join-Path $InstallDir "gesta-agent.exe"
+$hookPath = Join-Path $InstallDir "gesta-agent-hook-launcher.exe"
 if (-not $Yes) {
     $prompt = if ($KeepData) {
         "Uninstall Gesta Agent and keep local data at $dataPath? [y/N]"
@@ -56,8 +57,10 @@ if ($null -ne $task) {
 }
 
 $agentProcesses = @(
-    Get-CimInstance Win32_Process -Filter "Name = 'gesta-agent.exe'" -ErrorAction SilentlyContinue |
-        Where-Object { $_.ExecutablePath -eq $agentPath }
+    foreach ($processName in @("gesta-agent.exe", "gesta-agent-hook-launcher.exe")) {
+        Get-CimInstance Win32_Process -Filter "Name = '$processName'" -ErrorAction SilentlyContinue |
+            Where-Object { $_.ExecutablePath -in @($agentPath, $hookPath) }
+    }
 )
 foreach ($process in $agentProcesses) {
     Stop-Process -Id $process.ProcessId -Force -ErrorAction SilentlyContinue
@@ -66,14 +69,16 @@ foreach ($process in $agentProcesses) {
     Wait-Process -Id $process.ProcessId -Timeout 10 -ErrorAction SilentlyContinue
 }
 
-for ($attempt = 0; $attempt -lt 20 -and (Test-Path -LiteralPath $agentPath); $attempt++) {
-    Remove-Item -LiteralPath $agentPath -Force -ErrorAction SilentlyContinue
-    if (Test-Path -LiteralPath $agentPath) {
-        Start-Sleep -Milliseconds 250
+foreach ($binaryPath in @($hookPath, $agentPath)) {
+    for ($attempt = 0; $attempt -lt 20 -and (Test-Path -LiteralPath $binaryPath); $attempt++) {
+        Remove-Item -LiteralPath $binaryPath -Force -ErrorAction SilentlyContinue
+        if (Test-Path -LiteralPath $binaryPath) {
+            Start-Sleep -Milliseconds 250
+        }
     }
-}
-if (Test-Path -LiteralPath $agentPath) {
-    throw "Could not remove agent binary after stopping its processes: $agentPath"
+    if (Test-Path -LiteralPath $binaryPath) {
+        throw "Could not remove agent binary after stopping its processes: $binaryPath"
+    }
 }
 if ($KeepData) {
     Remove-Item -LiteralPath $InstallDir -Force -ErrorAction SilentlyContinue
