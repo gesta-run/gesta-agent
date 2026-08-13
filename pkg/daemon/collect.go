@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/gesta-run/gesta-agent/pkg/model"
+	"github.com/gesta-run/gesta-agent/pkg/processutil"
 	"github.com/gesta-run/gesta-agent/pkg/util"
 )
 
@@ -141,6 +142,7 @@ func commandOutput(ctx context.Context, name string, args ...string) (string, er
 	defer cancel()
 	cmd := exec.CommandContext(cmdCtx, name, args...)
 	cmd.Env = os.Environ()
+	processutil.ConfigureBackgroundCommand(cmd)
 	out, err := cmd.CombinedOutput()
 	if cmdCtx.Err() != nil {
 		return string(out), cmdCtx.Err()

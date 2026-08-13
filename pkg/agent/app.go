@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -231,6 +233,7 @@ func install(args []string) error {
 }
 
 func installAgentHooks(agentPath string) error {
+	agentPath = preferredHookExecutable(agentPath, runtime.GOOS)
 	hookPath, err := hookinstall.InstallCodexPolicyHook(agentPath)
 	if err != nil {
 		return fmt.Errorf("install Codex policy hook: %w", err)
@@ -246,6 +249,18 @@ func installAgentHooks(agentPath string) error {
 	}
 	uiOK("Claude Code policy hook installed", claudeSettingsPath)
 	return nil
+}
+
+func preferredHookExecutable(agentPath, goos string) string {
+	if goos != "windows" {
+		return agentPath
+	}
+	candidate := filepath.Join(filepath.Dir(agentPath), agentupgrade.WindowsHookLauncherFilename)
+	info, err := os.Stat(candidate)
+	if err != nil || !info.Mode().IsRegular() {
+		return agentPath
+	}
+	return candidate
 }
 
 func status(args []string) error {

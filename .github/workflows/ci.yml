@@ -71,12 +71,19 @@ jobs:
         run: |
           go test ./pkg/hookinstall -run TestQuoteCommandPathForWindows
           go test ./pkg/agentupgrade
+          go test ./pkg/processutil
           go test ./pkg/atomicfile -run TestReplaceOverwritesExistingFileOnWindows
           go test ./pkg/eventqueue -run "TestQueueAppendAndDrain|TestQueueConcurrentDrainsCannotSendSameBatch"
 
       - name: Build Windows agent
-        run: go build -o bin/gesta-agent.exe ./cmd/gesta-agent
+        shell: bash
+        env:
+          GESTA_AGENT_TARGETS: windows/amd64
+        run: ./scripts/build-agent-binaries.sh ./bin 0.0.0-ci
 
       - name: Test Windows install and uninstall
         shell: pwsh
-        run: ./scripts/test-install-agent.ps1 -BuiltAgent ./bin/gesta-agent.exe
+        run: >-
+          ./scripts/test-install-agent.ps1
+          -BuiltAgent ./bin/gesta-agent-windows-amd64.exe
+          -BuiltHook ./bin/gesta-agent-hook-launcher-windows-amd64.exe

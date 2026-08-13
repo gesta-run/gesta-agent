@@ -15,6 +15,7 @@ import (
 	"github.com/gesta-run/gesta-agent/pkg/codexapp"
 	"github.com/gesta-run/gesta-agent/pkg/model"
 	"github.com/gesta-run/gesta-agent/pkg/privacy"
+	"github.com/gesta-run/gesta-agent/pkg/processutil"
 	"github.com/gesta-run/gesta-agent/pkg/util"
 )
 
@@ -252,6 +253,7 @@ func sqliteJSON(ctx context.Context, dbPath, sql string) ([]map[string]interface
 	cmdCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(cmdCtx, "sqlite3", "-readonly", "-json", dbPath, sql)
+	processutil.ConfigureBackgroundCommand(cmd)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s", err, privacy.RedactAndTruncate(strings.TrimSpace(string(out)), 2048))
