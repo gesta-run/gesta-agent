@@ -42,4 +42,13 @@ for target in $targets; do
     CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" \
       go build -trimpath -ldflags "-s -w -X github.com/gesta-run/gesta-agent/pkg/model.DaemonVersion=$version" -o "$out" ./cmd/gesta-agent
   )
+  if [ "$goos" = "windows" ]; then
+    hook_out="$abs_out_dir/gesta-agent-hook-launcher-$goos-$goarch.exe"
+    printf 'building %s\n' "$hook_out"
+    (
+      cd "$repo_root"
+      CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" \
+        go build -trimpath -ldflags "-s -w -H=windowsgui" -o "$hook_out" ./cmd/gesta-agent-hook-launcher
+    )
+  fi
 done

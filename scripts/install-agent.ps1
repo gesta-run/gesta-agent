@@ -56,9 +56,32 @@ function Stop-InstalledAgent([string]$AgentPath, [string]$TaskName) {
     if ($null -ne $task) {
         Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
     }
-    Get-CimInstance Win32_Process -Filter "Name = 'gesta-agent.exe'" -ErrorAction SilentlyContinue |
-        Where-Object { $_.ExecutablePath -eq $AgentPath } |
-        ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+    $hookPath = Join-Path (Split-Path -Parent $AgentPath) "gesta-agent-hook-launcher.exe"
+    foreach ($processName in @("gesta-agent.exe", "gesta-agent-hook-launcher.exe")) {
+        Get-CimInstance Win32_Process -Filter "Name = '$processName'" -ErrorAction SilentlyContinue |
+            Where-Object { $_.ExecutablePath -in @($AgentPath, $hookPath) } |
+            ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+    }
+}
+
+function Get-VerifiedArtifact(
+    [string]$Base,
+    [string]$AssetPath,
+    [string]$ChecksumText,
+    [string]$ChecksumsUrl,
+    [string]$Destination
+) {
+    $checksumPattern = "(?m)^([0-9a-fA-F]{64})\s+\*?" + [regex]::Escape($AssetPath) + "\s*$"
+    $checksumMatch = [regex]::Match($ChecksumText, $checksumPattern)
+    if (-not $checksumMatch.Success) {
+        throw "Checksum entry for $AssetPath is missing from $ChecksumsUrl."
+    }
+    Invoke-WebRequest -UseBasicParsing -Uri "$Base/$AssetPath" -OutFile $Destination
+    $expectedHash = $checksumMatch.Groups[1].Value.ToUpperInvariant()
+    $actualHash = (Get-FileHash -LiteralPath $Destination -Algorithm SHA256).Hash
+    if ($actualHash -ne $expectedHash) {
+        throw "Checksum mismatch for $AssetPath."
+    }
 }
 
 $version = [Environment]::OSVersion.Version
@@ -86,13 +109,16 @@ if ([string]::IsNullOrWhiteSpace($InstallDir)) {
     $InstallDir = Join-Path $dataDir "bin"
 }
 $agentPath = Join-Path $InstallDir "gesta-agent.exe"
+$hookPath = Join-Path $InstallDir "gesta-agent-hook-launcher.exe"
 $taskName = "Gesta Agent"
 $assetName = "gesta-agent-windows-amd64.exe"
+$hookAssetName = "gesta-agent-hook-launcher-windows-amd64.exe"
 $assetPath = "bin/$assetName"
+$hookAssetPath = "bin/$hookAssetName"
 $base = $BaseUrl.TrimEnd("/")
-$binaryUrl = "$base/$assetPath"
 $checksumsUrl = "$base/SHA256SUMS"
 $tempBinary = Join-Path ([IO.Path]::GetTempPath()) "gesta-agent-$PID.exe"
+$tempHookBinary = Join-Path ([IO.Path]::GetTempPath()) "gesta-agent-hook-launcher-$PID.exe"
 $tempChecksums = Join-Path ([IO.Path]::GetTempPath()) "gesta-agent-checksums-$PID.txt"
 
 try {
@@ -100,28 +126,21 @@ try {
     Set-PrivateDirectoryAcl -Path $dataDir
     New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
 
-    Write-Step "Downloading $assetName"
+    Write-Step "Downloading Windows agent bundle"
     Invoke-WebRequest -UseBasicParsing -Uri $checksumsUrl -OutFile $tempChecksums
     $checksumText = Get-Content -LiteralPath $tempChecksums -Raw
-    $checksumPattern = "(?m)^([0-9a-fA-F]{64})\s+\*?" + [regex]::Escape($assetPath) + "\s*$"
-    $checksumMatch = [regex]::Match($checksumText, $checksumPattern)
-    if (-not $checksumMatch.Success) {
-        throw "Checksum entry for $assetPath is missing from $checksumsUrl."
-    }
-    $expectedHash = $checksumMatch.Groups[1].Value.ToUpperInvariant()
-
-    Invoke-WebRequest -UseBasicParsing -Uri $binaryUrl -OutFile $tempBinary
-    $actualHash = (Get-FileHash -LiteralPath $tempBinary -Algorithm SHA256).Hash
-    if ($actualHash -ne $expectedHash) {
-        throw "Checksum mismatch for $assetName."
-    }
+    Get-VerifiedArtifact -Base $base -AssetPath $assetPath -ChecksumText $checksumText `
+        -ChecksumsUrl $checksumsUrl -Destination $tempBinary
+    Get-VerifiedArtifact -Base $base -AssetPath $hookAssetPath -ChecksumText $checksumText `
+        -ChecksumsUrl $checksumsUrl -Destination $tempHookBinary
     Write-Success "Checksum verified"
 
     Stop-InstalledAgent -AgentPath $agentPath -TaskName $taskName
     Copy-Item -LiteralPath $tempBinary -Destination $agentPath -Force
+    Copy-Item -LiteralPath $tempHookBinary -Destination $hookPath -Force
 
     Write-Step "Configuring Gesta hooks and state"
-    & $agentPath install --control-url $ControlUrl --apikey $ApiKey --agent-bin $agentPath --data-dir $dataDir
+    & $agentPath install --control-url $ControlUrl --apikey $ApiKey --agent-bin $hookPath --data-dir $dataDir
     if ($LASTEXITCODE -ne 0) {
         throw "gesta-agent install failed with exit code $LASTEXITCODE."
     }
@@ -170,6 +189,9 @@ try {
 } finally {
     if (Test-Path -LiteralPath $tempBinary) {
         Remove-Item -LiteralPath $tempBinary -Force -ErrorAction SilentlyContinue
+    }
+    if (Test-Path -LiteralPath $tempHookBinary) {
+        Remove-Item -LiteralPath $tempHookBinary -Force -ErrorAction SilentlyContinue
     }
     if (Test-Path -LiteralPath $tempChecksums) {
         Remove-Item -LiteralPath $tempChecksums -Force -ErrorAction SilentlyContinue

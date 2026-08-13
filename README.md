@@ -62,6 +62,11 @@ performs the integration setup, which is useful during installation. The helper
 script builds the daemon from this checkout when run locally, or downloads the
 published binary from the artifact site:
 
+On Windows, hooks run through `gesta-agent-hook-launcher.exe`, a no-console
+launcher that forwards standard input and output to `gesta-agent.exe` without
+opening a visible terminal window. Agent upgrades replace both Windows
+executables as one rollback-safe bundle.
+
 ```bash
 ./scripts/install.sh --control-url http://localhost:8080 --apikey sk-...
 cd "${HOME:-/tmp}" && curl -fsSL https://artifacts.gesta.run/gesta/install-agent.sh | bash -s -- --control-url http://localhost:8080 --apikey sk-...

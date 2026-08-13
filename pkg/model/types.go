@@ -39,15 +39,21 @@ type HeartbeatRequest struct {
 	Adapters      []AdapterStatus `json:"adapters"`
 }
 
+type AgentUpgradeArtifact struct {
+	URL    string `json:"url"`
+	SHA256 string `json:"sha256"`
+}
+
 type AgentUpgradePolicy struct {
-	Mode          string `json:"mode"`
-	Channel       string `json:"channel,omitempty"`
-	TargetVersion string `json:"target_version,omitempty"`
-	URL           string `json:"url,omitempty"`
-	SHA256        string `json:"sha256,omitempty"`
-	ChecksumURL   string `json:"checksum_url,omitempty"`
-	Required      bool   `json:"required,omitempty"`
-	RolloutID     string `json:"rollout_id,omitempty"`
+	Mode          string                `json:"mode"`
+	Channel       string                `json:"channel,omitempty"`
+	TargetVersion string                `json:"target_version,omitempty"`
+	URL           string                `json:"url,omitempty"`
+	SHA256        string                `json:"sha256,omitempty"`
+	ChecksumURL   string                `json:"checksum_url,omitempty"`
+	HookLauncher  *AgentUpgradeArtifact `json:"hook_launcher,omitempty"`
+	Required      bool                  `json:"required,omitempty"`
+	RolloutID     string                `json:"rollout_id,omitempty"`
 }
 
 type HeartbeatResponse struct {
