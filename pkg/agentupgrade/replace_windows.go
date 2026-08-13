@@ -38,6 +38,12 @@ func replaceAgentBinary(tmpPath, targetPath string, options replacementOptions) 
 			"--target-version", options.TargetVersion,
 		)
 	}
+	if options.HookLauncher.SourcePath != "" {
+		args = append(args,
+			"--hook-launcher-source", options.HookLauncher.SourcePath,
+			"--hook-launcher-target", options.HookLauncher.TargetPath,
+		)
+	}
 	if restartArgs := windowsUpgradeRestartArgs(os.Args); len(restartArgs) > 0 {
 		args = append(args, "--")
 		args = append(args, restartArgs...)

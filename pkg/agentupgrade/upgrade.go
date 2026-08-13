@@ -21,6 +21,7 @@ import (
 
 	"github.com/gesta-run/gesta-agent/pkg/atomicfile"
 	"github.com/gesta-run/gesta-agent/pkg/model"
+	"github.com/gesta-run/gesta-agent/pkg/processutil"
 )
 
 const upgradeHTTPTimeout = 2 * time.Minute
@@ -44,6 +45,12 @@ type UpgradeDecision struct {
 type replacementOptions struct {
 	StatePath     string
 	TargetVersion string
+	HookLauncher  replacementArtifact
+}
+
+type replacementArtifact struct {
+	SourcePath string
+	TargetPath string
 }
 
 func DecideAgentUpgrade(policy model.AgentUpgradePolicy, currentVersion string) UpgradeDecision {
@@ -62,14 +69,24 @@ func DecideAgentUpgrade(policy model.AgentUpgradePolicy, currentVersion string) 
 	if !ok {
 		return UpgradeDecision{Mode: mode, Reason: "could not compare daemon versions"}
 	}
-	if cmp >= 0 {
+	if cmp > 0 {
 		return UpgradeDecision{Mode: mode, Reason: "current version is already at or above target"}
+	}
+	if cmp == 0 && !hookLauncherUpgradeRequired(policy) {
+		return UpgradeDecision{Mode: mode, Reason: "current version and required artifacts are already installed"}
 	}
 	return UpgradeDecision{
 		Mode:        mode,
 		ShouldApply: mode == "auto" || mode == "required",
-		Reason:      "target version is newer",
+		Reason:      upgradeDecisionReason(cmp),
 	}
+}
+
+func upgradeDecisionReason(versionComparison int) string {
+	if versionComparison == 0 {
+		return "required companion artifact is missing or outdated"
+	}
+	return "target version is newer"
 }
 
 func ApplyAgentUpgradeWithState(policy model.AgentUpgradePolicy, statePath string) error {
@@ -140,7 +157,16 @@ func applyAgentUpgradeToPath(ctx context.Context, policy model.AgentUpgradePolic
 	if err := verifyDownloadedAgentVersion(ctx, tmpPath, targetVersion); err != nil {
 		return err
 	}
-	return replaceAgentBinary(tmpPath, targetPath, options)
+	hookLauncher, err := stageHookLauncherUpgrade(ctx, policy, targetPath)
+	if err != nil {
+		return err
+	}
+	options.HookLauncher = hookLauncher
+	err = replaceAgentBinary(tmpPath, targetPath, options)
+	if hookLauncher.SourcePath != "" && (err != nil || !UpgradeCompletesAfterExit()) {
+		_ = os.Remove(hookLauncher.SourcePath)
+	}
+	return err
 }
 
 func expectedUpgradeSHA(ctx context.Context, policy model.AgentUpgradePolicy) (string, error) {
@@ -248,7 +274,9 @@ func verifyFileSHA256(path, expected string) error {
 func verifyDownloadedAgentVersion(ctx context.Context, path, targetVersion string) error {
 	reqCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(reqCtx, path, "version").CombinedOutput()
+	cmd := exec.CommandContext(reqCtx, path, "version")
+	processutil.ConfigureBackgroundCommand(cmd)
+	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("verify downloaded version: %w: %s", err, strings.TrimSpace(string(out)))
 	}
