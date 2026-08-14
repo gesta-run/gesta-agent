@@ -116,6 +116,9 @@ func processUserPromptSubmit(ctx context.Context, event agentHookEvent, agentTyp
 		}
 	}
 	response := processOrganizationContext(cfg, event, userPrompt, agentType, source)
+	if agentType == "codex" {
+		response = processMemoryContext(ctx, cfg, event, userPrompt, response)
+	}
 	return injectPendingTurnNoticeBestEffort(ctx, cfg, event, agentType, response)
 }
 

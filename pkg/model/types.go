@@ -62,6 +62,7 @@ type HeartbeatResponse struct {
 	OutputClassification *OutputClassificationSettings `json:"output_classification,omitempty"`
 	DailyWorkTimezone    string                        `json:"daily_work_timezone,omitempty"`
 	TurnUsageTotal       string                        `json:"turn_usage_total,omitempty"`
+	Memory               *MemorySettings               `json:"memory,omitempty"`
 }
 
 type OutputClassificationSettings struct {

@@ -2,6 +2,7 @@ package controlclient
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,6 +12,17 @@ import (
 
 	"github.com/gesta-run/gesta-agent/pkg/model"
 )
+
+func TestStatusCodeUnwrapsHTTPStatusError(t *testing.T) {
+	err := fmt.Errorf("remember memory: %w", &httpStatusError{statusCode: http.StatusConflict})
+	status, ok := StatusCode(err)
+	if !ok || status != http.StatusConflict {
+		t.Fatalf("StatusCode() = %d, %t", status, ok)
+	}
+	if _, ok := StatusCode(errors.New("network failed")); ok {
+		t.Fatal("non-HTTP errors must not expose a status code")
+	}
+}
 
 func TestClientHeartbeatSendsDaemonTokenAndHostType(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

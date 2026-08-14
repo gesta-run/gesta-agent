@@ -21,6 +21,8 @@ const (
 	healthHeaderName  = "X-Gesta-Agent"
 	healthHeaderValue = "activity-ui-v1"
 	daemonHeaderName  = "X-Gesta-Daemon-ID"
+	memoryHeaderName  = "X-Gesta-Memory"
+	memoryHeaderValue = "proxy-v1"
 )
 
 type Server struct {
@@ -28,6 +30,10 @@ type Server struct {
 }
 
 func Start(dataDir, daemonID string, logger *slog.Logger) (*Server, error) {
+	return StartWithMemory(dataDir, daemonID, logger, nil)
+}
+
+func StartWithMemory(dataDir, daemonID string, logger *slog.Logger, memory MemoryService) (*Server, error) {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -35,14 +41,14 @@ func Start(dataDir, daemonID string, logger *slog.Logger) (*Server, error) {
 	if err != nil {
 		return nil, fmt.Errorf("listen on %s: %w", Address, err)
 	}
-	handler := newHandlerWithDaemonID(activitydetail.NewStore(dataDir), daemonID)
+	handler := newHandlerWithMemory(activitydetail.NewStore(dataDir), daemonID, memory)
 	server := &Server{
 		httpServer: &http.Server{
 			Addr:              Address,
 			Handler:           handler,
 			ReadHeaderTimeout: 2 * time.Second,
 			ReadTimeout:       3 * time.Second,
-			WriteTimeout:      3 * time.Second,
+			WriteTimeout:      125 * time.Second,
 			IdleTimeout:       15 * time.Second,
 			MaxHeaderBytes:    8 * 1024,
 		},
@@ -73,6 +79,14 @@ func Healthy(parent context.Context) bool {
 }
 
 func HealthyFor(parent context.Context, daemonID string) bool {
+	return healthyFor(parent, daemonID, false)
+}
+
+func MemoryHealthyFor(parent context.Context, daemonID string) bool {
+	return healthyFor(parent, daemonID, true)
+}
+
+func healthyFor(parent context.Context, daemonID string, requireMemory bool) bool {
 	ctx, cancel := context.WithTimeout(parent, 75*time.Millisecond)
 	defer cancel()
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, BaseURL+"/healthz", nil)
@@ -94,6 +108,9 @@ func HealthyFor(parent context.Context, daemonID string) bool {
 		response.Header.Get(healthHeaderName) != healthHeaderValue {
 		return false
 	}
+	if requireMemory && response.Header.Get(memoryHeaderName) != memoryHeaderValue {
+		return false
+	}
 	daemonID = strings.TrimSpace(daemonID)
 	return daemonID == "" || response.Header.Get(daemonHeaderName) == daemonID
 }
@@ -102,13 +119,19 @@ type handler struct {
 	store    activitydetail.Store
 	template *template.Template
 	daemonID string
+	memory   MemoryService
 }
 
 func newHandlerWithDaemonID(store activitydetail.Store, daemonID string) http.Handler {
+	return newHandlerWithMemory(store, daemonID, nil)
+}
+
+func newHandlerWithMemory(store activitydetail.Store, daemonID string, memory MemoryService) http.Handler {
 	return handler{
 		store:    store,
 		template: pageTemplates,
 		daemonID: strings.TrimSpace(daemonID),
+		memory:   memory,
 	}
 }
 
@@ -116,6 +139,10 @@ func (h handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	setSecurityHeaders(writer.Header())
 	if !allowedHost(request.Host) {
 		http.Error(writer, "Misdirected Request", http.StatusMisdirectedRequest)
+		return
+	}
+	if strings.HasPrefix(request.URL.Path, "/api/v1/memory/") {
+		h.serveMemory(writer, request)
 		return
 	}
 	if request.Method != http.MethodGet && request.Method != http.MethodHead {
@@ -127,6 +154,9 @@ func (h handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set(healthHeaderName, healthHeaderValue)
 		if h.daemonID != "" {
 			writer.Header().Set(daemonHeaderName, h.daemonID)
+		}
+		if h.memory != nil {
+			writer.Header().Set(memoryHeaderName, memoryHeaderValue)
 		}
 		writer.WriteHeader(http.StatusNoContent)
 		return
@@ -152,9 +182,7 @@ func (h handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	if request.Method == http.MethodHead {
 		return
 	}
-	if err := h.template.ExecuteTemplate(writer, "activity.html", view); err != nil {
-		return
-	}
+	_ = h.template.ExecuteTemplate(writer, "activity.html", view)
 }
 
 func (h handler) renderUnavailable(writer http.ResponseWriter, method string, status int) {
