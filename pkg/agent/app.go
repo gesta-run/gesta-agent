@@ -17,6 +17,7 @@ import (
 	"github.com/gesta-run/gesta-agent/pkg/daemon"
 	"github.com/gesta-run/gesta-agent/pkg/hookinstall"
 	"github.com/gesta-run/gesta-agent/pkg/localactivity"
+	"github.com/gesta-run/gesta-agent/pkg/memoryproxy"
 	"github.com/gesta-run/gesta-agent/pkg/model"
 )
 
@@ -101,7 +102,9 @@ func run(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	localActivityServer, localActivityErr := localactivity.Start(cfg.DataDir, cfg.DaemonID, slog.Default())
+	localActivityServer, localActivityErr := localactivity.StartWithMemory(
+		cfg.DataDir, cfg.DaemonID, slog.Default(), memoryproxy.New(cfg),
+	)
 	if localActivityErr != nil {
 		slog.Warn("local activity server unavailable", "error", localActivityErr)
 	} else {

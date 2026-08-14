@@ -299,6 +299,13 @@ func (r *Runner) sendHeartbeat(health string, adapters []model.AdapterStatus) (m
 	if r.cfg.TurnUsageTotal != turnusage.TotalEncodingAllTier {
 		r.cfg.TurnUsageTotal = turnusage.TotalEncodingEffective
 	}
+	memorySettings := model.MemorySettings{}
+	if response.Memory != nil {
+		memorySettings = *response.Memory
+	}
+	if err := rulecache.SaveMemorySettingsCache(r.cfg.DataDir, memorySettings, time.Now().UTC()); err != nil {
+		return model.HeartbeatResponse{}, fmt.Errorf("save memory settings: %w", err)
+	}
 	if response.OutputClassification == nil {
 		return response, nil
 	}
