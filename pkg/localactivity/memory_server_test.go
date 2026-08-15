@@ -48,6 +48,9 @@ func TestMemoryRememberReturnsConflictWhileWriteIsInProgress(t *testing.T) {
 	if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), "memory_write_in_progress") {
 		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
 	}
+	if response.Header().Get("Retry-After") != "5" {
+		t.Fatalf("Retry-After = %q", response.Header().Get("Retry-After"))
+	}
 }
 
 func TestMemorySearchDerivesWorkspaceWithoutForwardingPath(t *testing.T) {

@@ -3,6 +3,7 @@ package memoryproxy
 import (
 	"context"
 	"errors"
+	"sort"
 	"strings"
 	"time"
 
@@ -25,7 +26,7 @@ var (
 const (
 	contextRequestTimeout  = 2500 * time.Millisecond
 	searchRequestTimeout   = 4 * time.Second
-	rememberRequestTimeout = 115 * time.Second
+	rememberRequestTimeout = 185 * time.Second
 )
 
 type Service struct {
@@ -86,13 +87,39 @@ func (s *Service) Remember(parent context.Context, content string, workspace mod
 	ctx, cancel := context.WithTimeout(parent, rememberRequestTimeout)
 	defer cancel()
 	response, err := s.client.RememberMemory(ctx, model.MemoryRememberRequest{
-		RequestID: util.NewID("memreq"), DaemonID: s.config.DaemonID,
-		Content: content, OccurredAt: time.Now().UTC(), Workspace: workspace,
+		RequestID: memoryRequestID(s.config.DaemonID, content, workspace),
+		DaemonID:  s.config.DaemonID,
+		Content:   content, OccurredAt: time.Now().UTC(), Workspace: workspace,
 	})
 	if status, ok := controlclient.StatusCode(err); ok && status == 409 {
 		return model.MemoryRememberResponse{}, ErrInProgress
 	}
 	return response, err
+}
+
+func memoryRequestID(daemonID, content string, workspace model.MemoryWorkspace) string {
+	content = strings.ReplaceAll(strings.TrimSpace(content), "\r\n", "\n")
+	content = strings.ReplaceAll(content, "\r", "\n")
+	childDirs := make([]string, 0, len(workspace.ChildDirs))
+	seenChildDirs := map[string]struct{}{}
+	for _, value := range workspace.ChildDirs {
+		value = strings.ToLower(strings.TrimSpace(value))
+		if value == "" {
+			continue
+		}
+		if _, exists := seenChildDirs[value]; !exists {
+			seenChildDirs[value] = struct{}{}
+			childDirs = append(childDirs, value)
+		}
+	}
+	sort.Strings(childDirs)
+	material := strings.Join([]string{
+		strings.TrimSpace(daemonID),
+		content,
+		strings.ToLower(strings.TrimSpace(workspace.CWDName)),
+		strings.Join(childDirs, "\x00"),
+	}, "\x00")
+	return "memreq_" + util.HashString(material)
 }
 
 func (s *Service) authorizeText(text string) error {

@@ -91,3 +91,43 @@ func TestRememberPreservesWriteInProgressSemantics(t *testing.T) {
 		t.Fatalf("error = %v, public = %q", err, PublicError(err))
 	}
 }
+
+func TestRememberUsesStableRequestIDForSafeRetry(t *testing.T) {
+	requestIDs := []string{}
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		var received model.MemoryRememberRequest
+		if err := json.NewDecoder(request.Body).Decode(&received); err != nil {
+			t.Errorf("decode request: %v", err)
+		}
+		requestIDs = append(requestIDs, received.RequestID)
+		_ = json.NewEncoder(writer).Encode(model.MemoryRememberResponse{Status: "stored", EpisodeID: "episode"})
+	}))
+	defer server.Close()
+
+	config := daemon.NewDirectRuntimeConfig(server.URL, "test-token")
+	config.DataDir = t.TempDir()
+	if err := rulecache.SaveMemorySettingsCache(config.DataDir, model.MemorySettings{Enabled: true}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if err := rulecache.SaveSensitiveRuleCache(config.DataDir, []model.SensitiveRule{}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	service := New(config)
+	workspace := model.MemoryWorkspace{CWDName: "Gesta", ChildDirs: []string{"pkg", "docs"}}
+	for attempt := 0; attempt < 2; attempt++ {
+		if _, err := service.Remember(context.Background(), "stable fact\r\n", workspace); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(requestIDs) != 2 || requestIDs[0] != requestIDs[1] {
+		t.Fatalf("request IDs = %#v", requestIDs)
+	}
+	otherWorkspaceID := memoryRequestID(
+		config.DaemonID,
+		"stable fact",
+		model.MemoryWorkspace{CWDName: "other"},
+	)
+	if requestIDs[0] == otherWorkspaceID {
+		t.Fatal("different workspaces must not share a retry identity")
+	}
+}

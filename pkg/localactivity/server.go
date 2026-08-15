@@ -48,7 +48,7 @@ func StartWithMemory(dataDir, daemonID string, logger *slog.Logger, memory Memor
 			Handler:           handler,
 			ReadHeaderTimeout: 2 * time.Second,
 			ReadTimeout:       3 * time.Second,
-			WriteTimeout:      125 * time.Second,
+			WriteTimeout:      195 * time.Second,
 			IdleTimeout:       15 * time.Second,
 			MaxHeaderBytes:    8 * 1024,
 		},
