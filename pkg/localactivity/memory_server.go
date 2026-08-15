@@ -32,7 +32,7 @@ type rememberRequest struct {
 
 const (
 	localMemorySearchTimeout   = 4500 * time.Millisecond
-	localMemoryRememberTimeout = 120 * time.Second
+	localMemoryRememberTimeout = 190 * time.Second
 )
 
 func (h handler) serveMemory(writer http.ResponseWriter, request *http.Request) {
@@ -106,6 +106,7 @@ func writeProxyError(writer http.ResponseWriter, err error) {
 		status = http.StatusServiceUnavailable
 	case errors.Is(err, memoryproxy.ErrInProgress):
 		status = http.StatusConflict
+		writer.Header().Set("Retry-After", "5")
 	}
 	writeMemoryError(writer, status, memoryproxy.PublicError(err))
 }
