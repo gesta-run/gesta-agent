@@ -15,7 +15,7 @@ func TestNewActivityViewBuildsConsoleSummaryAndRuleKinds(t *testing.T) {
 		CreatedAt:  createdAt,
 		ExpiresAt:  createdAt.Add(24 * time.Hour),
 		AgentType:  "claude_code",
-		ContextMatches: []turnreceipt.ContextRuleMatch{
+		ContextMatches: []activitydetail.ContextRuleMatch{
 			{Name: "Review standards", MatchType: "regex", Priority: 90, Content: "Review the diff."},
 			{Name: "Repository guidance", MatchType: "keyword_any", Priority: 70, Content: "Follow repository guidance."},
 		},
@@ -47,7 +47,7 @@ func TestNewActivityViewBuildsConsoleSummaryAndRuleKinds(t *testing.T) {
 
 func TestNewActivityViewKeepsOneMeasuredOutput(t *testing.T) {
 	view := newActivityView(activitydetail.Detail{
-		ContextMatches: []turnreceipt.ContextRuleMatch{
+		ContextMatches: []activitydetail.ContextRuleMatch{
 			{Name: "Review standards", MatchType: "regex", Content: "Review the diff."},
 		},
 		Output: turnreceipt.OutputSummary{TestLines: 1},

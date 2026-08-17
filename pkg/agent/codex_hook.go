@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gesta-run/gesta-agent/pkg/activitydetail"
 	"github.com/gesta-run/gesta-agent/pkg/controlclient"
 	"github.com/gesta-run/gesta-agent/pkg/daemon"
 	"github.com/gesta-run/gesta-agent/pkg/model"
@@ -32,6 +33,7 @@ type agentHookEvent struct {
 	CWD            string      `json:"cwd"`
 	Model          string      `json:"model"`
 	TranscriptPath string      `json:"transcript_path"`
+	ActivityID     string      `json:"-"`
 	PermissionMode string      `json:"permission_mode"`
 }
 
@@ -104,7 +106,6 @@ func processUserPromptSubmit(ctx context.Context, event agentHookEvent, agentTyp
 	}
 
 	cfg, _ := guardConfig()
-	beginTurnReceiptBestEffort(cfg, event, agentType)
 	findings := detectSensitivePrompt(cfg, userPrompt)
 	if len(findings) > 0 {
 		recordSensitiveFindingsBestEffortWithConfig(cfg, event, findings, source, agentType)
@@ -114,6 +115,12 @@ func processUserPromptSubmit(ctx context.Context, event agentHookEvent, agentTyp
 				"reason":   gestaSensitivePromptDeniedMessage,
 			}
 		}
+	}
+	beginTurnReceiptBestEffort(cfg, event, agentType)
+	if detail, err := activitydetail.NewStore(cfg.DataDir).Begin(agentType); err != nil {
+		fmt.Fprintf(os.Stderr, "gesta-agent hook: activity detail was not started: %v\n", err)
+	} else {
+		event.ActivityID = detail.ActivityID
 	}
 	response := processOrganizationContext(cfg, event, userPrompt, agentType, source)
 	if agentType == "codex" {

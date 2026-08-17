@@ -7,12 +7,12 @@ import (
 )
 
 func TestMemoryScoreJSONContract(t *testing.T) {
-	encoded, err := json.Marshal(Memory{GraphRankScore: 0.7, WorkspaceBoost: 0.2, Score: 0.9})
+	encoded, err := json.Marshal(Memory{RelevanceScore: 0.7, WorkspaceBoost: 0.2, Score: 0.9})
 	if err != nil {
 		t.Fatal(err)
 	}
 	body := string(encoded)
-	for _, field := range []string{`"graph_rank_score":0.7`, `"workspace_boost":0.2`, `"score":0.9`} {
+	for _, field := range []string{`"relevance_score":0.7`, `"workspace_boost":0.2`, `"score":0.9`} {
 		if !strings.Contains(body, field) {
 			t.Fatalf("memory contract missing %s: %s", field, body)
 		}
@@ -36,12 +36,12 @@ func TestMemorySearchWireContract(t *testing.T) {
 	}
 
 	response, err := json.Marshal(MemorySearchResponse{Memories: []Memory{{
-		FactID: "fact", Content: "stable fact", GraphRankScore: 0.7, WorkspaceBoost: 0.2, Score: 0.9,
+		FactID: "fact", Content: "stable fact", RelevanceScore: 0.7, WorkspaceBoost: 0.2, Score: 0.9,
 	}}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	const expectedResponse = `{"memories":[{"fact_id":"fact","content":"stable fact","graph_rank_score":0.7,"workspace_boost":0.2,"score":0.9}],"truncated":false}`
+	const expectedResponse = `{"memories":[{"fact_id":"fact","content":"stable fact","relevance_score":0.7,"workspace_boost":0.2,"score":0.9}],"truncated":false}`
 	if string(response) != expectedResponse {
 		t.Fatalf("search response contract = %s", response)
 	}

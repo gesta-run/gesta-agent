@@ -57,7 +57,7 @@ func (h handler) serveMemory(writer http.ResponseWriter, request *http.Request) 
 	workspaceContext := workspace.Resolve(request.Header.Get("X-Gesta-Cwd"))
 	switch request.URL.Path {
 	case "/api/v1/memory/search":
-		serveMemorySearch(writer, request, h.memory, workspaceContext)
+		h.serveMemorySearch(writer, request, workspaceContext)
 	case "/api/v1/memory/remember":
 		serveMemoryRemember(writer, request, h.memory, workspaceContext)
 	default:
@@ -65,17 +65,20 @@ func (h handler) serveMemory(writer http.ResponseWriter, request *http.Request) 
 	}
 }
 
-func serveMemorySearch(writer http.ResponseWriter, request *http.Request, service MemoryService, workspaceContext model.MemoryWorkspace) {
+func (h handler) serveMemorySearch(writer http.ResponseWriter, request *http.Request, workspaceContext model.MemoryWorkspace) {
 	var body searchRequest
 	if !decodeLocalMemoryRequest(writer, request, &body) {
 		return
 	}
 	ctx, cancel := context.WithTimeout(request.Context(), localMemorySearchTimeout)
 	defer cancel()
-	response, err := service.Search(ctx, body.Query, body.Limit, workspaceContext)
+	response, err := h.memory.Search(ctx, body.Query, body.Limit, workspaceContext)
 	if err != nil {
 		writeProxyError(writer, err)
 		return
+	}
+	if activityID := request.Header.Get(ActivityHeaderName); activityID != "" {
+		_ = h.store.RecordMemories(activityID, response.Memories)
 	}
 	writeMemoryJSON(writer, http.StatusOK, response)
 }

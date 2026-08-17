@@ -138,28 +138,22 @@ Claude Code file writes and MCP input are measured after successful execution at
 its public `PostToolUse` boundary. Raw diffs and tool arguments are discarded
 locally; only counts and hashed correlation metadata are queued.
 
-At the end of a primary-agent turn, Codex and Claude Code prepare one concise
-`Gesta governance` line when a keyword or regex Organization Context rule matched,
-or measurable output was durably queued. Every-prompt context remains active but
-does not count toward the notice. The notice includes only the targeted context
-append count and output summary, never rule names. `Stop` stores bounded
-structured activity locally without blocking or starting another
-model response. The next allowed prompt in the same session consumes that state,
-creates a local detail only when the loopback UI is healthy, and receives an
-internal instruction to place the formatted line at the bottom of its normal
-response. Turns
-with neither a targeted match nor output remain silent. Blocked prompts do not
-consume pending notices. Local turn state contains only hashed identities,
-bounded targeted-rule snapshots, aggregate counts, and at most one pending notice
-per agent and session; all expire after 24 hours. When targeted context matched
-and the daemon's loopback activity UI is available at notice consumption time,
-the notice includes a `Details` link to
-`127.0.0.1:3333`. The branded, server-rendered page shows rule names, match
-types, priorities, the exact targeted context appended for that turn, and
-aggregate output. It never stores or renders prompt text, keywords, regular
-expressions, file paths, or file contents. Context snapshots stay on the local
-machine and are never added to the Control event payload. The detail store is
-capped at 256 records with a 24-hour TTL.
+Each allowed primary-agent prompt creates one bounded local activity record when
+the matching loopback daemon is healthy. Keyword and regex Organization Context
+matches are recorded immediately; every-prompt context remains active but does
+not count. Automatic recall and successful in-turn local memory searches add
+unique recalled facts to the same record. Immediately before the final response,
+the model calls the loopback activity notice endpoint and emits its single
+formatted line: current context count, current memory recall count, and equivalent
+LOC from the latest completed turn. The `Stop` hook computes that output for the
+next prompt because current-turn output is not complete earlier.
+
+Equivalent LOC uses the same eligible-output formula as Control: code,
+configuration, and test lines count directly; documentation and other prose count
+one equivalent line per eight words. The local `Details` link shows current rule
+and memory snapshots plus the latest completed output. It never stores prompt
+text, keywords, regular expressions, file paths, file contents, or raw tool
+arguments. Local activity records are capped at 256 records with a 24-hour TTL.
 
 ## Checks
 

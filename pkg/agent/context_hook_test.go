@@ -15,7 +15,6 @@ import (
 	"github.com/gesta-run/gesta-agent/pkg/eventqueue"
 	"github.com/gesta-run/gesta-agent/pkg/model"
 	"github.com/gesta-run/gesta-agent/pkg/rulecache"
-	"github.com/gesta-run/gesta-agent/pkg/turnreceipt"
 )
 
 func TestCodexHookInjectsOrganizationContextWithoutUploadingPrompt(t *testing.T) {
@@ -172,7 +171,7 @@ Please review this layout.
 }
 
 func TestCodexHookMatchesRequestWithoutFileEnvelope(t *testing.T) {
-	cfg := setupContextHookTest(t, []model.ContextRule{
+	setupContextHookTest(t, []model.ContextRule{
 		{RuleID: "crule_ambient", Name: "Ambient only", Status: "active", MatchType: "keyword_any", Keywords: []string{"activity"}, AgentType: "codex", Priority: 100, ContextContent: "AMBIENT CONTEXT MUST NOT APPEAR"},
 		{RuleID: "crule_pr", Name: "PR Standards", Status: "active", MatchType: "keyword_any", Keywords: []string{"PR"}, AgentType: "codex", Priority: 90, ContextContent: "Apply the PR standard."},
 	})
@@ -203,18 +202,6 @@ Current URL: http://127.0.0.1:3333/activity/example
 		t.Fatalf("ambient UI context matched a rule: %s", data)
 	}
 
-	receipt, found, err := turnreceipt.NewStore(cfg.DataDir).Consume(
-		"codex",
-		sessionID,
-		turnID,
-	)
-	if err != nil || !found {
-		t.Fatalf("turn receipt found = %v, err = %v", found, err)
-	}
-	if len(receipt.ContextMatches) != 1 ||
-		receipt.ContextMatches[0].RuleID != "crule_pr" {
-		t.Fatalf("turn receipt context matches = %#v", receipt.ContextMatches)
-	}
 }
 
 func TestCodexHookSkipsContextForMalformedFileEnvelope(t *testing.T) {
