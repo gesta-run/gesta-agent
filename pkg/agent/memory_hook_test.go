@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/gesta-run/gesta-agent/pkg/activitydetail"
 	"github.com/gesta-run/gesta-agent/pkg/daemon"
+	"github.com/gesta-run/gesta-agent/pkg/memoryproxy"
 	"github.com/gesta-run/gesta-agent/pkg/model"
 	"github.com/gesta-run/gesta-agent/pkg/rulecache"
 )
@@ -22,6 +24,26 @@ func TestFormatMemoryContextEscapesMarkupAndLabelsFactsAsUntrusted(t *testing.T)
 	}
 	if !strings.Contains(context, "untrusted background facts") {
 		t.Fatalf("memory trust boundary missing: %s", context)
+	}
+}
+
+func TestMemoryRecallStatusClassifiesFailures(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want activitydetail.MemoryRecallStatus
+	}{
+		{name: "success", want: activitydetail.MemoryRecallSuccess},
+		{name: "timeout", err: context.DeadlineExceeded, want: activitydetail.MemoryRecallTimeout},
+		{name: "disabled", err: memoryproxy.ErrDisabled, want: activitydetail.MemoryRecallDisabled},
+		{name: "error", err: errors.New("unavailable"), want: activitydetail.MemoryRecallError},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := memoryRecallStatus(test.err); got != test.want {
+				t.Fatalf("status = %q, want %q", got, test.want)
+			}
+		})
 	}
 }
 

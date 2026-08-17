@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gesta-run/gesta-agent/pkg/activitydetail"
 	"github.com/gesta-run/gesta-agent/pkg/memoryproxy"
 	"github.com/gesta-run/gesta-agent/pkg/model"
 	"github.com/gesta-run/gesta-agent/pkg/workspace"
@@ -78,7 +79,7 @@ func (h handler) serveMemorySearch(writer http.ResponseWriter, request *http.Req
 		return
 	}
 	if activityID := request.Header.Get(ActivityHeaderName); activityID != "" {
-		_ = h.store.RecordMemories(activityID, response.Memories)
+		_ = h.store.RecordMemoryRecall(activityID, activitydetail.MemoryRecallSuccess, response.Memories)
 	}
 	writeMemoryJSON(writer, http.StatusOK, response)
 }
