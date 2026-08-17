@@ -9,11 +9,8 @@ import (
 	"github.com/gesta-run/gesta-agent/pkg/activitydetail"
 	"github.com/gesta-run/gesta-agent/pkg/contextmatch"
 	"github.com/gesta-run/gesta-agent/pkg/daemon"
-	"github.com/gesta-run/gesta-agent/pkg/localactivity"
 	"github.com/gesta-run/gesta-agent/pkg/turnreceipt"
 )
-
-var localActivityUIHealthy = localactivity.Healthy
 
 func beginTurnReceiptBestEffort(cfg daemon.Config, event agentHookEvent, agentType string) {
 	sessionID, turnID := turnReceiptIdentity(event)
@@ -25,15 +22,14 @@ func beginTurnReceiptBestEffort(cfg daemon.Config, event agentHookEvent, agentTy
 func recordTurnContextMatchesBestEffort(
 	cfg daemon.Config,
 	event agentHookEvent,
-	agentType string,
 	result contextmatch.Result,
 ) {
-	matches := make([]turnreceipt.ContextRuleMatch, 0, len(result.Rules))
+	matches := make([]activitydetail.ContextRuleMatch, 0, len(result.Rules))
 	for _, rule := range result.Rules {
 		if strings.EqualFold(strings.TrimSpace(rule.MatchType), "always") {
 			continue
 		}
-		matches = append(matches, turnreceipt.ContextRuleMatch{
+		matches = append(matches, activitydetail.ContextRuleMatch{
 			RuleID:    rule.RuleID,
 			Name:      rule.Name,
 			MatchType: rule.MatchType,
@@ -44,14 +40,10 @@ func recordTurnContextMatchesBestEffort(
 	if len(matches) == 0 {
 		return
 	}
-	sessionID, turnID := turnReceiptIdentity(event)
-	if err := turnreceipt.NewStore(cfg.DataDir).RecordContextMatches(
-		agentType,
-		sessionID,
-		turnID,
-		matches,
-	); err != nil {
-		fmt.Fprintf(os.Stderr, "gesta-agent hook: context match receipt was not recorded: %v\n", err)
+	if event.ActivityID != "" {
+		if err := activitydetail.NewStore(cfg.DataDir).RecordContext(event.ActivityID, matches); err != nil {
+			fmt.Fprintf(os.Stderr, "gesta-agent hook: current context activity was not recorded: %v\n", err)
+		}
 	}
 }
 
@@ -106,7 +98,7 @@ func processTurnStop(
 	if err := turnreceipt.NewStore(cfg.DataDir).SavePending(
 		agentType,
 		sessionID,
-		receipt,
+		receipt.Output,
 	); err != nil {
 		fmt.Fprintf(os.Stderr, "gesta-agent hook: pending turn notice was not saved: %v\n", err)
 	}
@@ -120,40 +112,26 @@ func injectPendingTurnNoticeBestEffort(
 	agentType string,
 	response map[string]interface{},
 ) map[string]interface{} {
-	messages := make([]string, 0, 2)
+	contexts := make([]string, 0, 2)
 	sessionID, _ := turnReceiptIdentity(event)
 	pending, found, err := turnreceipt.NewStore(cfg.DataDir).ConsumePending(agentType, sessionID)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "gesta-agent hook: pending turn notice was not consumed: %v\n", err)
-	} else if found {
-		receipt := turnreceipt.Receipt{
-			ContextMatches: pending.ContextMatches,
-			Output:         pending.Output,
+	} else if found && event.ActivityID != "" {
+		if recordErr := activitydetail.NewStore(cfg.DataDir).RecordOutput(event.ActivityID, pending.Output); recordErr != nil {
+			fmt.Fprintf(os.Stderr, "gesta-agent hook: previous output activity was not recorded: %v\n", recordErr)
 		}
-		detailURL := ""
-		if len(receipt.ContextMatches) > 0 && localActivityUIHealthy(ctx) {
-			detail, detailErr := activitydetail.NewStore(cfg.DataDir).Create(
-				agentType,
-				receipt.ContextMatches,
-				receipt.Output,
-			)
-			if detailErr != nil {
-				fmt.Fprintf(os.Stderr, "gesta-agent hook: local activity detail was not saved: %v\n", detailErr)
-			} else {
-				detailURL = localactivity.ActivityURL(detail.ActivityID)
-			}
-		}
-		if message := formatTurnCompletionNoticeWithDetails(receipt, detailURL); message != "" {
-			messages = append(messages, message)
-		}
+	}
+	if event.ActivityID != "" {
+		contexts = append(contexts, activityNoticeEndpointContext(event.ActivityID))
 	}
 	if message := dailyRecapNoticeBestEffort(cfg); message != "" {
-		messages = append(messages, message)
+		contexts = append(contexts, pendingTurnNoticeContext(message))
 	}
-	if len(messages) == 0 {
+	if len(contexts) == 0 {
 		return response
 	}
-	return mergeUserPromptAdditionalContext(response, turnNoticesContext(messages))
+	return mergeUserPromptAdditionalContext(response, strings.Join(contexts, "\n\n"))
 }
 
 func mergeUserPromptAdditionalContext(

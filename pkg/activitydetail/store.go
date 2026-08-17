@@ -12,16 +12,21 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gesta-run/gesta-agent/pkg/atomicfile"
+	"github.com/gesta-run/gesta-agent/pkg/model"
 	"github.com/gesta-run/gesta-agent/pkg/turnreceipt"
 	"github.com/gesta-run/gesta-agent/pkg/util"
 )
 
 const (
-	schemaVersion          = 2
+	schemaVersion          = 3
 	maxActivityDetails     = 256
 	maxActivityRecordBytes = 64 * 1024
+	maxMemoryKeys          = 256
+	maxMemorySamples       = 24
+	maxMemoryContentBytes  = 2048
 	maxCleanupVisits       = 128
 	maxCleanupRemovals     = 32
 	detailTTL              = 24 * time.Hour
@@ -36,13 +41,20 @@ var (
 )
 
 type Detail struct {
-	SchemaVersion  int                            `json:"schema_version"`
-	ActivityID     string                         `json:"activity_id"`
-	CreatedAt      time.Time                      `json:"created_at"`
-	ExpiresAt      time.Time                      `json:"expires_at"`
-	AgentType      string                         `json:"agent_type"`
-	ContextMatches []turnreceipt.ContextRuleMatch `json:"context_matches"`
-	Output         turnreceipt.OutputSummary      `json:"output"`
+	SchemaVersion  int                       `json:"schema_version"`
+	ActivityID     string                    `json:"activity_id"`
+	CreatedAt      time.Time                 `json:"created_at"`
+	ExpiresAt      time.Time                 `json:"expires_at"`
+	AgentType      string                    `json:"agent_type"`
+	ContextMatches []ContextRuleMatch        `json:"context_matches"`
+	MemoryCount    int                       `json:"memory_count"`
+	MemoryKeys     []string                  `json:"memory_keys,omitempty"`
+	Memories       []RecalledMemory          `json:"memories,omitempty"`
+	Output         turnreceipt.OutputSummary `json:"output"`
+}
+
+type RecalledMemory struct {
+	Content string `json:"content"`
 }
 
 type Store struct {
@@ -59,15 +71,31 @@ func NewStore(dataDir string) Store {
 	}
 }
 
+func (s Store) Begin(agentType string) (Detail, error) {
+	return s.create(agentType, nil, turnreceipt.OutputSummary{})
+}
+
 func (s Store) Create(
 	agentType string,
-	matches []turnreceipt.ContextRuleMatch,
+	matches []ContextRuleMatch,
 	output turnreceipt.OutputSummary,
 ) (Detail, error) {
 	agentType = normalizeAgentType(agentType)
-	matches = turnreceipt.NormalizeContextMatches(matches)
+	matches = normalizeContextMatches(matches)
 	if s.dataDir == "" || agentType == "" || len(matches) == 0 {
 		return Detail{}, errors.New("activity detail requires a data directory, agent type, and context matches")
+	}
+	return s.create(agentType, matches, output)
+}
+
+func (s Store) create(
+	agentType string,
+	matches []ContextRuleMatch,
+	output turnreceipt.OutputSummary,
+) (Detail, error) {
+	agentType = normalizeAgentType(agentType)
+	if s.dataDir == "" || agentType == "" {
+		return Detail{}, errors.New("activity detail requires a data directory and agent type")
 	}
 	now := s.now()
 	detail := Detail{
@@ -87,7 +115,7 @@ func (s Store) Create(
 		return Detail{}, err
 	}
 	defer unlock()
-	if err := s.write(detail); err != nil {
+	if err := s.writeNew(detail); err != nil {
 		return Detail{}, err
 	}
 	if err := s.ensureCapacityLocked(maxActivityDetails, detail.ActivityID+".json"); err != nil {
@@ -95,6 +123,54 @@ func (s Store) Create(
 		return Detail{}, err
 	}
 	return detail, nil
+}
+
+func (s Store) RecordContext(activityID string, matches []ContextRuleMatch) error {
+	matches = normalizeContextMatches(matches)
+	return s.update(activityID, func(detail *Detail) {
+		detail.ContextMatches = matches
+	})
+}
+
+func (s Store) RecordMemories(activityID string, memories []model.Memory) error {
+	if len(memories) == 0 {
+		return nil
+	}
+	return s.update(activityID, func(detail *Detail) {
+		seen := make(map[string]struct{}, len(detail.MemoryKeys))
+		for _, key := range detail.MemoryKeys {
+			seen[key] = struct{}{}
+		}
+		for _, memory := range memories {
+			content := truncateMemoryContent(memory.Content)
+			if content == "" {
+				continue
+			}
+			identity := strings.TrimSpace(memory.FactID)
+			if identity == "" {
+				identity = content
+			}
+			key := util.ShortHash(identity)
+			if _, exists := seen[key]; exists {
+				continue
+			}
+			if len(detail.MemoryKeys) >= maxMemoryKeys {
+				break
+			}
+			seen[key] = struct{}{}
+			detail.MemoryKeys = append(detail.MemoryKeys, key)
+			detail.MemoryCount++
+			if len(detail.Memories) < maxMemorySamples {
+				detail.Memories = append(detail.Memories, RecalledMemory{Content: content})
+			}
+		}
+	})
+}
+
+func (s Store) RecordOutput(activityID string, output turnreceipt.OutputSummary) error {
+	return s.update(activityID, func(detail *Detail) {
+		detail.Output = output
+	})
 }
 
 func (s Store) Get(activityID string) (Detail, error) {
@@ -123,16 +199,34 @@ func (s Store) Get(activityID string) (Detail, error) {
 	if err := decoder.Decode(&detail); err != nil {
 		return Detail{}, ErrNotFound
 	}
-	detail.ContextMatches = turnreceipt.NormalizeContextMatches(detail.ContextMatches)
+	detail.ContextMatches = normalizeContextMatches(detail.ContextMatches)
 	if detail.SchemaVersion != schemaVersion ||
 		detail.ActivityID != activityID ||
 		normalizeAgentType(detail.AgentType) == "" ||
-		len(detail.ContextMatches) == 0 ||
 		!detail.ExpiresAt.After(s.now()) {
 		return Detail{}, ErrNotFound
 	}
 	detail.AgentType = normalizeAgentType(detail.AgentType)
 	return detail, nil
+}
+
+func (s Store) update(activityID string, mutate func(*Detail)) error {
+	activityID = strings.TrimSpace(activityID)
+	if s.dataDir == "" || !validActivityID.MatchString(activityID) {
+		return ErrNotFound
+	}
+	unlock, err := s.acquireLock(true)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	detail, err := s.Get(activityID)
+	if err != nil {
+		return err
+	}
+	mutate(&detail)
+	detail.ContextMatches = normalizeContextMatches(detail.ContextMatches)
+	return s.writeReplacing(detail)
 }
 
 func (s Store) Cleanup() error {
@@ -147,13 +241,36 @@ func (s Store) Cleanup() error {
 		return err
 	}
 	defer unlock()
+	if err := s.cleanupLegacyRootsLocked(); err != nil {
+		return err
+	}
 	if err := s.cleanupExpiredLocked(); err != nil {
 		return err
 	}
 	return s.ensureCapacityLocked(maxActivityDetails, "")
 }
 
-func (s Store) write(detail Detail) error {
+func (s Store) cleanupLegacyRootsLocked() error {
+	for _, version := range []string{"v1", "v2"} {
+		path := filepath.Join(s.dataDir, "activity-details", version)
+		if err := os.RemoveAll(path); err != nil {
+			return fmt.Errorf("remove legacy activity details %s: %w", version, err)
+		}
+	}
+	return nil
+}
+
+func (s Store) writeNew(detail Detail) error {
+	path := filepath.Join(s.rootPath(), detail.ActivityID+".json")
+	if _, err := os.Stat(path); err == nil {
+		return errors.New("activity detail already exists")
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("stat activity detail destination: %w", err)
+	}
+	return s.writeReplacing(detail)
+}
+
+func (s Store) writeReplacing(detail Detail) error {
 	if err := os.MkdirAll(s.rootPath(), 0o700); err != nil {
 		return fmt.Errorf("create activity detail directory: %w", err)
 	}
@@ -169,11 +286,6 @@ func (s Store) write(detail Detail) error {
 		return fmt.Errorf("activity detail exceeds %d bytes", maxActivityRecordBytes)
 	}
 	path := filepath.Join(s.rootPath(), detail.ActivityID+".json")
-	if _, err := os.Stat(path); err == nil {
-		return errors.New("activity detail already exists")
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("stat activity detail destination: %w", err)
-	}
 	if err := atomicfile.Write(path, data); err != nil {
 		return fmt.Errorf("write activity detail: %w", err)
 	}
@@ -317,7 +429,19 @@ func (s Store) readEntries(limit int) ([]os.DirEntry, error) {
 }
 
 func (s Store) rootPath() string {
-	return filepath.Join(s.dataDir, "activity-details", "v2")
+	return filepath.Join(s.dataDir, "activity-details", "v3")
+}
+
+func truncateMemoryContent(value string) string {
+	value = strings.TrimSpace(strings.ToValidUTF8(value, ""))
+	if len(value) <= maxMemoryContentBytes {
+		return value
+	}
+	end := maxMemoryContentBytes
+	for end > 0 && !utf8.RuneStart(value[end]) {
+		end--
+	}
+	return strings.TrimSpace(value[:end])
 }
 
 func normalizeAgentType(agentType string) string {

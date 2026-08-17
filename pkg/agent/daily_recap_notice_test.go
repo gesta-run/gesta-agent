@@ -184,14 +184,6 @@ func TestDailyRecapNoticeInjectsWithoutPendingTurnNotice(t *testing.T) {
 	}
 }
 
-func TestTurnNoticesContextPreservesBothLines(t *testing.T) {
-	got := turnNoticesContext([]string{"Gesta governance · Context append: 1", "Gesta recap · Review"})
-	if !strings.Contains(got, "output exactly the lines below, in the same order") ||
-		!strings.Contains(got, "Gesta governance · Context append: 1\nGesta recap · Review") {
-		t.Fatalf("combined notice context = %q", got)
-	}
-}
-
 func stubDailyRecapNoticeNow(t *testing.T, now *time.Time) {
 	t.Helper()
 	original := dailyRecapNoticeNow

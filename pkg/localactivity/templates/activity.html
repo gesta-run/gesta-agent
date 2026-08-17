@@ -16,7 +16,7 @@
     <header class="page-header">
       <p class="eyebrow">Governance / Local activity</p>
       <h1>Activity detail</h1>
-      <p class="subtitle">Review the targeted organization context applied to this turn and the output observed on this machine.</p>
+      <p class="subtitle">Review current context and memory recall alongside output from the latest completed turn.</p>
       <div class="meta" aria-label="Activity metadata">
         <span>{{.AgentLabel}}</span>
         <span>Captured {{.CreatedAt}}</span>
@@ -35,6 +35,7 @@
         </div>
       </header>
       <div class="rule-list">
+        {{if .Rules}}
         {{range .Rules}}
         <details class="rule"{{if .Open}} open{{end}}>
           <summary>
@@ -54,11 +55,48 @@
           </div>
         </details>
         {{end}}
+        {{else}}
+        <div class="empty-output">No targeted organization context was applied.</div>
+        {{end}}
+      </div>
+    </section>
+
+    <section class="panel memory-panel" aria-labelledby="memory-heading">
+      <header class="panel-header">
+        <div>
+          <div class="panel-title-row">
+            <h2 id="memory-heading">Recalled memory</h2>
+            <span class="count">{{.MemoryCount}}</span>
+          </div>
+          <p>Unique memories recalled before or during the current turn.</p>
+        </div>
+      </header>
+      <div class="rule-list">
+        {{if .Memories}}
+        {{range .Memories}}
+        <details class="rule"{{if .Open}} open{{end}}>
+          <summary>
+            <span class="rule-main">
+              <span class="rule-dot memory" aria-hidden="true"></span>
+              <span class="rule-copy"><span class="rule-name">Recalled fact</span></span>
+            </span>
+          </summary>
+          <div class="content-wrap">
+            <div class="content-card"><pre>{{.Content}}</pre></div>
+          </div>
+        </details>
+        {{end}}
+        {{else}}
+        <div class="empty-output">No memory was recalled.</div>
+        {{end}}
       </div>
     </section>
 
     <section class="output-panel" aria-labelledby="output-heading">
-      <h2 id="output-heading">Observed output</h2>
+      <div>
+        <h2 id="output-heading">Latest completed output</h2>
+        <div class="equivalent-loc">{{.EquivalentLOC}} eLOC</div>
+      </div>
       {{if .HasOutput}}
       <div class="metrics">
         {{range .Output}}
@@ -69,7 +107,7 @@
         {{end}}
       </div>
       {{else}}
-      <div class="empty-output">No measurable file output was observed.</div>
+      <div class="empty-output">No eligible output was observed.</div>
       {{end}}
     </section>
 

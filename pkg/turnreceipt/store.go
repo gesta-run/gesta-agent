@@ -9,11 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
-	"unicode"
-	"unicode/utf8"
 
 	"github.com/gesta-run/gesta-agent/pkg/atomicfile"
-	"github.com/gesta-run/gesta-agent/pkg/contextmatch"
 	"github.com/gesta-run/gesta-agent/pkg/util"
 )
 
@@ -39,28 +36,6 @@ func (s Store) Begin(agentType, sessionID, turnID string) error {
 			return fmt.Errorf("reset turn receipt: %w", err)
 		}
 		return s.writeReceipt(path, s.newReceipt())
-	})
-}
-
-func (s Store) RecordContextMatches(
-	agentType, sessionID, turnID string,
-	matches []ContextRuleMatch,
-) error {
-	path, ok := s.receiptPath(agentType, sessionID, turnID)
-	matches = NormalizeContextMatches(matches)
-	if !ok || len(matches) == 0 {
-		return nil
-	}
-	return s.withReceiptLock(path, func() error {
-		receipt, err := readReceipt(filepath.Join(path, "receipt.json"))
-		if errors.Is(err, os.ErrNotExist) {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		receipt.ContextMatches = matches
-		return s.writeReceipt(path, receipt)
 	})
 }
 
@@ -234,66 +209,7 @@ func readReceipt(path string) (Receipt, error) {
 	if receipt.SchemaVersion != schemaVersion {
 		return Receipt{}, fmt.Errorf("unsupported turn receipt schema version %d", receipt.SchemaVersion)
 	}
-	receipt.ContextMatches = NormalizeContextMatches(receipt.ContextMatches)
 	return receipt, nil
-}
-
-// NormalizeContextMatches bounds and sanitizes targeted context snapshots that
-// may be persisted in turn receipts or local activity details.
-func NormalizeContextMatches(matches []ContextRuleMatch) []ContextRuleMatch {
-	normalized := make([]ContextRuleMatch, 0, min(len(matches), maxContextMatches))
-	seen := make(map[string]struct{}, min(len(matches), maxContextMatches))
-	contentRunes := 0
-	for _, match := range matches {
-		if len(normalized) >= maxContextMatches {
-			break
-		}
-		match.RuleID = truncateUTF8Bytes(strings.TrimSpace(match.RuleID), maxContextRuleIDBytes)
-		match.Name = truncateUTF8Bytes(strings.TrimSpace(match.Name), maxContextRuleNameBytes)
-		match.MatchType = strings.TrimSpace(strings.ToLower(match.MatchType))
-		match.Content = strings.TrimSpace(strings.ToValidUTF8(match.Content, ""))
-		if match.RuleID == "" || (match.MatchType != "keyword_any" && match.MatchType != "regex") {
-			continue
-		}
-		if match.Content == "" {
-			continue
-		}
-		if _, exists := seen[match.RuleID]; exists {
-			continue
-		}
-		separatorRunes := 0
-		if len(normalized) > 0 {
-			separatorRunes = 2
-		}
-		matchContentRunes := utf8.RuneCountInString(match.Content)
-		if contentRunes+separatorRunes+matchContentRunes > contextmatch.MaxContextContent {
-			continue
-		}
-		if match.Name == "" {
-			match.Name = "Unnamed context rule"
-		}
-		seen[match.RuleID] = struct{}{}
-		normalized = append(normalized, match)
-		contentRunes += separatorRunes + matchContentRunes
-	}
-	return normalized
-}
-
-func truncateUTF8Bytes(value string, maxBytes int) string {
-	value = strings.ToValidUTF8(value, "")
-	value = strings.Map(func(character rune) rune {
-		if unicode.IsControl(character) {
-			return -1
-		}
-		return character
-	}, value)
-	if len(value) <= maxBytes {
-		return value
-	}
-	for maxBytes > 0 && (value[maxBytes]&0xc0) == 0x80 {
-		maxBytes--
-	}
-	return value[:maxBytes]
 }
 
 func readBoundedJSON(path string, target interface{}) error {
