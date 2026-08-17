@@ -41,17 +41,27 @@ var (
 )
 
 type Detail struct {
-	SchemaVersion  int                       `json:"schema_version"`
-	ActivityID     string                    `json:"activity_id"`
-	CreatedAt      time.Time                 `json:"created_at"`
-	ExpiresAt      time.Time                 `json:"expires_at"`
-	AgentType      string                    `json:"agent_type"`
-	ContextMatches []ContextRuleMatch        `json:"context_matches"`
-	MemoryCount    int                       `json:"memory_count"`
-	MemoryKeys     []string                  `json:"memory_keys,omitempty"`
-	Memories       []RecalledMemory          `json:"memories,omitempty"`
-	Output         turnreceipt.OutputSummary `json:"output"`
+	SchemaVersion      int                       `json:"schema_version"`
+	ActivityID         string                    `json:"activity_id"`
+	CreatedAt          time.Time                 `json:"created_at"`
+	ExpiresAt          time.Time                 `json:"expires_at"`
+	AgentType          string                    `json:"agent_type"`
+	ContextMatches     []ContextRuleMatch        `json:"context_matches"`
+	MemoryRecallStatus MemoryRecallStatus        `json:"memory_recall_status,omitempty"`
+	MemoryCount        int                       `json:"memory_count"`
+	MemoryKeys         []string                  `json:"memory_keys,omitempty"`
+	Memories           []RecalledMemory          `json:"memories,omitempty"`
+	Output             turnreceipt.OutputSummary `json:"output"`
 }
+
+type MemoryRecallStatus string
+
+const (
+	MemoryRecallSuccess  MemoryRecallStatus = "success"
+	MemoryRecallTimeout  MemoryRecallStatus = "timeout"
+	MemoryRecallError    MemoryRecallStatus = "error"
+	MemoryRecallDisabled MemoryRecallStatus = "disabled"
+)
 
 type RecalledMemory struct {
 	Content string `json:"content"`
@@ -136,7 +146,15 @@ func (s Store) RecordMemories(activityID string, memories []model.Memory) error 
 	if len(memories) == 0 {
 		return nil
 	}
+	return s.RecordMemoryRecall(activityID, MemoryRecallSuccess, memories)
+}
+
+func (s Store) RecordMemoryRecall(activityID string, status MemoryRecallStatus, memories []model.Memory) error {
+	if !validMemoryRecallStatus(status) {
+		return errors.New("invalid memory recall status")
+	}
 	return s.update(activityID, func(detail *Detail) {
+		detail.MemoryRecallStatus = status
 		seen := make(map[string]struct{}, len(detail.MemoryKeys))
 		for _, key := range detail.MemoryKeys {
 			seen[key] = struct{}{}
@@ -165,6 +183,15 @@ func (s Store) RecordMemories(activityID string, memories []model.Memory) error 
 			}
 		}
 	})
+}
+
+func validMemoryRecallStatus(status MemoryRecallStatus) bool {
+	switch status {
+	case MemoryRecallSuccess, MemoryRecallTimeout, MemoryRecallError, MemoryRecallDisabled:
+		return true
+	default:
+		return false
+	}
 }
 
 func (s Store) RecordOutput(activityID string, output turnreceipt.OutputSummary) error {

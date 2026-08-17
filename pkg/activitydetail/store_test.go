@@ -160,11 +160,30 @@ func TestStoreTracksCurrentContextMemoryAndPreviousOutput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got.ContextMatches) != 1 || got.MemoryCount != 2 || len(got.Memories) != 2 {
+	if len(got.ContextMatches) != 1 || got.MemoryRecallStatus != MemoryRecallSuccess ||
+		got.MemoryCount != 2 || len(got.Memories) != 2 {
 		t.Fatalf("activity detail = %#v", got)
 	}
 	if got.Output.EquivalentLOC() != 11.5 {
 		t.Fatalf("equivalent LOC = %v, want 11.5", got.Output.EquivalentLOC())
+	}
+}
+
+func TestStoreTracksMemoryRecallFailureWithoutReportingAMatch(t *testing.T) {
+	store := NewStore(t.TempDir())
+	detail, err := store.Begin("codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordMemoryRecall(detail.ActivityID, MemoryRecallTimeout, nil); err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.Get(detail.ActivityID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.MemoryRecallStatus != MemoryRecallTimeout || got.MemoryCount != 0 || len(got.Memories) != 0 {
+		t.Fatalf("activity detail = %#v", got)
 	}
 }
 
