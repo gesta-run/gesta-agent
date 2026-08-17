@@ -24,91 +24,86 @@
       </div>
     </header>
 
-    <section class="panel" aria-labelledby="context-heading">
-      <header class="panel-header">
+    <section class="evidence-ledger" aria-labelledby="ledger-heading">
+      <header class="ledger-header">
         <div>
-          <div class="panel-title-row">
-            <h2 id="context-heading">Applied context</h2>
-            <span class="count">{{.RuleCount}}</span>
-          </div>
-          <p>Context appended to the model from targeted organization rules.</p>
+          <p class="ledger-eyebrow">Turn inputs</p>
+          <h2 id="ledger-heading">Evidence ledger</h2>
+          <p>Context applied and memory recalled during this turn, followed by the latest output.</p>
         </div>
+        <dl class="ledger-stats" aria-label="Activity summary">
+          <div>
+            <dt>Context</dt>
+            <dd>{{.RuleCount}}</dd>
+          </div>
+          <div>
+            <dt>Memory</dt>
+            <dd>{{.MemoryLabel}}</dd>
+          </div>
+          <div>
+            <dt>Last output</dt>
+            <dd>{{.EquivalentLOC}} <span>eLOC</span></dd>
+          </div>
+        </dl>
       </header>
-      <div class="rule-list">
+
+      <section class="evidence-section" aria-labelledby="context-heading">
+        <h3 id="context-heading">Applied context</h3>
         {{if .Rules}}
-        {{range .Rules}}
-        <details class="rule"{{if .Open}} open{{end}}>
-          <summary>
-            <span class="rule-main">
-              <span class="rule-dot {{.MatchClass}}" aria-hidden="true"></span>
-              <span class="rule-copy">
-                <span class="rule-name">{{.Name}}</span>
-                <span class="rule-meta">{{.MatchLabel}} · Priority {{.Priority}}</span>
+        <ul class="evidence-list" role="list">
+          {{range .Rules}}
+          <li class="evidence-row context-row">
+            <div class="row-heading">
+              <span class="row-identity">
+                <span class="rule-dot {{.MatchClass}}" aria-hidden="true"></span>
+                <strong>{{.Name}}</strong>
               </span>
-            </span>
-          </summary>
-          <div class="content-wrap">
-            <div class="content-card">
-              <div class="content-label">Appended content</div>
-              <pre>{{.Content}}</pre>
+              <span class="row-meta">{{.MatchLabel}} · Priority {{.Priority}}</span>
             </div>
-          </div>
-        </details>
-        {{end}}
+            <pre tabindex="0" aria-label="{{.Name}} context">{{.Content}}</pre>
+            <span class="content-label">Appended verbatim</span>
+          </li>
+          {{end}}
+        </ul>
         {{else}}
-        <div class="empty-output">No targeted organization context was applied.</div>
+        <div class="evidence-empty">No targeted organization context was applied.</div>
         {{end}}
-      </div>
-    </section>
+      </section>
 
-    <section class="panel memory-panel" aria-labelledby="memory-heading">
-      <header class="panel-header">
-        <div>
-          <div class="panel-title-row">
-            <h2 id="memory-heading">Recalled memory</h2>
-            <span class="count">{{.MemoryLabel}}</span>
-          </div>
-          <p>Unique memories recalled before or during the current turn.</p>
-        </div>
-      </header>
-      <div class="rule-list">
+      <section class="evidence-section" aria-labelledby="memory-heading">
+        <h3 id="memory-heading">Recalled memory</h3>
         {{if .Memories}}
-        {{range .Memories}}
-        <details class="rule"{{if .Open}} open{{end}}>
-          <summary>
-            <span class="rule-main">
-              <span class="rule-dot memory" aria-hidden="true"></span>
-              <span class="rule-copy"><span class="rule-name">Recalled fact</span></span>
-            </span>
-          </summary>
-          <div class="content-wrap">
-            <div class="content-card"><pre>{{.Content}}</pre></div>
-          </div>
-        </details>
-        {{end}}
+        <ul class="evidence-list" role="list">
+          {{range .Memories}}
+          <li class="evidence-row memory-row">
+            <span class="rule-dot memory" aria-hidden="true"></span>
+            <pre tabindex="0" aria-label="Recalled memory">{{.}}</pre>
+          </li>
+          {{end}}
+        </ul>
         {{else}}
-        <div class="empty-output">{{.MemoryEmpty}}</div>
+        <div class="evidence-empty">{{.MemoryEmpty}}</div>
         {{end}}
-      </div>
-    </section>
+      </section>
 
-    <section class="output-panel" aria-labelledby="output-heading">
-      <div>
-        <h2 id="output-heading">Latest completed output</h2>
-        <div class="equivalent-loc">{{.EquivalentLOC}} eLOC</div>
-      </div>
-      {{if .HasOutput}}
-      <div class="metrics">
-        {{range .Output}}
-        <div class="metric">
-          <strong>{{.Value}}</strong>
-          <span>{{.Label}}</span>
+      <section class="output-strip" aria-labelledby="output-heading">
+        <div>
+          <h3 class="output-strip-label" id="output-heading">Latest completed output</h3>
+          <span class="equivalent-loc">{{.EquivalentLOC}} eLOC</span>
         </div>
+        {{if .HasOutput}}
+        <div class="metrics" aria-label="Latest completed output metrics">
+          {{range .Output}}
+          <div class="metric">
+            <strong>{{.Value}}</strong>
+            <span>{{.Label}}</span>
+          </div>
+          {{end}}
+        </div>
+        {{else}}
+        <div class="empty-output">No eligible output was observed.</div>
         {{end}}
-      </div>
-      {{else}}
-      <div class="empty-output">No eligible output was observed.</div>
-      {{end}}
+      </section>
     </section>
 
     <footer>
