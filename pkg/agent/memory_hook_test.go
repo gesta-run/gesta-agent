@@ -47,6 +47,19 @@ func TestMemoryRecallStatusClassifiesFailures(t *testing.T) {
 	}
 }
 
+func TestMemoryInstructionsRejectTransientOperations(t *testing.T) {
+	instructions := formatMemoryInstructions("activity-1")
+	for _, expected := range []string{
+		"durable facts useful in future sessions",
+		"Never store task actions",
+		"not an event narrative",
+	} {
+		if !strings.Contains(instructions, expected) {
+			t.Fatalf("memory instructions missing %q: %s", expected, instructions)
+		}
+	}
+}
+
 func TestMemoryProxyHealthCheckUsesCurrentDaemon(t *testing.T) {
 	original := localMemoryProxyHealthy
 	t.Cleanup(func() { localMemoryProxyHealthy = original })
