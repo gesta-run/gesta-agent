@@ -116,13 +116,42 @@ func TestActivityNoticeReportsMemoryRecallTimeout(t *testing.T) {
 	}
 }
 
-func TestActivityNoticeDoesNotReportMemoryDisabledByItself(t *testing.T) {
+func TestActivityNoticeReportsZeroValueCurrentActivity(t *testing.T) {
+	store := activitydetail.NewStore(t.TempDir())
+	detail, err := store.Begin("codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := newHandlerWithMemory(store, "daemon", &fakeMemoryService{})
+	request := httptest.NewRequest(http.MethodPost, NoticeURL(), nil)
+	request.Host = Address
+	request.Header.Set(ActivityHeaderName, detail.ActivityID)
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var body noticeResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	wantURL := ActivityURL(detail.ActivityID)
+	wantNotice := "Gesta · Context 0 · Memory 0 · Last output 0 eLOC · [Details](" + wantURL + ")"
+	if body.Notice != wantNotice || body.DetailsURL != wantURL {
+		t.Fatalf("notice response = %#v, want notice %q and URL %q", body, wantNotice, wantURL)
+	}
+}
+
+func TestActivityNoticeReportsMemoryDisabled(t *testing.T) {
 	detail := activitydetail.Detail{
 		ActivityID:         "activity_0123456789abcdef0123456789abcdef",
 		MemoryRecallStatus: activitydetail.MemoryRecallDisabled,
 	}
-	if got := formatActivityNotice(detail); got != "" {
-		t.Fatalf("notice = %q, want empty", got)
+	want := "Gesta · Context 0 · Memory disabled · Last output 0 eLOC · [Details](" + ActivityURL(detail.ActivityID) + ")"
+	if got := formatActivityNotice(detail); got != want {
+		t.Fatalf("notice = %q, want %q", got, want)
 	}
 }
 
