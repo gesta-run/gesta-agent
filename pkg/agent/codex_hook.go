@@ -100,7 +100,13 @@ func processUserPromptSubmit(ctx context.Context, event agentHookEvent, agentTyp
 	if strings.TrimSpace(userPrompt) == "" {
 		return map[string]interface{}{}
 	}
-	if err := verifyUserPromptSubmission(ctx, event, agentType, event.Prompt); err != nil {
+	recentUserPrompts, err := verifyUserPromptSubmissionWithHistory(
+		event,
+		agentType,
+		event.Prompt,
+		recentMemoryPromptCount,
+	)
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "gesta-agent: skipped unverifiable UserPromptSubmit: %v\n", err)
 		return map[string]interface{}{}
 	}
@@ -122,9 +128,14 @@ func processUserPromptSubmit(ctx context.Context, event agentHookEvent, agentTyp
 	} else {
 		event.ActivityID = detail.ActivityID
 	}
-	response := processOrganizationContext(cfg, event, userPrompt, agentType, source)
+	response, organizationContext := processOrganizationContext(cfg, event, userPrompt, agentType, source)
 	if agentType == "codex" {
-		response = processMemoryContext(ctx, cfg, event, userPrompt, response)
+		response = processMemoryContext(
+			ctx, cfg, event,
+			memoryRecallQuery(userPrompt, recentUserPrompts),
+			memorySuppliedContext(organizationContext),
+			response,
+		)
 	}
 	return injectPendingTurnNoticeBestEffort(ctx, cfg, event, agentType, response)
 }

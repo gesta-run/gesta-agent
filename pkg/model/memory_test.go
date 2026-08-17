@@ -46,3 +46,16 @@ func TestMemorySearchWireContract(t *testing.T) {
 		t.Fatalf("search response contract = %s", response)
 	}
 }
+
+func TestMemoryContextCarriesMatchedOrganizationContext(t *testing.T) {
+	request, err := json.Marshal(MemoryContextRequest{
+		DaemonID: "daemon", Prompt: "release to pre", Context: "matched release rule",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const expected = `{"daemon_id":"daemon","prompt":"release to pre","context":"matched release rule","workspace":{}}`
+	if string(request) != expected {
+		t.Fatalf("context request contract = %s", request)
+	}
+}
