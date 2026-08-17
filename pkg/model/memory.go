@@ -14,6 +14,7 @@ type MemoryWorkspace struct {
 type MemoryContextRequest struct {
 	DaemonID  string          `json:"daemon_id"`
 	Prompt    string          `json:"prompt"`
+	Context   string          `json:"context,omitempty"`
 	Workspace MemoryWorkspace `json:"workspace,omitempty"`
 }
 

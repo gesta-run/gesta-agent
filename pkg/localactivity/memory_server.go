@@ -31,7 +31,7 @@ type rememberRequest struct {
 }
 
 const (
-	localMemorySearchTimeout   = 4500 * time.Millisecond
+	localMemorySearchTimeout   = 6 * time.Second
 	localMemoryRememberTimeout = 190 * time.Second
 )
 

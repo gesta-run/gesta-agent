@@ -47,7 +47,7 @@ func TestMemoryProxyHealthCheckUsesCurrentDaemon(t *testing.T) {
 		checkedDaemonID = daemonID
 		return true
 	}
-	processMemoryContext(context.Background(), config, agentHookEvent{}, "project context", map[string]interface{}{})
+	processMemoryContext(context.Background(), config, agentHookEvent{}, "project context", "", map[string]interface{}{})
 	if checkedDaemonID != config.DaemonID {
 		t.Fatalf("health check daemon = %q, want %q", checkedDaemonID, config.DaemonID)
 	}
@@ -73,7 +73,7 @@ func TestAutomaticMemoryStillInjectsWhenLoopbackProxyIsUnavailable(t *testing.T)
 		t.Fatal(err)
 	}
 
-	response := processMemoryContext(context.Background(), config, agentHookEvent{}, "project language", map[string]interface{}{})
+	response := processMemoryContext(context.Background(), config, agentHookEvent{}, "project language", "", map[string]interface{}{})
 	encoded, err := json.Marshal(response)
 	if err != nil {
 		t.Fatal(err)
@@ -116,6 +116,7 @@ func TestAutomaticMemoryRecordsCurrentActivityAndInjectsTrackingHeader(t *testin
 		config,
 		agentHookEvent{ActivityID: detail.ActivityID},
 		"release branch",
+		"",
 		map[string]interface{}{},
 	)
 	additionalContext := hookAdditionalContext(response)

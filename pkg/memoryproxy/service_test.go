@@ -47,6 +47,40 @@ func TestSearchUsesDaemonCredentialAndWorkspaceMetadata(t *testing.T) {
 	}
 }
 
+func TestContextForwardsRecallQueryAndSuppliedOrganizationContext(t *testing.T) {
+	var received model.MemoryContextRequest
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/api/v1/memory/context" {
+			t.Errorf("path = %q", request.URL.Path)
+		}
+		if err := json.NewDecoder(request.Body).Decode(&received); err != nil {
+			t.Errorf("decode request: %v", err)
+		}
+		_ = json.NewEncoder(writer).Encode(model.MemorySearchResponse{Memories: []model.Memory{}})
+	}))
+	defer server.Close()
+
+	config := daemon.NewDirectRuntimeConfig(server.URL, "test-token")
+	config.DataDir = t.TempDir()
+	if err := rulecache.SaveMemorySettingsCache(config.DataDir, model.MemorySettings{Enabled: true}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if err := rulecache.SaveSensitiveRuleCache(config.DataDir, []model.SensitiveRule{}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := New(config).Context(
+		context.Background(),
+		"Current request with recent history",
+		"Matched release context",
+		model.MemoryWorkspace{CWDName: "gesta"},
+	); err != nil {
+		t.Fatal(err)
+	}
+	if received.Prompt != "Current request with recent history" || received.Context != "Matched release context" {
+		t.Fatalf("context request = %#v", received)
+	}
+}
+
 func TestMemoryFailsClosedWhenSensitiveRulesAreUnavailable(t *testing.T) {
 	config := daemon.NewDirectRuntimeConfig("http://127.0.0.1:1", "test-token")
 	config.DataDir = t.TempDir()

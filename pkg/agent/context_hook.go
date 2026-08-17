@@ -19,14 +19,14 @@ func processOrganizationContext(
 	cfg daemon.Config,
 	event agentHookEvent,
 	matchPrompt, agentType, source string,
-) map[string]interface{} {
+) (map[string]interface{}, contextmatch.Result) {
 	cache, ok := hookContextRules(cfg)
 	if !ok {
-		return map[string]interface{}{}
+		return map[string]interface{}{}, contextmatch.Result{}
 	}
 	result := contextmatch.Match(matchPrompt, agentType, cache.Rules)
 	if len(result.Rules) == 0 || strings.TrimSpace(result.AdditionalContext) == "" {
-		return map[string]interface{}{}
+		return map[string]interface{}{}, result
 	}
 	recordContextRuleMatchBestEffort(cfg, agentType, source, cache.Version, result)
 	recordTurnContextMatchesBestEffort(cfg, event, result)
@@ -35,7 +35,7 @@ func processOrganizationContext(
 			"hookEventName":     "UserPromptSubmit",
 			"additionalContext": result.AdditionalContext,
 		},
-	}
+	}, result
 }
 
 func hookContextRules(cfg daemon.Config) (rulecache.ContextRuleCache, bool) {
