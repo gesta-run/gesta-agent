@@ -35,7 +35,7 @@ type MemoryRememberRequest struct {
 type Memory struct {
 	FactID         string     `json:"fact_id"`
 	Content        string     `json:"content"`
-	GraphRankScore float64    `json:"graph_rank_score"`
+	RelevanceScore float64    `json:"relevance_score"`
 	WorkspaceBoost float64    `json:"workspace_boost"`
 	Score          float64    `json:"score"`
 	ValidAt        *time.Time `json:"valid_at,omitempty"`

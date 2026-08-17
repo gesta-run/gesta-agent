@@ -117,6 +117,9 @@ func recordCodexTurn(
 			}
 			output.Add(itemOutput)
 		case "mcpToolCall":
+			if isInternalActivityNoticeCall(item.Server, item.Tool, item.Arguments) {
+				continue
+			}
 			toolName := "mcp__" + strings.TrimSpace(item.Server) + "__" + strings.TrimSpace(item.Tool)
 			itemOutput, err := appendGrossMeasurementsWithSummary(cfg, grossObservation{
 				CallID:       item.ID,
@@ -248,6 +251,9 @@ func grossMeasurementEvents(
 func summarizeMeasurements(measurements []toolinput.Measurement) turnreceipt.OutputSummary {
 	var summary turnreceipt.OutputSummary
 	for _, measurement := range measurements {
+		if !measurement.EfficiencyEligible {
+			continue
+		}
 		switch measurement.Category {
 		case toolinput.CategoryCode:
 			summary.CodeLines = addPositiveCount(summary.CodeLines, measurement.Counts.Lines)
@@ -258,7 +264,7 @@ func summarizeMeasurements(measurements []toolinput.Measurement) turnreceipt.Out
 		case toolinput.CategoryConfig:
 			summary.ConfigLines = addPositiveCount(summary.ConfigLines, measurement.Counts.Lines)
 		case toolinput.CategoryOther:
-			summary.OtherLines = addPositiveCount(summary.OtherLines, measurement.Counts.Lines)
+			summary.OtherWords = addPositiveCount(summary.OtherWords, measurement.Counts.Words)
 		}
 	}
 	return summary

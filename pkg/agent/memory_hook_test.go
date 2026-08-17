@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gesta-run/gesta-agent/pkg/activitydetail"
 	"github.com/gesta-run/gesta-agent/pkg/daemon"
 	"github.com/gesta-run/gesta-agent/pkg/model"
 	"github.com/gesta-run/gesta-agent/pkg/rulecache"
@@ -59,7 +60,7 @@ func TestAutomaticMemoryStillInjectsWhenLoopbackProxyIsUnavailable(t *testing.T)
 
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(writer).Encode(model.MemorySearchResponse{Memories: []model.Memory{{
-			FactID: "memory", Content: "The project uses Go.", GraphRankScore: 1, Score: 1,
+			FactID: "memory", Content: "The project uses Go.", RelevanceScore: 1, Score: 1,
 		}}})
 	}))
 	t.Cleanup(server.Close)
@@ -83,5 +84,46 @@ func TestAutomaticMemoryStillInjectsWhenLoopbackProxyIsUnavailable(t *testing.T)
 	}
 	if strings.Contains(text, "memory/remember") {
 		t.Fatalf("loopback instructions were injected while the proxy was unavailable: %s", text)
+	}
+}
+
+func TestAutomaticMemoryRecordsCurrentActivityAndInjectsTrackingHeader(t *testing.T) {
+	original := localMemoryProxyHealthy
+	t.Cleanup(func() { localMemoryProxyHealthy = original })
+	localMemoryProxyHealthy = func(context.Context, string) bool { return true }
+
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(writer).Encode(model.MemorySearchResponse{Memories: []model.Memory{{
+			FactID: "fact", Content: "Use the current release branch.", Score: 1,
+		}}})
+	}))
+	t.Cleanup(server.Close)
+	config := daemon.NewDirectRuntimeConfig(server.URL, "test-token")
+	config.DataDir = t.TempDir()
+	if err := rulecache.SaveMemorySettingsCache(config.DataDir, model.MemorySettings{Enabled: true}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if err := rulecache.SaveSensitiveRuleCache(config.DataDir, []model.SensitiveRule{}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	detail, err := activitydetail.NewStore(config.DataDir).Begin("codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	response := processMemoryContext(
+		context.Background(),
+		config,
+		agentHookEvent{ActivityID: detail.ActivityID},
+		"release branch",
+		map[string]interface{}{},
+	)
+	additionalContext := hookAdditionalContext(response)
+	if !strings.Contains(additionalContext, "X-Gesta-Activity-ID: "+detail.ActivityID) {
+		t.Fatalf("memory instructions missing activity header: %q", additionalContext)
+	}
+	recorded, err := activitydetail.NewStore(config.DataDir).Get(detail.ActivityID)
+	if err != nil || recorded.MemoryCount != 1 {
+		t.Fatalf("recorded activity = %#v, err = %v", recorded, err)
 	}
 }

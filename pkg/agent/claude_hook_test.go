@@ -263,7 +263,7 @@ func TestClaudeHookRecordsNonBlockingSensitiveRule(t *testing.T) {
 		"prompt": "customer_secret_123 should be observed"
 	}`)
 	response := processAgentHook(context.Background(), input, "claude_code", "claude_code")
-	if len(response) != 0 {
+	if response["decision"] == "block" {
 		t.Fatalf("record-only finding should allow prompt, got %#v", response)
 	}
 	if got := server.EventRequests.Load(); got != 0 {

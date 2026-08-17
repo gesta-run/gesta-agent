@@ -29,7 +29,7 @@ func processOrganizationContext(
 		return map[string]interface{}{}
 	}
 	recordContextRuleMatchBestEffort(cfg, agentType, source, cache.Version, result)
-	recordTurnContextMatchesBestEffort(cfg, event, agentType, result)
+	recordTurnContextMatchesBestEffort(cfg, event, result)
 	return map[string]interface{}{
 		"hookSpecificOutput": map[string]interface{}{
 			"hookEventName":     "UserPromptSubmit",

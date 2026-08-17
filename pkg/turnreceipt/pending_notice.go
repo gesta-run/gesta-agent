@@ -12,11 +12,10 @@ import (
 
 func (s Store) SavePending(
 	agentType, sessionID string,
-	receipt Receipt,
+	output OutputSummary,
 ) error {
 	path, ok := s.pendingPath(agentType, sessionID)
-	receipt.ContextMatches = NormalizeContextMatches(receipt.ContextMatches)
-	if !ok || (len(receipt.ContextMatches) == 0 && receipt.Output.Empty()) {
+	if !ok || output.Empty() {
 		return nil
 	}
 	return s.withReceiptLock(path, func() error {
@@ -24,10 +23,9 @@ func (s Store) SavePending(
 			return fmt.Errorf("replace pending turn notice: %w", err)
 		}
 		pending := PendingNotice{
-			SchemaVersion:  pendingSchemaVersion,
-			ExpiresAt:      s.now().Add(receiptTTL),
-			ContextMatches: receipt.ContextMatches,
-			Output:         receipt.Output,
+			SchemaVersion: pendingSchemaVersion,
+			ExpiresAt:     s.now().Add(receiptTTL),
+			Output:        output,
 		}
 		return s.writePendingNotice(path, pending)
 	})
@@ -115,9 +113,8 @@ func readPendingNotice(path string) (PendingNotice, error) {
 			pending.SchemaVersion,
 		)
 	}
-	pending.ContextMatches = NormalizeContextMatches(pending.ContextMatches)
-	if len(pending.ContextMatches) == 0 && pending.Output.Empty() {
-		return PendingNotice{}, errors.New("pending turn notice has no activity")
+	if pending.Output.Empty() {
+		return PendingNotice{}, errors.New("pending turn notice has no output")
 	}
 	return pending, nil
 }

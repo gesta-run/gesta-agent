@@ -34,7 +34,7 @@ Please review the screenshot.
 	})
 
 	response := processAgentHook(context.Background(), input, "codex", "codex")
-	if len(response) != 0 {
+	if response["decision"] == "block" {
 		t.Fatalf("generated envelope content should not block the user prompt: %#v", response)
 	}
 	assertQueuedEventCount(t, cfg, 0)
@@ -73,7 +73,7 @@ func TestCodexHookProcessesVerifiedTurnPrompt(t *testing.T) {
 	})
 
 	response := processAgentHook(context.Background(), input, "codex", "codex")
-	if len(response) != 0 {
+	if response["decision"] == "block" {
 		t.Fatalf("record-only verified turn should be allowed: %#v", response)
 	}
 	assertQueuedEventCount(t, cfg, 1)

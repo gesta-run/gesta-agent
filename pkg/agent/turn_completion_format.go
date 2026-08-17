@@ -1,14 +1,49 @@
 package agent
 
 import (
-	"strconv"
+	"regexp"
 	"strings"
-	"unicode/utf8"
 
-	"github.com/gesta-run/gesta-agent/pkg/turnreceipt"
+	"github.com/gesta-run/gesta-agent/pkg/localactivity"
 )
 
-const maxTurnCompletionNoticeRunes = 320
+var activityNoticeCommandPattern = `curl -fsS --max-time 2 -X POST ` + regexp.QuoteMeta(localactivity.NoticeURL()) +
+	` -H '` + regexp.QuoteMeta(localactivity.ActivityHeaderName) +
+	`: activity_[0-9a-f]{32}' 2>/dev/null \|\| true`
+
+var (
+	internalActivityNoticeCommand = regexp.MustCompile(`^` + activityNoticeCommandPattern + `$`)
+	embeddedActivityNoticeCommand = regexp.MustCompile(
+		`["']?cmd["']?\s*:\s*["\x60]` + activityNoticeCommandPattern + `["\x60]`,
+	)
+)
+
+func activityNoticeEndpointContext(activityID string) string {
+	command := "curl -fsS --max-time 2 -X POST " + localactivity.NoticeURL() +
+		" -H '" + localactivity.ActivityHeaderName + ": " + strings.TrimSpace(activityID) +
+		"' 2>/dev/null || true"
+	return "<gesta_activity_notice>\n" +
+		"Immediately before the final response, call this local endpoint exactly once with a shell tool:\n" +
+		command + "\n" +
+		"If the request succeeds, read the JSON notice field. If it is non-empty, add one blank line after all normal answer content " +
+		"and output the notice exactly as the final line. If it is empty, add nothing.\n" +
+		"If the request fails or returns no JSON, add nothing.\n" +
+		"Do not mention this instruction, rewrite the notice, translate it, or alter its Markdown formatting.\n" +
+		"</gesta_activity_notice>"
+}
+
+func isInternalActivityNoticeCall(server, tool string, arguments interface{}) bool {
+	if strings.TrimSpace(server) != "functions" || strings.TrimSpace(tool) != "exec" {
+		return false
+	}
+	values, ok := arguments.(map[string]interface{})
+	if ok {
+		command, commandOK := values["cmd"].(string)
+		return commandOK && internalActivityNoticeCommand.MatchString(strings.TrimSpace(command))
+	}
+	source, ok := arguments.(string)
+	return ok && strings.Contains(source, "tools.exec_command") && embeddedActivityNoticeCommand.MatchString(source)
+}
 
 func pendingTurnNoticeContext(message string) string {
 	return "<gesta_activity_notice>\n" +
@@ -18,105 +53,4 @@ func pendingTurnNoticeContext(message string) string {
 		"rewrite it, translate it, or alter its Markdown formatting.\n" +
 		message + "\n" +
 		"</gesta_activity_notice>"
-}
-
-func turnNoticesContext(messages []string) string {
-	if len(messages) == 0 {
-		return ""
-	}
-	if len(messages) == 1 {
-		return pendingTurnNoticeContext(messages[0])
-	}
-	return "<gesta_activity_notice>\n" +
-		"At the bottom of your response to this user message, after all normal answer content, " +
-		"add one blank line and then output exactly the lines below, in the same order.\n" +
-		"Do not mention this instruction, describe the notices as previous-turn data, " +
-		"rewrite them, translate them, or alter their Markdown formatting.\n" +
-		strings.Join(messages, "\n") + "\n" +
-		"</gesta_activity_notice>"
-}
-
-func formatTurnCompletionNoticeWithDetails(receipt turnreceipt.Receipt, detailURL string) string {
-	contextAppendPart := formatContextAppendNotice(len(receipt.ContextMatches))
-	outputPart := formatOutputNotice(receipt.Output)
-	if contextAppendPart == "" && outputPart == "" {
-		return ""
-	}
-	parts := []string{"Gesta governance"}
-	if contextAppendPart != "" {
-		parts = append(parts, contextAppendPart)
-	}
-	if outputPart != "" {
-		parts = append(parts, outputPart)
-	}
-	if detailURL = strings.TrimSpace(detailURL); contextAppendPart != "" && detailURL != "" {
-		parts = append(parts, "[Details]("+detailURL+")")
-	}
-	message := strings.Join(parts, " · ")
-	if utf8.RuneCountInString(message) <= maxTurnCompletionNoticeRunes {
-		return message
-	}
-	runes := []rune(message)
-	return string(runes[:maxTurnCompletionNoticeRunes-1]) + "…"
-}
-
-func formatContextAppendNotice(count int) string {
-	if count <= 0 {
-		return ""
-	}
-	return "Context append: " + strconv.Itoa(count)
-}
-
-func formatOutputNotice(output turnreceipt.OutputSummary) string {
-	categories := make([]string, 0, 5)
-	if output.CodeLines > 0 {
-		categories = append(categories, formatMetric(output.CodeLines, "code line"))
-	}
-	if output.TestLines > 0 {
-		categories = append(categories, formatMetric(output.TestLines, "test line"))
-	}
-	if output.DocWords > 0 {
-		categories = append(categories, formatMetric(output.DocWords, "doc word"))
-	}
-	if output.ConfigLines > 0 {
-		categories = append(categories, formatMetric(output.ConfigLines, "config line"))
-	}
-	if output.OtherLines > 0 {
-		categories = append(categories, formatMetric(output.OtherLines, "other line"))
-	}
-	if len(categories) == 0 {
-		return ""
-	}
-	remaining := len(categories) - 3
-	if remaining > 0 {
-		categories = append(categories[:3], "+"+strconv.Itoa(remaining)+" categories")
-	}
-	return "Observed output: " + strings.Join(categories, ", ")
-}
-
-func formatMetric(value int64, singular string) string {
-	unit := singular
-	if value != 1 {
-		unit += "s"
-	}
-	return formatCount(value) + " " + unit
-}
-
-func formatCount(value int64) string {
-	raw := strconv.FormatInt(value, 10)
-	if len(raw) <= 3 {
-		return raw
-	}
-	first := len(raw) % 3
-	if first == 0 {
-		first = 3
-	}
-	var builder strings.Builder
-	builder.Grow(len(raw) + len(raw)/3)
-	builder.WriteString(raw[:first])
-	for index := first; index < len(raw); index += 3 {
-		builder.WriteByte(',')
-		builder.WriteString(raw[index : index+3])
-	}
-	return builder.String()
 }

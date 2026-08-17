@@ -9,7 +9,8 @@
   --border: rgb(255 255 255 / 10%);
   --border-strong: rgb(255 255 255 / 16%);
   --keyword: #e8b34f;
-  --regex: #6aaef7;
+	--regex: #6aaef7;
+	--memory: #50c878;
   --radius-panel: 10px;
   --radius-inner: 8px;
   --sans: "Geist", "SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -245,6 +246,11 @@ h1 {
   box-shadow: 0 0 0 4px rgb(106 174 247 / 8%);
 }
 
+.rule-dot.memory {
+  background: var(--memory);
+  box-shadow: 0 0 0 4px rgb(80 200 120 / 8%);
+}
+
 .rule-copy {
   min-width: 0;
 }
@@ -306,6 +312,18 @@ h1 {
   align-items: center;
   margin-top: 16px;
   padding: 20px 24px;
+}
+
+.memory-panel {
+  margin-top: 16px;
+}
+
+.equivalent-loc {
+  margin-top: 7px;
+  color: var(--muted-strong);
+  font-family: var(--mono);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
 }
 
 .metrics {

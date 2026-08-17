@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gesta-run/gesta-agent/pkg/activitydetail"
 	"github.com/gesta-run/gesta-agent/pkg/codexapp"
 	"github.com/gesta-run/gesta-agent/pkg/daemon"
 	"github.com/gesta-run/gesta-agent/pkg/eventqueue"
@@ -148,7 +149,6 @@ func TestCodexHookMeasuresOnlyCompletedThreadItems(t *testing.T) {
 	if len(stopResponse) != 0 {
 		t.Fatalf("Stop response = %#v, want empty", stopResponse)
 	}
-	wantNotice := "Gesta governance · Observed output: 1 code line, 2 doc words"
 	nextPromptInput := marshalVerifiedCodexPrompt(t, agentHookEvent{
 		HookEventName: "UserPromptSubmit",
 		Prompt:        "Continue",
@@ -161,8 +161,13 @@ func TestCodexHookMeasuresOnlyCompletedThreadItems(t *testing.T) {
 		"codex",
 		"codex",
 	)
-	if got := hookAdditionalContext(nextPromptResponse); got != pendingTurnNoticeContext(wantNotice) {
-		t.Fatalf("next prompt context = %q, want %q", got, pendingTurnNoticeContext(wantNotice))
+	activityID := activityIDFromContext(t, hookAdditionalContext(nextPromptResponse))
+	detail, err := activitydetail.NewStore(cfg.DataDir).Get(activityID)
+	if err != nil {
+		t.Fatalf("Get activity detail: %v", err)
+	}
+	if got := detail.Output.EquivalentLOC(); got != 1.25 {
+		t.Fatalf("equivalent LOC = %v, want 1.25", got)
 	}
 	events, err = consumeQueuedEvents(eventqueue.NewQueue(cfg.DataDir))
 	if err != nil {
@@ -522,7 +527,7 @@ func TestCodexHookRecordsNonBlockingSensitiveRule(t *testing.T) {
 		SessionID:     "record-session",
 	})
 	response := processAgentHook(context.Background(), input, "codex", "codex")
-	if len(response) != 0 {
+	if response["decision"] == "block" {
 		t.Fatalf("record-only finding should allow prompt, got %#v", response)
 	}
 	if got := server.EventRequests.Load(); got != 0 {
@@ -560,7 +565,7 @@ func TestCodexHookAllowsUserPromptSubmitWithoutSensitiveData(t *testing.T) {
 		Prompt:        "please summarize the dashboard and suggest better labels",
 	})
 	response := processAgentHook(context.Background(), input, "codex", "codex")
-	if len(response) != 0 {
+	if response["decision"] == "block" {
 		t.Fatalf("plain prompt should be allowed, got %#v", response)
 	}
 }

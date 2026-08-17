@@ -8,14 +8,17 @@ import (
 )
 
 type activityView struct {
-	AgentLabel string
-	CreatedAt  string
-	ExpiresAt  string
-	RuleCount  int
-	Rules      []ruleView
-	Output     []metricView
-	HasOutput  bool
-	ActivityID string
+	AgentLabel    string
+	CreatedAt     string
+	ExpiresAt     string
+	RuleCount     int
+	Rules         []ruleView
+	MemoryCount   int
+	Memories      []memoryView
+	Output        []metricView
+	HasOutput     bool
+	EquivalentLOC string
+	ActivityID    string
 }
 
 type ruleView struct {
@@ -32,6 +35,11 @@ type metricView struct {
 	Label string
 }
 
+type memoryView struct {
+	Content string
+	Open    bool
+}
+
 func newActivityView(detail activitydetail.Detail) activityView {
 	rules := make([]ruleView, 0, len(detail.ContextMatches))
 	for index, match := range detail.ContextMatches {
@@ -44,6 +52,10 @@ func newActivityView(detail activitydetail.Detail) activityView {
 			Open:       index == 0,
 		})
 	}
+	memories := make([]memoryView, 0, len(detail.Memories))
+	for index, memory := range detail.Memories {
+		memories = append(memories, memoryView{Content: memory.Content, Open: index == 0})
+	}
 	output := make([]metricView, 0, 5)
 	appendMetric := func(value int64, label string) {
 		if value > 0 {
@@ -54,16 +66,19 @@ func newActivityView(detail activitydetail.Detail) activityView {
 	appendMetric(detail.Output.TestLines, "test lines")
 	appendMetric(detail.Output.DocWords, "doc words")
 	appendMetric(detail.Output.ConfigLines, "config lines")
-	appendMetric(detail.Output.OtherLines, "other lines")
+	appendMetric(detail.Output.OtherWords, "other words")
 	return activityView{
-		AgentLabel: agentLabel(detail.AgentType),
-		CreatedAt:  detail.CreatedAt.Local().Format("Jan 2, 2006 · 15:04:05 MST"),
-		ExpiresAt:  detail.ExpiresAt.Local().Format("Jan 2, 2006 · 15:04 MST"),
-		RuleCount:  len(rules),
-		Rules:      rules,
-		Output:     output,
-		HasOutput:  len(output) > 0,
-		ActivityID: detail.ActivityID,
+		AgentLabel:    agentLabel(detail.AgentType),
+		CreatedAt:     detail.CreatedAt.Local().Format("Jan 2, 2006 · 15:04:05 MST"),
+		ExpiresAt:     detail.ExpiresAt.Local().Format("Jan 2, 2006 · 15:04 MST"),
+		RuleCount:     len(rules),
+		Rules:         rules,
+		MemoryCount:   detail.MemoryCount,
+		Memories:      memories,
+		Output:        output,
+		HasOutput:     len(output) > 0,
+		EquivalentLOC: formatEquivalentLOC(detail.Output.EquivalentLOC()),
+		ActivityID:    detail.ActivityID,
 	}
 }
 
