@@ -32,20 +32,17 @@ func (h handler) serveActivityNotice(writer http.ResponseWriter, request *http.R
 		return
 	}
 	notice := formatActivityNotice(detail)
-	response := noticeResponse{Notice: notice}
-	if notice != "" {
-		response.DetailsURL = ActivityURL(detail.ActivityID)
+	response := noticeResponse{
+		Notice:     notice,
+		DetailsURL: ActivityURL(detail.ActivityID),
 	}
 	writeMemoryJSON(writer, http.StatusOK, response)
 }
 
 func formatActivityNotice(detail activitydetail.Detail) string {
 	contextCount := len(detail.ContextMatches)
-	memoryValue, memoryFailed := memoryNoticeValue(detail.MemoryRecallStatus, detail.MemoryCount)
+	memoryValue := memoryNoticeValue(detail.MemoryRecallStatus, detail.MemoryCount)
 	equivalentLOC := detail.Output.EquivalentLOC()
-	if contextCount == 0 && detail.MemoryCount == 0 && !memoryFailed && equivalentLOC == 0 {
-		return ""
-	}
 	message := "Gesta · Context " + strconv.Itoa(contextCount) +
 		" · Memory " + memoryValue +
 		" · Last output " + formatEquivalentLOC(equivalentLOC) + " eLOC" +
@@ -57,16 +54,16 @@ func formatActivityNotice(detail activitydetail.Detail) string {
 	return string(runes[:maxNoticeRunes-1]) + "…"
 }
 
-func memoryNoticeValue(status activitydetail.MemoryRecallStatus, count int) (string, bool) {
+func memoryNoticeValue(status activitydetail.MemoryRecallStatus, count int) string {
 	switch status {
 	case activitydetail.MemoryRecallTimeout:
-		return "timeout", true
+		return "timeout"
 	case activitydetail.MemoryRecallError:
-		return "error", true
+		return "error"
 	case activitydetail.MemoryRecallDisabled:
-		return "disabled", false
+		return "disabled"
 	default:
-		return strconv.Itoa(count), false
+		return strconv.Itoa(count)
 	}
 }
 
