@@ -24,8 +24,8 @@ var (
 )
 
 const (
-	contextRequestTimeout  = 2500 * time.Millisecond
-	searchRequestTimeout   = 4 * time.Second
+	contextRequestTimeout  = 6500 * time.Millisecond
+	searchRequestTimeout   = 5500 * time.Millisecond
 	rememberRequestTimeout = 185 * time.Second
 )
 
@@ -50,14 +50,15 @@ func (s *Service) Enabled() bool {
 	return err == nil && settings.Enabled
 }
 
-func (s *Service) Context(parent context.Context, prompt string, workspace model.MemoryWorkspace) (model.MemorySearchResponse, error) {
+func (s *Service) Context(parent context.Context, prompt, suppliedContext string, workspace model.MemoryWorkspace) (model.MemorySearchResponse, error) {
 	if err := s.authorizeText(prompt); err != nil {
 		return model.MemorySearchResponse{}, err
 	}
 	ctx, cancel := context.WithTimeout(parent, contextRequestTimeout)
 	defer cancel()
 	return s.client.MemoryContext(ctx, model.MemoryContextRequest{
-		DaemonID: s.config.DaemonID, Prompt: strings.TrimSpace(prompt), Workspace: workspace,
+		DaemonID: s.config.DaemonID, Prompt: strings.TrimSpace(prompt),
+		Context: strings.TrimSpace(suppliedContext), Workspace: workspace,
 	})
 }
 

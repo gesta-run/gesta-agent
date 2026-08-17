@@ -100,6 +100,31 @@ func TestVerifyUserPromptSubmissionAllowsPendingActiveTurn(t *testing.T) {
 	}
 }
 
+func TestVerifyUserPromptSubmissionReturnsRecentUserPromptsFromSameScan(t *testing.T) {
+	transcriptPath := writeCodexTranscript(t,
+		`{"type":"event_msg","payload":{"type":"task_started","turn_id":"turn-1"}}`,
+		`{"type":"event_msg","payload":{"type":"user_message","message":"old request"}}`,
+		`{"type":"event_msg","payload":{"type":"task_started","turn_id":"turn-2"}}`,
+		`{"type":"event_msg","payload":{"type":"user_message","message":"release Gesta"}}`,
+		`{"type":"event_msg","payload":{"type":"task_started","turn_id":"turn-3"}}`,
+		`{"type":"event_msg","payload":{"type":"user_message","message":"use preproduction"}}`,
+		`{"type":"event_msg","payload":{"type":"task_started","turn_id":"turn-current"}}`,
+	)
+
+	history, err := verifyUserPromptSubmissionWithHistory(
+		agentHookEvent{TranscriptPath: transcriptPath, TurnID: "turn-current"},
+		"codex",
+		"how do I do that?",
+		2,
+	)
+	if err != nil {
+		t.Fatalf("verify pending prompt: %v", err)
+	}
+	if len(history) != 2 || history[0] != "release Gesta" || history[1] != "use preproduction" {
+		t.Fatalf("recent prompts = %#v", history)
+	}
+}
+
 func TestVerifyUserPromptSubmissionRejectsSupersededTurn(t *testing.T) {
 	transcriptPath := writeCodexTranscript(t,
 		`{"type":"event_msg","payload":{"type":"task_started","turn_id":"turn-old"}}`,
