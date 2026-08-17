@@ -66,7 +66,7 @@
         <div>
           <div class="panel-title-row">
             <h2 id="memory-heading">Recalled memory</h2>
-            <span class="count">{{.MemoryCount}}</span>
+            <span class="count">{{.MemoryLabel}}</span>
           </div>
           <p>Unique memories recalled before or during the current turn.</p>
         </div>
@@ -87,7 +87,7 @@
         </details>
         {{end}}
         {{else}}
-        <div class="empty-output">No memory was recalled.</div>
+        <div class="empty-output">{{.MemoryEmpty}}</div>
         {{end}}
       </div>
     </section>

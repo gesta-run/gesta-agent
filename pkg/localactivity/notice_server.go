@@ -41,13 +41,13 @@ func (h handler) serveActivityNotice(writer http.ResponseWriter, request *http.R
 
 func formatActivityNotice(detail activitydetail.Detail) string {
 	contextCount := len(detail.ContextMatches)
-	memoryCount := detail.MemoryCount
+	memoryValue, memoryFailed := memoryNoticeValue(detail.MemoryRecallStatus, detail.MemoryCount)
 	equivalentLOC := detail.Output.EquivalentLOC()
-	if contextCount == 0 && memoryCount == 0 && equivalentLOC == 0 {
+	if contextCount == 0 && detail.MemoryCount == 0 && !memoryFailed && equivalentLOC == 0 {
 		return ""
 	}
 	message := "Gesta · Context " + strconv.Itoa(contextCount) +
-		" · Memory " + strconv.Itoa(memoryCount) +
+		" · Memory " + memoryValue +
 		" · Last output " + formatEquivalentLOC(equivalentLOC) + " eLOC" +
 		" · [Details](" + ActivityURL(detail.ActivityID) + ")"
 	if utf8.RuneCountInString(message) <= maxNoticeRunes {
@@ -55,6 +55,19 @@ func formatActivityNotice(detail activitydetail.Detail) string {
 	}
 	runes := []rune(message)
 	return string(runes[:maxNoticeRunes-1]) + "…"
+}
+
+func memoryNoticeValue(status activitydetail.MemoryRecallStatus, count int) (string, bool) {
+	switch status {
+	case activitydetail.MemoryRecallTimeout:
+		return "timeout", true
+	case activitydetail.MemoryRecallError:
+		return "error", true
+	case activitydetail.MemoryRecallDisabled:
+		return "disabled", false
+	default:
+		return strconv.Itoa(count), false
+	}
 }
 
 func formatEquivalentLOC(value float64) string {

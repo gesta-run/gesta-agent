@@ -92,8 +92,37 @@ func TestMemorySearchDerivesWorkspaceWithoutForwardingPath(t *testing.T) {
 		t.Fatalf("search response uses an ambiguous memory contract: %s", body)
 	}
 	recorded, err := store.Get(detail.ActivityID)
-	if err != nil || recorded.MemoryCount != 1 {
+	if err != nil || recorded.MemoryRecallStatus != activitydetail.MemoryRecallSuccess || recorded.MemoryCount != 1 {
 		t.Fatalf("recorded activity = %#v, err = %v", recorded, err)
+	}
+}
+
+func TestActivityNoticeReportsMemoryRecallTimeout(t *testing.T) {
+	store := activitydetail.NewStore(t.TempDir())
+	detail, err := store.Begin("codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordMemoryRecall(detail.ActivityID, activitydetail.MemoryRecallTimeout, nil); err != nil {
+		t.Fatal(err)
+	}
+	recorded, err := store.Get(detail.ActivityID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "Gesta · Context 0 · Memory timeout · Last output 0 eLOC · [Details](" + ActivityURL(detail.ActivityID) + ")"
+	if got := formatActivityNotice(recorded); got != want {
+		t.Fatalf("notice = %q, want %q", got, want)
+	}
+}
+
+func TestActivityNoticeDoesNotReportMemoryDisabledByItself(t *testing.T) {
+	detail := activitydetail.Detail{
+		ActivityID:         "activity_0123456789abcdef0123456789abcdef",
+		MemoryRecallStatus: activitydetail.MemoryRecallDisabled,
+	}
+	if got := formatActivityNotice(detail); got != "" {
+		t.Fatalf("notice = %q, want empty", got)
 	}
 }
 

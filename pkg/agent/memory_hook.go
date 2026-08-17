@@ -26,14 +26,18 @@ func processMemoryContext(
 ) map[string]interface{} {
 	service := memoryproxy.New(cfg)
 	result, err := service.Context(ctx, query, suppliedContext, workspace.Resolve(event.CWD))
-	if err != nil && (errors.Is(err, memoryproxy.ErrDisabled) ||
-		errors.Is(err, memoryproxy.ErrSensitive) || errors.Is(err, memoryproxy.ErrRulesUnavailable)) {
-		return response
-	}
-	if event.ActivityID != "" && len(result.Memories) > 0 {
-		if recordErr := activitydetail.NewStore(cfg.DataDir).RecordMemories(event.ActivityID, result.Memories); recordErr != nil {
+	status := memoryRecallStatus(err)
+	if event.ActivityID != "" {
+		if recordErr := activitydetail.NewStore(cfg.DataDir).RecordMemoryRecall(event.ActivityID, status, result.Memories); recordErr != nil {
 			fmt.Fprintf(os.Stderr, "gesta-agent hook: current memory activity was not recorded: %v\n", recordErr)
 		}
+	}
+	if err != nil {
+		if errors.Is(err, memoryproxy.ErrDisabled) || errors.Is(err, memoryproxy.ErrSensitive) ||
+			errors.Is(err, memoryproxy.ErrRulesUnavailable) {
+			return response
+		}
+		fmt.Fprintf(os.Stderr, "gesta-agent hook: automatic memory context failed: %v\n", err)
 	}
 	additionalContext := formatMemoryContext(result.Memories)
 	if localMemoryProxyHealthy(ctx, cfg.DaemonID) {
@@ -48,6 +52,19 @@ func processMemoryContext(
 		return response
 	}
 	return mergeUserPromptAdditionalContext(response, additionalContext)
+}
+
+func memoryRecallStatus(err error) activitydetail.MemoryRecallStatus {
+	switch {
+	case err == nil:
+		return activitydetail.MemoryRecallSuccess
+	case errors.Is(err, context.DeadlineExceeded):
+		return activitydetail.MemoryRecallTimeout
+	case errors.Is(err, memoryproxy.ErrDisabled):
+		return activitydetail.MemoryRecallDisabled
+	default:
+		return activitydetail.MemoryRecallError
+	}
 }
 
 func formatMemoryInstructions(activityID string) string {

@@ -57,3 +57,10 @@ func TestNewActivityViewKeepsOneMeasuredOutput(t *testing.T) {
 		t.Fatalf("output metrics = %#v", view.Output)
 	}
 }
+
+func TestNewActivityViewExplainsMemoryRecallTimeout(t *testing.T) {
+	view := newActivityView(activitydetail.Detail{MemoryRecallStatus: activitydetail.MemoryRecallTimeout})
+	if view.MemoryLabel != "Timed out" || view.MemoryEmpty != "Memory recall timed out before results were available." {
+		t.Fatalf("memory presentation = %q, %q", view.MemoryLabel, view.MemoryEmpty)
+	}
+}
