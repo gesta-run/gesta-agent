@@ -10,23 +10,23 @@ import (
 	"sync"
 	"testing"
 	"time"
-
-	"github.com/gesta-run/gesta-agent/pkg/contextmatch"
 )
 
-func TestStoreAggregatesContextMatchesAndIdempotentOutput(t *testing.T) {
+func TestOutputSummaryEquivalentLOCMatchesControlPlaneFormula(t *testing.T) {
+	output := OutputSummary{
+		CodeLines: 1000, ConfigLines: 200, TestLines: 300,
+		DocWords: 800, OtherWords: 400,
+	}
+	if got := output.EquivalentLOC(); got != 1650 {
+		t.Fatalf("EquivalentLOC() = %v, want 1650", got)
+	}
+}
+
+func TestStoreAggregatesIdempotentOutput(t *testing.T) {
 	dataDir := t.TempDir()
 	store := NewStore(dataDir)
 	if err := store.Begin("claude_code", "raw-session-id", ""); err != nil {
 		t.Fatalf("Begin: %v", err)
-	}
-	if err := store.RecordContextMatches(
-		"claude_code",
-		"raw-session-id",
-		"",
-		testContextMatches(2),
-	); err != nil {
-		t.Fatalf("RecordContextMatches: %v", err)
 	}
 	first := OutputSummary{CodeLines: 12, DocWords: 30}
 	if err := store.RecordOutput("claude_code", "raw-session-id", "", "raw-tool-use-1", first); err != nil {
@@ -57,9 +57,6 @@ func TestStoreAggregatesContextMatchesAndIdempotentOutput(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("receipt not found")
-	}
-	if len(receipt.ContextMatches) != 2 {
-		t.Fatalf("context match receipt = %#v", receipt)
 	}
 	want := OutputSummary{CodeLines: 12, TestLines: 7, DocWords: 35}
 	if receipt.Output != want {
@@ -184,14 +181,6 @@ func TestBeginReplacesAbandonedActiveTurn(t *testing.T) {
 	if err := store.Begin("claude_code", "session-reset", ""); err != nil {
 		t.Fatalf("Begin first: %v", err)
 	}
-	if err := store.RecordContextMatches(
-		"claude_code",
-		"session-reset",
-		"",
-		testContextMatches(1),
-	); err != nil {
-		t.Fatalf("RecordContextMatches: %v", err)
-	}
 	if err := store.RecordOutput(
 		"claude_code",
 		"session-reset",
@@ -208,7 +197,7 @@ func TestBeginReplacesAbandonedActiveTurn(t *testing.T) {
 	if err != nil || !found {
 		t.Fatalf("Consume found = %v, err = %v", found, err)
 	}
-	if len(receipt.ContextMatches) != 0 || !receipt.Output.Empty() {
+	if !receipt.Output.Empty() {
 		t.Fatalf("abandoned turn leaked into new receipt: %#v", receipt)
 	}
 }
@@ -458,113 +447,16 @@ func TestStoreBoundsOutputFragments(t *testing.T) {
 	}
 }
 
-func TestStoreBoundsAndSanitizesContextMatches(t *testing.T) {
-	store := NewStore(t.TempDir())
-	if err := store.Begin("codex", "session-policy-limit", "turn-policy-limit"); err != nil {
-		t.Fatalf("Begin: %v", err)
-	}
-	matches := testContextMatches(maxContextMatches + 100)
-	matches = append(matches,
-		ContextRuleMatch{RuleID: "always", Name: "Always", MatchType: "always", Content: "Always"},
-		ContextRuleMatch{RuleID: "duplicate-0", Name: "Duplicate", MatchType: "regex", Content: "Duplicate"},
-		ContextRuleMatch{RuleID: "duplicate-0", Name: "Duplicate", MatchType: "regex", Content: "Duplicate"},
-	)
-	if err := store.RecordContextMatches(
-		"codex",
-		"session-policy-limit",
-		"turn-policy-limit",
-		matches,
-	); err != nil {
-		t.Fatalf("RecordContextMatches: %v", err)
-	}
-	receipt, found, err := store.Consume(
-		"codex",
-		"session-policy-limit",
-		"turn-policy-limit",
-	)
-	if err != nil || !found {
-		t.Fatalf("Consume found = %v, err = %v", found, err)
-	}
-	if len(receipt.ContextMatches) != maxContextMatches {
-		t.Fatalf(
-			"context match count = %d, want %d",
-			len(receipt.ContextMatches),
-			maxContextMatches,
-		)
-	}
-}
-
-func TestNormalizeContextMatchesPreservesExactBoundedContent(t *testing.T) {
-	matches := NormalizeContextMatches([]ContextRuleMatch{
-		{
-			RuleID:    "review",
-			Name:      "Review",
-			MatchType: "REGEX",
-			Content:   "\nReview the complete diff.\nKeep this line.\n",
-		},
-		{
-			RuleID:    "too-large",
-			Name:      "Too large",
-			MatchType: "keyword_any",
-			Content:   strings.Repeat("界", contextmatch.MaxContextContent),
-		},
-		{
-			RuleID:    "empty",
-			Name:      "Empty",
-			MatchType: "keyword_any",
-			Content:   " \n\t ",
-		},
-	})
-
-	if len(matches) != 1 {
-		t.Fatalf("normalized matches = %#v", matches)
-	}
-	if matches[0].Content != "Review the complete diff.\nKeep this line." {
-		t.Fatalf("normalized content = %q", matches[0].Content)
-	}
-}
-
-func TestNormalizeContextMatchesAcceptsMatcherMaximum(t *testing.T) {
-	content := strings.Repeat("界", contextmatch.MaxContextContent)
-	matches := NormalizeContextMatches([]ContextRuleMatch{{
-		RuleID:    "maximum",
-		Name:      "Maximum",
-		MatchType: "keyword_any",
-		Content:   content,
-	}})
-	if len(matches) != 1 || matches[0].Content != content {
-		t.Fatalf("maximum content was not preserved: %d matches", len(matches))
-	}
-}
-
 func TestWriteReceiptRejectsRecordOverHardLimit(t *testing.T) {
-	store := NewStore(t.TempDir())
-	err := store.writeReceipt(filepath.Join(t.TempDir(), "receipt"), Receipt{
-		SchemaVersion: schemaVersion,
-		ContextMatches: []ContextRuleMatch{{
-			RuleID:    "oversized",
-			Name:      "Oversized",
-			MatchType: "keyword_any",
-			Content:   strings.Repeat("x", maxReceiptBytes),
-		}},
-	})
+	err := atomicWriteBoundedJSON(
+		filepath.Join(t.TempDir(), "receipt"),
+		strings.Repeat("x", maxReceiptBytes),
+		maxReceiptBytes,
+		"turn receipt",
+	)
 	if err == nil || !strings.Contains(err.Error(), "exceeds") {
-		t.Fatalf("writeReceipt error = %v, want size error", err)
+		t.Fatalf("bounded receipt error = %v, want size error", err)
 	}
-}
-
-func testContextMatches(count int) []ContextRuleMatch {
-	matches := make([]ContextRuleMatch, 0, count)
-	for index := 0; index < count; index++ {
-		matches = append(matches, ContextRuleMatch{
-			RuleID:    "duplicate-" + strconv.Itoa(index),
-			Name:      "Rule " + strconv.Itoa(index),
-			MatchType: "keyword_any",
-			Priority:  100 - index,
-			Content:   "Follow rule " + strconv.Itoa(index) + ".",
-		})
-	}
-	return matches
 }
 
 func assertReceiptStorageExcludes(t *testing.T, root string, forbidden []string) {

@@ -50,7 +50,7 @@ func TestHandlerHealthIdentifiesConfiguredDaemon(t *testing.T) {
 
 func TestHandlerRendersEscapedActivityDetailWithoutRemoteResources(t *testing.T) {
 	store := activitydetail.NewStore(t.TempDir())
-	detail, err := store.Create("claude_code", []turnreceipt.ContextRuleMatch{
+	detail, err := store.Create("claude_code", []activitydetail.ContextRuleMatch{
 		{
 			RuleID:    "rule-review",
 			Name:      `<script>alert("x")</script> Review Standards`,
@@ -180,7 +180,7 @@ func TestHandlerRejectsInvalidHostMethodAndMissingActivity(t *testing.T) {
 
 func TestHandlerHeadResponsesHaveNoBody(t *testing.T) {
 	store := activitydetail.NewStore(t.TempDir())
-	detail, err := store.Create("codex", []turnreceipt.ContextRuleMatch{{
+	detail, err := store.Create("codex", []activitydetail.ContextRuleMatch{{
 		RuleID: "rule", Name: "Rule", MatchType: "keyword_any", Content: "Follow the rule.",
 	}}, turnreceipt.OutputSummary{})
 	if err != nil {

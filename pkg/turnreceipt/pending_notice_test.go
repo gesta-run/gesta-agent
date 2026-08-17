@@ -2,10 +2,8 @@ package turnreceipt
 
 import (
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -17,7 +15,7 @@ func TestPendingNoticeIsSessionScopedAndConsumedOnce(t *testing.T) {
 	if err := store.SavePending(
 		"codex",
 		"raw-pending-session",
-		Receipt{ContextMatches: testContextMatches(1)},
+		OutputSummary{CodeLines: 1},
 	); err != nil {
 		t.Fatalf("SavePending: %v", err)
 	}
@@ -35,8 +33,8 @@ func TestPendingNoticeIsSessionScopedAndConsumedOnce(t *testing.T) {
 	if err != nil || !found {
 		t.Fatalf("ConsumePending found = %v, err = %v", found, err)
 	}
-	if len(pending.ContextMatches) != 1 {
-		t.Fatalf("context matches = %#v", pending.ContextMatches)
+	if pending.Output.CodeLines != 1 {
+		t.Fatalf("output = %#v", pending.Output)
 	}
 	if pending.SchemaVersion != pendingSchemaVersion {
 		t.Fatalf("schema version = %d, want %d", pending.SchemaVersion, pendingSchemaVersion)
@@ -48,14 +46,10 @@ func TestPendingNoticeIsSessionScopedAndConsumedOnce(t *testing.T) {
 
 func TestPendingNoticeLatestValueWins(t *testing.T) {
 	store := NewStore(t.TempDir())
-	if err := store.SavePending("codex", "session-latest", Receipt{
-		Output: OutputSummary{CodeLines: 1},
-	}); err != nil {
+	if err := store.SavePending("codex", "session-latest", OutputSummary{CodeLines: 1}); err != nil {
 		t.Fatalf("SavePending first: %v", err)
 	}
-	if err := store.SavePending("codex", "session-latest", Receipt{
-		Output: OutputSummary{CodeLines: 2},
-	}); err != nil {
+	if err := store.SavePending("codex", "session-latest", OutputSummary{CodeLines: 2}); err != nil {
 		t.Fatalf("SavePending second: %v", err)
 	}
 	pending, found, err := store.ConsumePending("codex", "session-latest")
@@ -71,9 +65,7 @@ func TestPendingNoticeExpiresAndCleanupRemovesIt(t *testing.T) {
 	store := NewStore(t.TempDir())
 	now := time.Date(2026, 7, 25, 12, 0, 0, 0, time.UTC)
 	store.now = func() time.Time { return now.Add(-48 * time.Hour) }
-	if err := store.SavePending("codex", "expired-pending", Receipt{
-		Output: OutputSummary{DocWords: 1},
-	}); err != nil {
+	if err := store.SavePending("codex", "expired-pending", OutputSummary{DocWords: 1}); err != nil {
 		t.Fatalf("SavePending: %v", err)
 	}
 	store.now = func() time.Time { return now }
@@ -87,9 +79,7 @@ func TestPendingNoticeExpiresAndCleanupRemovesIt(t *testing.T) {
 
 func TestPendingNoticeCorruptionFailsClosedToStorageAndOpenToHook(t *testing.T) {
 	store := NewStore(t.TempDir())
-	if err := store.SavePending("codex", "corrupt-pending", Receipt{
-		Output: OutputSummary{DocWords: 1},
-	}); err != nil {
+	if err := store.SavePending("codex", "corrupt-pending", OutputSummary{DocWords: 1}); err != nil {
 		t.Fatalf("SavePending: %v", err)
 	}
 	path, ok := store.pendingPath("codex", "corrupt-pending")
@@ -109,9 +99,7 @@ func TestPendingNoticeCorruptionFailsClosedToStorageAndOpenToHook(t *testing.T) 
 
 func TestPendingNoticeAllowsOnlyOneConcurrentConsumer(t *testing.T) {
 	store := NewStore(t.TempDir())
-	if err := store.SavePending("codex", "concurrent-pending", Receipt{
-		Output: OutputSummary{DocWords: 1},
-	}); err != nil {
+	if err := store.SavePending("codex", "concurrent-pending", OutputSummary{DocWords: 1}); err != nil {
 		t.Fatalf("SavePending: %v", err)
 	}
 
@@ -142,45 +130,12 @@ func TestPendingNoticeAllowsOnlyOneConcurrentConsumer(t *testing.T) {
 	}
 }
 
-func TestPendingNoticeBoundsStructuredActivity(t *testing.T) {
+func TestPendingNoticeSkipsEmptyOutput(t *testing.T) {
 	store := NewStore(t.TempDir())
-	matches := make([]ContextRuleMatch, 0, maxContextMatches*2)
-	for index := 0; index < maxContextMatches*2; index++ {
-		matches = append(matches, ContextRuleMatch{
-			RuleID:    fmt.Sprintf("rule-%02d-%s", index, strings.Repeat("r", maxContextRuleIDBytes)),
-			Name:      strings.Repeat("n", maxContextRuleNameBytes+100),
-			MatchType: "regex",
-			Content:   "Review the complete diff.",
-		})
+	if err := store.SavePending("codex", "empty-pending", OutputSummary{}); err != nil {
+		t.Fatalf("SavePending empty output: %v", err)
 	}
-	if err := store.SavePending(
-		"codex",
-		"bounded-pending",
-		Receipt{ContextMatches: matches},
-	); err != nil {
-		t.Fatalf("SavePending bounded activity: %v", err)
-	}
-	pending, found, err := store.ConsumePending("codex", "bounded-pending")
-	if err != nil || !found {
-		t.Fatalf("ConsumePending found = %v, err = %v", found, err)
-	}
-	if len(pending.ContextMatches) != maxContextMatches {
-		t.Fatalf("context match count = %d, want %d", len(pending.ContextMatches), maxContextMatches)
-	}
-}
-
-func TestWritePendingNoticeRejectsRecordOverHardLimit(t *testing.T) {
-	store := NewStore(t.TempDir())
-	err := store.writePendingNotice(filepath.Join(t.TempDir(), "pending"), PendingNotice{
-		SchemaVersion: pendingSchemaVersion,
-		ContextMatches: []ContextRuleMatch{{
-			RuleID:    "oversized",
-			Name:      "Oversized",
-			MatchType: "regex",
-			Content:   strings.Repeat("x", maxPendingRecordBytes),
-		}},
-	})
-	if err == nil || !strings.Contains(err.Error(), "exceeds") {
-		t.Fatalf("writePendingNotice error = %v, want size error", err)
+	if _, found, err := store.ConsumePending("codex", "empty-pending"); err != nil || found {
+		t.Fatalf("empty pending found = %v, err = %v", found, err)
 	}
 }

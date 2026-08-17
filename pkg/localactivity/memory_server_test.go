@@ -2,6 +2,7 @@ package localactivity
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +14,7 @@ import (
 	"github.com/gesta-run/gesta-agent/pkg/activitydetail"
 	"github.com/gesta-run/gesta-agent/pkg/memoryproxy"
 	"github.com/gesta-run/gesta-agent/pkg/model"
+	"github.com/gesta-run/gesta-agent/pkg/turnreceipt"
 )
 
 type fakeMemoryService struct {
@@ -23,7 +25,7 @@ type fakeMemoryService struct {
 func (f *fakeMemoryService) Search(_ context.Context, query string, limit int, workspace model.MemoryWorkspace) (model.MemorySearchResponse, error) {
 	f.workspace = workspace
 	return model.MemorySearchResponse{Memories: []model.Memory{{
-		FactID: "memory", Content: query, GraphRankScore: 1, Score: 1,
+		FactID: "memory", Content: query, RelevanceScore: 1, Score: 1,
 	}}}, nil
 }
 
@@ -55,7 +57,12 @@ func TestMemoryRememberReturnsConflictWhileWriteIsInProgress(t *testing.T) {
 
 func TestMemorySearchDerivesWorkspaceWithoutForwardingPath(t *testing.T) {
 	service := &fakeMemoryService{}
-	handler := newHandlerWithMemory(activitydetail.NewStore(t.TempDir()), "daemon", service)
+	store := activitydetail.NewStore(t.TempDir())
+	detail, err := store.Begin("codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := newHandlerWithMemory(store, "daemon", service)
 	workingDirectory, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)
@@ -65,6 +72,7 @@ func TestMemorySearchDerivesWorkspaceWithoutForwardingPath(t *testing.T) {
 	request.Host = Address
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("X-Gesta-Cwd", workspacePath)
+	request.Header.Set(ActivityHeaderName, detail.ActivityID)
 	response := httptest.NewRecorder()
 
 	handler.ServeHTTP(response, request)
@@ -79,9 +87,53 @@ func TestMemorySearchDerivesWorkspaceWithoutForwardingPath(t *testing.T) {
 		t.Fatalf("response leaked full workspace path: %s", response.Body.String())
 	}
 	if body := response.Body.String(); !strings.Contains(body, `"fact_id":"memory"`) ||
-		!strings.Contains(body, `"graph_rank_score":1`) || !strings.Contains(body, `"score":1`) ||
+		!strings.Contains(body, `"relevance_score":1`) || !strings.Contains(body, `"score":1`) ||
 		strings.Contains(body, `"memory_id"`) {
 		t.Fatalf("search response uses an ambiguous memory contract: %s", body)
+	}
+	recorded, err := store.Get(detail.ActivityID)
+	if err != nil || recorded.MemoryCount != 1 {
+		t.Fatalf("recorded activity = %#v, err = %v", recorded, err)
+	}
+}
+
+func TestActivityNoticeUsesCurrentContextMemoryAndLastOutput(t *testing.T) {
+	store := activitydetail.NewStore(t.TempDir())
+	detail, err := store.Begin("codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordContext(detail.ActivityID, []activitydetail.ContextRuleMatch{{
+		RuleID: "rule", Name: "Rule", MatchType: "keyword_any", Content: "Apply it.",
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordMemories(detail.ActivityID, []model.Memory{{FactID: "fact", Content: "Remember it."}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordOutput(detail.ActivityID, turnreceipt.OutputSummary{
+		CodeLines: 10, DocWords: 8, OtherWords: 4,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	handler := newHandlerWithMemory(store, "daemon", &fakeMemoryService{})
+	request := httptest.NewRequest(http.MethodPost, NoticeURL(), nil)
+	request.Host = Address
+	request.Header.Set(ActivityHeaderName, detail.ActivityID)
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var body noticeResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	want := "Gesta · Context 1 · Memory 1 · Last output 11.5 eLOC · [Details](" + ActivityURL(detail.ActivityID) + ")"
+	if body.Notice != want {
+		t.Fatalf("notice = %q, want %q", body.Notice, want)
 	}
 }
 

@@ -19,91 +19,7 @@ import (
 	"github.com/gesta-run/gesta-agent/pkg/turnreceipt"
 )
 
-func TestFormatTurnCompletionNoticeCombinesContextAppendAndOutput(t *testing.T) {
-	receipt := turnreceipt.Receipt{
-		ContextMatches: testReceiptContextMatches(3),
-		Output: turnreceipt.OutputSummary{
-			CodeLines:   1280,
-			TestLines:   42,
-			DocWords:    310,
-			ConfigLines: 8,
-			OtherLines:  2,
-		},
-	}
-	got := formatTurnCompletionNoticeWithDetails(receipt, "")
-	want := "Gesta governance · Context append: 3 · " +
-		"Observed output: 1,280 code lines, 42 test lines, 310 doc words, +2 categories"
-	if got != want {
-		t.Fatalf("notice = %q, want %q", got, want)
-	}
-}
-
-func TestFormatTurnCompletionNoticeReportsContextAppendOnly(t *testing.T) {
-	receipt := turnreceipt.Receipt{
-		ContextMatches: testReceiptContextMatches(2),
-	}
-	got := formatTurnCompletionNoticeWithDetails(receipt, "")
-	want := "Gesta governance · Context append: 2"
-	if got != want {
-		t.Fatalf("notice = %q, want %q", got, want)
-	}
-	if len([]rune(got)) > maxTurnCompletionNoticeRunes {
-		t.Fatalf("notice exceeds %d runes: %q", maxTurnCompletionNoticeRunes, got)
-	}
-}
-
-func TestFormatTurnCompletionNoticeAddsDetailsOnlyForContextMatches(t *testing.T) {
-	detailURL := "http://127.0.0.1:3333/activity/activity_0123456789abcdef0123456789abcdef"
-	withContext := formatTurnCompletionNoticeWithDetails(turnreceipt.Receipt{
-		ContextMatches: testReceiptContextMatches(1),
-		Output:         turnreceipt.OutputSummary{CodeLines: 2},
-	}, detailURL)
-	want := "Gesta governance · Context append: 1 · Observed output: 2 code lines · " +
-		"[Details](" + detailURL + ")"
-	if withContext != want {
-		t.Fatalf("notice = %q, want %q", withContext, want)
-	}
-	outputOnly := formatTurnCompletionNoticeWithDetails(turnreceipt.Receipt{
-		Output: turnreceipt.OutputSummary{CodeLines: 2},
-	}, detailURL)
-	if strings.Contains(outputOnly, "Details") {
-		t.Fatalf("output-only notice contains Details: %q", outputOnly)
-	}
-}
-
-func testReceiptContextMatches(count int) []turnreceipt.ContextRuleMatch {
-	matches := make([]turnreceipt.ContextRuleMatch, 0, count)
-	for index := 0; index < count; index++ {
-		matches = append(matches, turnreceipt.ContextRuleMatch{
-			RuleID:    "rule-" + string(rune('a'+index)),
-			Name:      "Rule",
-			MatchType: "keyword_any",
-			Priority:  100,
-			Content:   "Follow the organization rule.",
-		})
-	}
-	return matches
-}
-
-func TestFormatTurnCompletionNoticeIsSilentWithoutMaterialAction(t *testing.T) {
-	if got := formatTurnCompletionNoticeWithDetails(turnreceipt.Receipt{}, ""); got != "" {
-		t.Fatalf("notice = %q, want empty", got)
-	}
-}
-
-func TestFormatTurnCompletionNoticeReportsOutputWithoutContextAppend(t *testing.T) {
-	receipt := turnreceipt.Receipt{
-		Output: turnreceipt.OutputSummary{DocWords: 23},
-	}
-	got := formatTurnCompletionNoticeWithDetails(receipt, "")
-	want := "Gesta governance · Observed output: 23 doc words"
-	if got != want {
-		t.Fatalf("notice = %q, want %q", got, want)
-	}
-}
-
-func TestClaudeStopQueuesOneShotNoticeForNextPrompt(t *testing.T) {
-	stubLocalActivityHealth(t, false)
+func TestClaudeStopAttachesPreviousOutputWithoutUIPreflight(t *testing.T) {
 	home := filepath.Join(t.TempDir(), "home")
 	if err := os.MkdirAll(home, 0o700); err != nil {
 		t.Fatalf("mkdir home: %v", err)
@@ -165,7 +81,6 @@ func TestClaudeStopQueuesOneShotNoticeForNextPrompt(t *testing.T) {
 		t.Fatalf("Stop response = %#v, want empty", stop)
 	}
 
-	wantNotice := "Gesta governance · Context append: 1 · Observed output: 2 code lines"
 	nextPrompt := runAgentHook(t, agentHookEvent{
 		HookEventName: "UserPromptSubmit",
 		Prompt:        "Continue with the next task",
@@ -173,25 +88,61 @@ func TestClaudeStopQueuesOneShotNoticeForNextPrompt(t *testing.T) {
 	}, "claude_code")
 	gotContext := hookAdditionalContext(nextPrompt)
 	if !strings.Contains(gotContext, "Follow organization defaults.") ||
-		!strings.Contains(gotContext, pendingTurnNoticeContext(wantNotice)) {
+		!strings.Contains(gotContext, "gesta_activity_notice") {
 		t.Fatalf("next prompt context = %q", gotContext)
 	}
-	if _, err := os.Stat(filepath.Join(cfg.DataDir, "activity-details")); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("unhealthy local UI created activity details: %v", err)
+	detail, err := activitydetail.NewStore(cfg.DataDir).Get(activityIDFromContext(t, gotContext))
+	if err != nil || detail.Output.EquivalentLOC() != 2 {
+		t.Fatalf("activity output = %#v, err = %v", detail.Output, err)
 	}
-
-	thirdPrompt := runAgentHook(t, agentHookEvent{
-		HookEventName: "UserPromptSubmit",
-		Prompt:        "Continue again",
-		SessionID:     "claude-notice-session",
-	}, "claude_code")
-	if strings.Contains(hookAdditionalContext(thirdPrompt), "gesta_activity_notice") {
-		t.Fatalf("third prompt repeated pending notice: %#v", thirdPrompt)
+	if _, found, err := turnreceipt.NewStore(cfg.DataDir).ConsumePending("claude_code", "claude-notice-session"); err != nil || found {
+		t.Fatalf("pending output was not consumed: found = %v, err = %v", found, err)
 	}
 }
 
-func TestCodexKeywordNoticeAppearsOnlyOnImmediatelyFollowingPrompt(t *testing.T) {
-	stubLocalActivityHealth(t, false)
+func TestInternalActivityNoticeCallRequiresExactAgentCommand(t *testing.T) {
+	const activityID = "activity_0123456789abcdef0123456789abcdef"
+	command := "curl -fsS --max-time 2 -X POST http://127.0.0.1:3333/api/v1/activity/notice" +
+		" -H 'X-Gesta-Activity-ID: " + activityID + "' 2>/dev/null || true"
+	if !isInternalActivityNoticeCall("functions", "exec", map[string]interface{}{"cmd": command}) {
+		t.Fatal("exact internal activity notice command was not recognized")
+	}
+	wrapped := `const result = await tools.exec_command({cmd: "` + command + `"}); text(result.output);`
+	if !isInternalActivityNoticeCall("functions", "exec", wrapped) {
+		t.Fatal("free-form internal activity notice command was not recognized")
+	}
+	if isInternalActivityNoticeCall("functions", "exec", map[string]interface{}{
+		"cmd": "apply patch documenting http://127.0.0.1:3333/api/v1/activity/notice",
+	}) {
+		t.Fatal("ordinary tool content containing the notice URL was excluded")
+	}
+	if isInternalActivityNoticeCall("functions", "exec", `text("`+command+`")`) {
+		t.Fatal("non-command free-form content was excluded")
+	}
+	if isInternalActivityNoticeCall("github", "create_file", map[string]interface{}{"cmd": command}) {
+		t.Fatal("non-agent tool call was excluded")
+	}
+}
+
+func TestPendingOutputIsConsumedWhenActivityCreationFails(t *testing.T) {
+	cfg := daemon.Config{DataDir: t.TempDir()}
+	store := turnreceipt.NewStore(cfg.DataDir)
+	if err := store.SavePending("codex", "failed-activity-session", turnreceipt.OutputSummary{CodeLines: 7}); err != nil {
+		t.Fatal(err)
+	}
+	injectPendingTurnNoticeBestEffort(
+		context.Background(),
+		cfg,
+		agentHookEvent{SessionID: "failed-activity-session"},
+		"codex",
+		nil,
+	)
+	if _, found, err := store.ConsumePending("codex", "failed-activity-session"); err != nil || found {
+		t.Fatalf("stale pending output remains: found = %v, err = %v", found, err)
+	}
+}
+
+func TestCodexKeywordContextIsNotDelayedToFollowingPrompt(t *testing.T) {
 	home := filepath.Join(t.TempDir(), "home")
 	if err := os.MkdirAll(home, 0o700); err != nil {
 		t.Fatalf("mkdir home: %v", err)
@@ -242,8 +193,7 @@ func TestCodexKeywordNoticeAppearsOnlyOnImmediatelyFollowingPrompt(t *testing.T)
 		SessionID:     "codex-keyword-notice-session",
 		TurnID:        "turn-2",
 	}, "codex")
-	const wantNotice = "Gesta governance · Context append: 1"
-	if !strings.Contains(hookAdditionalContext(secondPrompt), pendingTurnNoticeContext(wantNotice)) {
+	if strings.Contains(hookAdditionalContext(secondPrompt), "Context append") {
 		t.Fatalf("second prompt context = %q", hookAdditionalContext(secondPrompt))
 	}
 	runAgentHook(t, agentHookEvent{
@@ -258,13 +208,15 @@ func TestCodexKeywordNoticeAppearsOnlyOnImmediatelyFollowingPrompt(t *testing.T)
 		SessionID:     "codex-keyword-notice-session",
 		TurnID:        "turn-3",
 	}, "codex")
-	if strings.Contains(hookAdditionalContext(thirdPrompt), "gesta_activity_notice") {
-		t.Fatalf("third prompt repeated pending notice: %#v", thirdPrompt)
+	thirdDetail, err := activitydetail.NewStore(cfg.DataDir).Get(
+		activityIDFromContext(t, hookAdditionalContext(thirdPrompt)),
+	)
+	if err != nil || !thirdDetail.Output.Empty() {
+		t.Fatalf("third activity output = %#v, err = %v", thirdDetail.Output, err)
 	}
 }
 
 func TestClaudeStopCreatesLinkedLocalActivityDetailWhenUIIsHealthy(t *testing.T) {
-	stubLocalActivityHealth(t, true)
 	home := filepath.Join(t.TempDir(), "home")
 	if err := os.MkdirAll(home, 0o700); err != nil {
 		t.Fatalf("mkdir home: %v", err)
@@ -288,18 +240,25 @@ func TestClaudeStopCreatesLinkedLocalActivityDetailWhenUIIsHealthy(t *testing.T)
 	}, time.Now()); err != nil {
 		t.Fatalf("SaveContextRuleCache: %v", err)
 	}
-	runAgentHook(t, agentHookEvent{
+	firstPrompt := runAgentHook(t, agentHookEvent{
 		HookEventName: "UserPromptSubmit",
 		Prompt:        "review this",
 		SessionID:     "claude-linked-session",
 	}, "claude_code")
+	activityID := activityIDFromContext(t, hookAdditionalContext(firstPrompt))
+	detail, err := activitydetail.NewStore(cfg.DataDir).Get(activityID)
+	if err != nil {
+		t.Fatalf("Get current activity detail: %v", err)
+	}
+	if len(detail.ContextMatches) != 1 ||
+		detail.ContextMatches[0].Name != "Linked Rule" ||
+		detail.ContextMatches[0].Content != "Review carefully." {
+		t.Fatalf("current activity detail = %#v", detail)
+	}
 	runAgentHook(t, agentHookEvent{
 		HookEventName: "Stop",
 		SessionID:     "claude-linked-session",
 	}, "claude_code")
-	if _, err := os.Stat(filepath.Join(cfg.DataDir, "activity-details")); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("Stop created activity detail before notice consumption: %v", err)
-	}
 	if err := rulecache.SaveContextRuleCache(cfg.DataDir, model.ContextRuleBundle{
 		Version: "bundle-linked-notice-updated",
 		Rules: []model.ContextRule{{
@@ -316,22 +275,14 @@ func TestClaudeStopCreatesLinkedLocalActivityDetailWhenUIIsHealthy(t *testing.T)
 		Prompt:        "continue",
 		SessionID:     "claude-linked-session",
 	}, "claude_code")
-	noticeContext := hookAdditionalContext(nextPrompt)
-	const prefix = "[Details](http://127.0.0.1:3333/activity/"
-	index := strings.Index(noticeContext, prefix)
-	if index < 0 {
-		t.Fatalf("linked notice context = %q", noticeContext)
-	}
-	activityID := strings.SplitN(noticeContext[index+len(prefix):], ")", 2)[0]
-	detail, err := activitydetail.NewStore(cfg.DataDir).Get(activityID)
+	nextDetail, err := activitydetail.NewStore(cfg.DataDir).Get(
+		activityIDFromContext(t, hookAdditionalContext(nextPrompt)),
+	)
 	if err != nil {
-		t.Fatalf("Get activity detail: %v", err)
+		t.Fatalf("Get next activity detail: %v", err)
 	}
-	if len(detail.ContextMatches) != 1 ||
-		detail.ContextMatches[0].Name != "Linked Rule" ||
-		detail.ContextMatches[0].MatchType != "regex" ||
-		detail.ContextMatches[0].Content != "Review carefully." {
-		t.Fatalf("activity detail = %#v", detail)
+	if len(nextDetail.ContextMatches) != 0 {
+		t.Fatalf("next activity reused previous context: %#v", nextDetail.ContextMatches)
 	}
 }
 
@@ -371,9 +322,7 @@ func TestClaudeStopIsSilentWithoutContextOrOutput(t *testing.T) {
 		Prompt:        "Continue",
 		SessionID:     "claude-silent-session",
 	}, "claude_code")
-	if strings.Contains(hookAdditionalContext(nextPrompt), "gesta_activity_notice") {
-		t.Fatalf("next prompt unexpectedly received notice: %#v", nextPrompt)
-	}
+	activityIDFromContext(t, hookAdditionalContext(nextPrompt))
 }
 
 func TestEveryPromptContextDoesNotCreateNoticeWhenTurnReadFails(t *testing.T) {
@@ -430,9 +379,7 @@ func TestEveryPromptContextDoesNotCreateNoticeWhenTurnReadFails(t *testing.T) {
 	if !strings.Contains(gotContext, "Verify the target environment.") {
 		t.Fatalf("next prompt context = %q", gotContext)
 	}
-	if strings.Contains(gotContext, "gesta_activity_notice") {
-		t.Fatalf("every-prompt context created a pending notice: %q", gotContext)
-	}
+	activityIDFromContext(t, gotContext)
 }
 
 func TestPendingNoticeMergesWithCurrentOrganizationContext(t *testing.T) {
@@ -463,7 +410,7 @@ func TestPendingNoticeMergesWithCurrentOrganizationContext(t *testing.T) {
 	if err := store.SavePending(
 		"claude_code",
 		"merge-session",
-		turnreceipt.Receipt{Output: turnreceipt.OutputSummary{CodeLines: 4}},
+		turnreceipt.OutputSummary{CodeLines: 4},
 	); err != nil {
 		t.Fatalf("SavePending: %v", err)
 	}
@@ -475,9 +422,12 @@ func TestPendingNoticeMergesWithCurrentOrganizationContext(t *testing.T) {
 	}, "claude_code")
 	context := hookAdditionalContext(response)
 	if !strings.Contains(context, "Apply the current organization guidance.") ||
-		!strings.Contains(context, "Gesta governance · Observed output: 4 code lines") ||
-		!strings.Contains(context, "At the bottom of your response") {
+		!strings.Contains(context, "/api/v1/activity/notice") {
 		t.Fatalf("merged additional context = %q", context)
+	}
+	detail, err := activitydetail.NewStore(cfg.DataDir).Get(activityIDFromContext(t, context))
+	if err != nil || detail.Output.EquivalentLOC() != 4 {
+		t.Fatalf("activity detail = %#v, err = %v", detail, err)
 	}
 }
 
@@ -501,7 +451,7 @@ func TestBlockedPromptDoesNotConsumePendingNotice(t *testing.T) {
 	if err := turnreceipt.NewStore(cfg.DataDir).SavePending(
 		"codex",
 		"blocked-notice-session",
-		turnreceipt.Receipt{ContextMatches: testReceiptContextMatches(1)},
+		turnreceipt.OutputSummary{CodeLines: 3},
 	); err != nil {
 		t.Fatalf("SavePending: %v", err)
 	}
@@ -521,8 +471,8 @@ func TestBlockedPromptDoesNotConsumePendingNotice(t *testing.T) {
 	if err != nil || !found {
 		t.Fatalf("pending after blocked prompt found = %v, err = %v", found, err)
 	}
-	if len(pending.ContextMatches) != 1 {
-		t.Fatalf("pending context matches = %#v", pending.ContextMatches)
+	if pending.Output.CodeLines != 3 {
+		t.Fatalf("pending output = %#v", pending.Output)
 	}
 }
 
@@ -605,9 +555,16 @@ func hookAdditionalContext(response map[string]interface{}) string {
 	return context
 }
 
-func stubLocalActivityHealth(t *testing.T, healthy bool) {
+func activityIDFromContext(t *testing.T, context string) string {
 	t.Helper()
-	original := localActivityUIHealthy
-	localActivityUIHealthy = func(context.Context) bool { return healthy }
-	t.Cleanup(func() { localActivityUIHealthy = original })
+	const marker = "X-Gesta-Activity-ID: "
+	index := strings.Index(context, marker)
+	if index < 0 {
+		t.Fatalf("activity ID missing from context: %q", context)
+	}
+	activityID := strings.SplitN(context[index+len(marker):], "'", 2)[0]
+	if !strings.HasPrefix(activityID, "activity_") {
+		t.Fatalf("invalid activity ID %q", activityID)
+	}
+	return activityID
 }

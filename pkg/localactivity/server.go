@@ -16,13 +16,14 @@ import (
 )
 
 const (
-	Address           = "127.0.0.1:3333"
-	BaseURL           = "http://" + Address
-	healthHeaderName  = "X-Gesta-Agent"
-	healthHeaderValue = "activity-ui-v1"
-	daemonHeaderName  = "X-Gesta-Daemon-ID"
-	memoryHeaderName  = "X-Gesta-Memory"
-	memoryHeaderValue = "proxy-v1"
+	Address            = "127.0.0.1:3333"
+	BaseURL            = "http://" + Address
+	healthHeaderName   = "X-Gesta-Agent"
+	healthHeaderValue  = "activity-ui-v2"
+	daemonHeaderName   = "X-Gesta-Daemon-ID"
+	memoryHeaderName   = "X-Gesta-Memory"
+	memoryHeaderValue  = "proxy-v1"
+	ActivityHeaderName = "X-Gesta-Activity-ID"
 )
 
 type Server struct {
@@ -72,6 +73,10 @@ func (s *Server) Close(ctx context.Context) error {
 
 func ActivityURL(activityID string) string {
 	return BaseURL + "/activity/" + url.PathEscape(strings.TrimSpace(activityID))
+}
+
+func NoticeURL() string {
+	return BaseURL + "/api/v1/activity/notice"
 }
 
 func Healthy(parent context.Context) bool {
@@ -139,6 +144,10 @@ func (h handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	setSecurityHeaders(writer.Header())
 	if !allowedHost(request.Host) {
 		http.Error(writer, "Misdirected Request", http.StatusMisdirectedRequest)
+		return
+	}
+	if request.URL.Path == "/api/v1/activity/notice" {
+		h.serveActivityNotice(writer, request)
 		return
 	}
 	if strings.HasPrefix(request.URL.Path, "/api/v1/memory/") {

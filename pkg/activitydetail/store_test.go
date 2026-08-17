@@ -10,6 +10,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/gesta-run/gesta-agent/pkg/model"
 	"github.com/gesta-run/gesta-agent/pkg/turnreceipt"
 )
 
@@ -18,7 +19,7 @@ func TestStoreCreatesAndReadsMinimalActivityDetail(t *testing.T) {
 	now := time.Date(2026, 7, 26, 12, 0, 0, 0, time.UTC)
 	store.now = func() time.Time { return now }
 	store.newID = func(string) string { return "activity_0123456789abcdef0123456789abcdef" }
-	detail, err := store.Create("codex", []turnreceipt.ContextRuleMatch{
+	detail, err := store.Create("codex", []ContextRuleMatch{
 		{
 			RuleID:    "rule-review",
 			Name:      "Review Standards",
@@ -71,7 +72,7 @@ func TestStoreRequiresTargetedContextMatches(t *testing.T) {
 	}
 	if _, err := store.Create(
 		"codex",
-		[]turnreceipt.ContextRuleMatch{{
+		[]ContextRuleMatch{{
 			RuleID: "always", Name: "Always", MatchType: "always",
 		}},
 		turnreceipt.OutputSummary{},
@@ -99,8 +100,71 @@ func TestStoreDoesNotReadVersionOneActivityDetails(t *testing.T) {
 	if _, err := store.Get(activityID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("Get old detail error = %v, want ErrNotFound", err)
 	}
-	if filepath.Base(store.rootPath()) != "v2" {
-		t.Fatalf("activity detail root = %q, want v2", store.rootPath())
+	if filepath.Base(store.rootPath()) != "v3" {
+		t.Fatalf("activity detail root = %q, want v3", store.rootPath())
+	}
+}
+
+func TestCleanupRemovesLegacySchemaRoots(t *testing.T) {
+	dataDir := t.TempDir()
+	for _, version := range []string{"v1", "v2"} {
+		root := filepath.Join(dataDir, "activity-details", version)
+		if err := os.MkdirAll(root, 0o700); err != nil {
+			t.Fatalf("MkdirAll %s: %v", version, err)
+		}
+		if err := os.WriteFile(filepath.Join(root, "stale.json"), []byte("{}"), 0o600); err != nil {
+			t.Fatalf("WriteFile %s: %v", version, err)
+		}
+	}
+	store := NewStore(dataDir)
+	current, err := store.Begin("codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Cleanup(); err != nil {
+		t.Fatal(err)
+	}
+	for _, version := range []string{"v1", "v2"} {
+		if _, err := os.Stat(filepath.Join(dataDir, "activity-details", version)); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("legacy root %s remains: %v", version, err)
+		}
+	}
+	if _, err := store.Get(current.ActivityID); err != nil {
+		t.Fatalf("current activity was removed: %v", err)
+	}
+}
+
+func TestStoreTracksCurrentContextMemoryAndPreviousOutput(t *testing.T) {
+	store := NewStore(t.TempDir())
+	detail, err := store.Begin("codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordContext(detail.ActivityID, testMatches(1)); err != nil {
+		t.Fatal(err)
+	}
+	memories := []model.Memory{
+		{FactID: "fact-a", Content: "Use the release checklist."},
+		{FactID: "fact-a", Content: "Use the release checklist."},
+		{FactID: "fact-b", Content: "Run the health check."},
+	}
+	if err := store.RecordMemories(detail.ActivityID, memories); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordOutput(detail.ActivityID, turnreceipt.OutputSummary{
+		CodeLines: 10, DocWords: 8, OtherWords: 4,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.Get(detail.ActivityID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.ContextMatches) != 1 || got.MemoryCount != 2 || len(got.Memories) != 2 {
+		t.Fatalf("activity detail = %#v", got)
+	}
+	if got.Output.EquivalentLOC() != 11.5 {
+		t.Fatalf("equivalent LOC = %v, want 11.5", got.Output.EquivalentLOC())
 	}
 }
 
@@ -156,7 +220,7 @@ func TestStoreKeepsConcurrentCreatesWithinCapacity(t *testing.T) {
 func TestStoreEnforcesGlobalCapacity(t *testing.T) {
 	store := NewStore(t.TempDir())
 	for index := 0; index < maxActivityDetails+12; index++ {
-		detail, err := store.Create("codex", []turnreceipt.ContextRuleMatch{{
+		detail, err := store.Create("codex", []ContextRuleMatch{{
 			RuleID:    "rule-" + time.Unix(int64(index), 0).UTC().Format("150405"),
 			Name:      "Rule",
 			MatchType: "keyword_any",
@@ -181,7 +245,7 @@ func TestStoreEnforcesGlobalCapacity(t *testing.T) {
 func TestFailedCreateAtCapacityDoesNotEvictExistingDetail(t *testing.T) {
 	store := NewStore(t.TempDir())
 	for index := 0; index < maxActivityDetails; index++ {
-		if _, err := store.Create("codex", []turnreceipt.ContextRuleMatch{{
+		if _, err := store.Create("codex", []ContextRuleMatch{{
 			RuleID:    "rule-" + time.Unix(int64(index), 0).UTC().Format("150405"),
 			Name:      "Rule",
 			MatchType: "keyword_any",
@@ -237,7 +301,7 @@ func TestReadEntriesSortsNamesForCleanupCursor(t *testing.T) {
 
 func TestStoreBoundsAndEscapesRuleMetadata(t *testing.T) {
 	store := NewStore(t.TempDir())
-	detail, err := store.Create("codex", []turnreceipt.ContextRuleMatch{
+	detail, err := store.Create("codex", []ContextRuleMatch{
 		{
 			RuleID:    strings.Repeat("标", 100),
 			Name:      "\n" + strings.Repeat("<名>", 100) + "\t",
@@ -260,10 +324,10 @@ func TestStoreBoundsAndEscapesRuleMetadata(t *testing.T) {
 	}
 }
 
-func testMatches(count int) []turnreceipt.ContextRuleMatch {
-	matches := make([]turnreceipt.ContextRuleMatch, 0, count)
+func testMatches(count int) []ContextRuleMatch {
+	matches := make([]ContextRuleMatch, 0, count)
 	for index := 0; index < count; index++ {
-		matches = append(matches, turnreceipt.ContextRuleMatch{
+		matches = append(matches, ContextRuleMatch{
 			RuleID:    "rule",
 			Name:      "Rule",
 			MatchType: "keyword_any",
