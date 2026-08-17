@@ -81,6 +81,13 @@ func TestContextForwardsRecallQueryAndSuppliedOrganizationContext(t *testing.T) 
 	}
 }
 
+func TestContextTimeoutExceedsControlDefaultBudget(t *testing.T) {
+	const controlDefaultContextTimeout = 5 * time.Second
+	if contextRequestTimeout <= controlDefaultContextTimeout {
+		t.Fatalf("context timeout = %s, must exceed Control budget %s", contextRequestTimeout, controlDefaultContextTimeout)
+	}
+}
+
 func TestMemoryFailsClosedWhenSensitiveRulesAreUnavailable(t *testing.T) {
 	config := daemon.NewDirectRuntimeConfig("http://127.0.0.1:1", "test-token")
 	config.DataDir = t.TempDir()
