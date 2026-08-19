@@ -51,7 +51,11 @@ func newActivityView(detail activitydetail.Detail) activityView {
 	for _, memory := range detail.Memories {
 		memories = append(memories, memory.Content)
 	}
-	memoryLabel, memoryEmpty := memoryRecallPresentation(detail.MemoryRecallStatus, detail.MemoryCount)
+	memoryPresentation := memoryRecallPresentation(
+		detail.MemoryRecallStatus,
+		detail.MemoryRecallFailure,
+		detail.MemoryCount,
+	)
 	output := make([]metricView, 0, 5)
 	appendMetric := func(value int64, label string) {
 		if value > 0 {
@@ -69,8 +73,8 @@ func newActivityView(detail activitydetail.Detail) activityView {
 		ExpiresAt:     detail.ExpiresAt.Local().Format("Jan 2, 2006 · 15:04 MST"),
 		RuleCount:     len(rules),
 		Rules:         rules,
-		MemoryLabel:   memoryLabel,
-		MemoryEmpty:   memoryEmpty,
+		MemoryLabel:   memoryPresentation.label,
+		MemoryEmpty:   memoryPresentation.empty,
 		Memories:      memories,
 		Output:        output,
 		HasOutput:     len(output) > 0,
@@ -79,16 +83,66 @@ func newActivityView(detail activitydetail.Detail) activityView {
 	}
 }
 
-func memoryRecallPresentation(status activitydetail.MemoryRecallStatus, count int) (string, string) {
+type memoryRecallView struct {
+	label  string
+	empty  string
+	notice string
+}
+
+func memoryRecallPresentation(
+	status activitydetail.MemoryRecallStatus,
+	failure activitydetail.MemoryRecallFailure,
+	count int,
+) memoryRecallView {
 	switch status {
 	case activitydetail.MemoryRecallTimeout:
-		return "Timed out", "Memory recall timed out before results were available."
+		return memoryRecallView{
+			label:  "Timed out",
+			empty:  "Memory recall timed out before results were available.",
+			notice: "timeout",
+		}
 	case activitydetail.MemoryRecallError:
-		return "Error", "Memory recall failed before results were available."
+		switch failure {
+		case activitydetail.MemoryRecallFailureServiceUnavailable:
+			return memoryRecallView{
+				label:  "Unavailable",
+				empty:  "The memory service was unavailable.",
+				notice: "unavailable",
+			}
+		case activitydetail.MemoryRecallFailureInvalidResponse:
+			return memoryRecallView{
+				label:  "Invalid response",
+				empty:  "The memory service returned an invalid response.",
+				notice: "invalid response",
+			}
+		case activitydetail.MemoryRecallFailureSensitiveInput:
+			return memoryRecallView{
+				label:  "Blocked",
+				empty:  "Memory recall was skipped because the request contained sensitive information.",
+				notice: "blocked",
+			}
+		case activitydetail.MemoryRecallFailureRulesUnavailable:
+			return memoryRecallView{
+				label:  "Rules unavailable",
+				empty:  "Memory recall was skipped because sensitive-data rules were unavailable.",
+				notice: "rules unavailable",
+			}
+		default:
+			return memoryRecallView{
+				label:  "Error",
+				empty:  "Memory recall failed before results were available.",
+				notice: "error",
+			}
+		}
 	case activitydetail.MemoryRecallDisabled:
-		return "Disabled", "Memory recall is disabled."
+		return memoryRecallView{
+			label:  "Disabled",
+			empty:  "Memory recall is disabled.",
+			notice: "disabled",
+		}
 	default:
-		return strconv.Itoa(count), "No memory was recalled."
+		value := strconv.Itoa(count)
+		return memoryRecallView{label: value, empty: "No memory was recalled.", notice: value}
 	}
 }
 

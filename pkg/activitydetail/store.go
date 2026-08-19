@@ -41,26 +41,37 @@ var (
 )
 
 type Detail struct {
-	SchemaVersion      int                       `json:"schema_version"`
-	ActivityID         string                    `json:"activity_id"`
-	CreatedAt          time.Time                 `json:"created_at"`
-	ExpiresAt          time.Time                 `json:"expires_at"`
-	AgentType          string                    `json:"agent_type"`
-	ContextMatches     []ContextRuleMatch        `json:"context_matches"`
-	MemoryRecallStatus MemoryRecallStatus        `json:"memory_recall_status,omitempty"`
-	MemoryCount        int                       `json:"memory_count"`
-	MemoryKeys         []string                  `json:"memory_keys,omitempty"`
-	Memories           []RecalledMemory          `json:"memories,omitempty"`
-	Output             turnreceipt.OutputSummary `json:"output"`
+	SchemaVersion       int                       `json:"schema_version"`
+	ActivityID          string                    `json:"activity_id"`
+	CreatedAt           time.Time                 `json:"created_at"`
+	ExpiresAt           time.Time                 `json:"expires_at"`
+	AgentType           string                    `json:"agent_type"`
+	ContextMatches      []ContextRuleMatch        `json:"context_matches"`
+	MemoryRecallStatus  MemoryRecallStatus        `json:"memory_recall_status,omitempty"`
+	MemoryRecallFailure MemoryRecallFailure       `json:"memory_recall_failure,omitempty"`
+	MemoryCount         int                       `json:"memory_count"`
+	MemoryKeys          []string                  `json:"memory_keys,omitempty"`
+	Memories            []RecalledMemory          `json:"memories,omitempty"`
+	Output              turnreceipt.OutputSummary `json:"output"`
 }
 
 type MemoryRecallStatus string
+type MemoryRecallFailure string
 
 const (
 	MemoryRecallSuccess  MemoryRecallStatus = "success"
 	MemoryRecallTimeout  MemoryRecallStatus = "timeout"
 	MemoryRecallError    MemoryRecallStatus = "error"
 	MemoryRecallDisabled MemoryRecallStatus = "disabled"
+)
+
+const (
+	MemoryRecallFailureTimeout            MemoryRecallFailure = "timeout"
+	MemoryRecallFailureServiceUnavailable MemoryRecallFailure = "service_unavailable"
+	MemoryRecallFailureInvalidResponse    MemoryRecallFailure = "invalid_response"
+	MemoryRecallFailureSensitiveInput     MemoryRecallFailure = "sensitive_input"
+	MemoryRecallFailureRulesUnavailable   MemoryRecallFailure = "rules_unavailable"
+	MemoryRecallFailureUnknown            MemoryRecallFailure = "unknown"
 )
 
 type RecalledMemory struct {
@@ -150,11 +161,21 @@ func (s Store) RecordMemories(activityID string, memories []model.Memory) error 
 }
 
 func (s Store) RecordMemoryRecall(activityID string, status MemoryRecallStatus, memories []model.Memory) error {
-	if !validMemoryRecallStatus(status) {
-		return errors.New("invalid memory recall status")
+	return s.RecordMemoryRecallResult(activityID, status, defaultMemoryRecallFailure(status), memories)
+}
+
+func (s Store) RecordMemoryRecallResult(
+	activityID string,
+	status MemoryRecallStatus,
+	failure MemoryRecallFailure,
+	memories []model.Memory,
+) error {
+	if !validMemoryRecallResult(status, failure) {
+		return errors.New("invalid memory recall result")
 	}
 	return s.update(activityID, func(detail *Detail) {
 		detail.MemoryRecallStatus = status
+		detail.MemoryRecallFailure = failure
 		seen := make(map[string]struct{}, len(detail.MemoryKeys))
 		for _, key := range detail.MemoryKeys {
 			seen[key] = struct{}{}
@@ -183,6 +204,47 @@ func (s Store) RecordMemoryRecall(activityID string, status MemoryRecallStatus, 
 			}
 		}
 	})
+}
+
+func defaultMemoryRecallFailure(status MemoryRecallStatus) MemoryRecallFailure {
+	switch status {
+	case MemoryRecallTimeout:
+		return MemoryRecallFailureTimeout
+	case MemoryRecallError:
+		return MemoryRecallFailureUnknown
+	default:
+		return ""
+	}
+}
+
+func validMemoryRecallResult(status MemoryRecallStatus, failure MemoryRecallFailure) bool {
+	if !validMemoryRecallStatus(status) {
+		return false
+	}
+	switch status {
+	case MemoryRecallSuccess, MemoryRecallDisabled:
+		return failure == ""
+	case MemoryRecallTimeout:
+		return failure == MemoryRecallFailureTimeout
+	case MemoryRecallError:
+		return validMemoryRecallFailure(failure) && failure != MemoryRecallFailureTimeout
+	default:
+		return false
+	}
+}
+
+func validMemoryRecallFailure(failure MemoryRecallFailure) bool {
+	switch failure {
+	case MemoryRecallFailureTimeout,
+		MemoryRecallFailureServiceUnavailable,
+		MemoryRecallFailureInvalidResponse,
+		MemoryRecallFailureSensitiveInput,
+		MemoryRecallFailureRulesUnavailable,
+		MemoryRecallFailureUnknown:
+		return true
+	default:
+		return false
+	}
 }
 
 func validMemoryRecallStatus(status MemoryRecallStatus) bool {

@@ -182,8 +182,53 @@ func TestStoreTracksMemoryRecallFailureWithoutReportingAMatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.MemoryRecallStatus != MemoryRecallTimeout || got.MemoryCount != 0 || len(got.Memories) != 0 {
+	if got.MemoryRecallStatus != MemoryRecallTimeout ||
+		got.MemoryRecallFailure != MemoryRecallFailureTimeout ||
+		got.MemoryCount != 0 || len(got.Memories) != 0 {
 		t.Fatalf("activity detail = %#v", got)
+	}
+}
+
+func TestStoreRejectsUnboundedMemoryRecallFailure(t *testing.T) {
+	store := NewStore(t.TempDir())
+	detail, err := store.Begin("codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordMemoryRecallResult(
+		detail.ActivityID,
+		MemoryRecallError,
+		MemoryRecallFailure("upstream response included secret text"),
+		nil,
+	); err == nil {
+		t.Fatal("RecordMemoryRecallResult accepted a free-text failure")
+	}
+}
+
+func TestStoreReadsLegacyMemoryRecallWithoutFailure(t *testing.T) {
+	store := NewStore(t.TempDir())
+	detail, err := store.Begin("codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.update(detail.ActivityID, func(detail *Detail) {
+		detail.MemoryRecallStatus = MemoryRecallError
+	}); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(store.rootPath(), detail.ActivityID+".json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "memory_recall_failure") {
+		t.Fatalf("legacy record unexpectedly contains a failure field: %s", raw)
+	}
+	got, err := store.Get(detail.ActivityID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.MemoryRecallStatus != MemoryRecallError || got.MemoryRecallFailure != "" {
+		t.Fatalf("legacy activity detail = %#v", got)
 	}
 }
 

@@ -2,12 +2,17 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
+	"net/url"
 	"os"
 	"strings"
 
 	"github.com/gesta-run/gesta-agent/pkg/activitydetail"
+	"github.com/gesta-run/gesta-agent/pkg/controlclient"
 	"github.com/gesta-run/gesta-agent/pkg/daemon"
 	"github.com/gesta-run/gesta-agent/pkg/localactivity"
 	"github.com/gesta-run/gesta-agent/pkg/memoryproxy"
@@ -26,9 +31,14 @@ func processMemoryContext(
 ) map[string]interface{} {
 	service := memoryproxy.New(cfg)
 	result, err := service.Context(ctx, query, suppliedContext, workspace.Resolve(event.CWD))
-	status := memoryRecallStatus(err)
+	recall := classifyMemoryRecall(err)
 	if event.ActivityID != "" {
-		if recordErr := activitydetail.NewStore(cfg.DataDir).RecordMemoryRecall(event.ActivityID, status, result.Memories); recordErr != nil {
+		if recordErr := activitydetail.NewStore(cfg.DataDir).RecordMemoryRecallResult(
+			event.ActivityID,
+			recall.Status,
+			recall.Failure,
+			result.Memories,
+		); recordErr != nil {
 			fmt.Fprintf(os.Stderr, "gesta-agent hook: current memory activity was not recorded: %v\n", recordErr)
 		}
 	}
@@ -54,17 +64,65 @@ func processMemoryContext(
 	return mergeUserPromptAdditionalContext(response, additionalContext)
 }
 
-func memoryRecallStatus(err error) activitydetail.MemoryRecallStatus {
+type memoryRecallClassification struct {
+	Status  activitydetail.MemoryRecallStatus
+	Failure activitydetail.MemoryRecallFailure
+}
+
+func classifyMemoryRecall(err error) memoryRecallClassification {
 	switch {
 	case err == nil:
-		return activitydetail.MemoryRecallSuccess
+		return memoryRecallClassification{Status: activitydetail.MemoryRecallSuccess}
 	case errors.Is(err, context.DeadlineExceeded):
-		return activitydetail.MemoryRecallTimeout
+		return memoryRecallClassification{
+			Status:  activitydetail.MemoryRecallTimeout,
+			Failure: activitydetail.MemoryRecallFailureTimeout,
+		}
 	case errors.Is(err, memoryproxy.ErrDisabled):
-		return activitydetail.MemoryRecallDisabled
+		return memoryRecallClassification{Status: activitydetail.MemoryRecallDisabled}
+	case errors.Is(err, memoryproxy.ErrSensitive):
+		return memoryRecallClassification{
+			Status:  activitydetail.MemoryRecallError,
+			Failure: activitydetail.MemoryRecallFailureSensitiveInput,
+		}
+	case errors.Is(err, memoryproxy.ErrRulesUnavailable):
+		return memoryRecallClassification{
+			Status:  activitydetail.MemoryRecallError,
+			Failure: activitydetail.MemoryRecallFailureRulesUnavailable,
+		}
+	case isInvalidMemoryResponse(err):
+		return memoryRecallClassification{
+			Status:  activitydetail.MemoryRecallError,
+			Failure: activitydetail.MemoryRecallFailureInvalidResponse,
+		}
+	case isMemoryServiceUnavailable(err):
+		return memoryRecallClassification{
+			Status:  activitydetail.MemoryRecallError,
+			Failure: activitydetail.MemoryRecallFailureServiceUnavailable,
+		}
 	default:
-		return activitydetail.MemoryRecallError
+		return memoryRecallClassification{
+			Status:  activitydetail.MemoryRecallError,
+			Failure: activitydetail.MemoryRecallFailureUnknown,
+		}
 	}
+}
+
+func isInvalidMemoryResponse(err error) bool {
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+		return true
+	}
+	var syntaxError *json.SyntaxError
+	var typeError *json.UnmarshalTypeError
+	return errors.As(err, &syntaxError) || errors.As(err, &typeError)
+}
+
+func isMemoryServiceUnavailable(err error) bool {
+	if status, ok := controlclient.StatusCode(err); ok {
+		return status == http.StatusTooManyRequests || status >= http.StatusInternalServerError
+	}
+	var transportError *url.Error
+	return errors.As(err, &transportError)
 }
 
 func formatMemoryInstructions(activityID string) string {
