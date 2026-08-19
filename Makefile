@@ -1,9 +1,13 @@
-.PHONY: verify test build install install-codex
+.PHONY: verify test test-shell build install install-codex
 
 verify: test build
 
-test:
+test: test-shell
 	go test ./...
+
+test-shell:
+	sh -n scripts/install.sh
+	sh scripts/test-install-client-restart.sh
 
 build:
 	mkdir -p bin

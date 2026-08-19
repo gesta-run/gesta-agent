@@ -92,9 +92,10 @@ original user's `~/Library/LaunchAgents`, and starts the daemon as that user
 when the platform supports it. That keeps later automatic agent upgrades
 user-writable instead of requiring another interactive sudo prompt.
 
-The script asks before restarting Codex Desktop so hook changes are picked up.
-Set `GESTA_RESTART_CODEX=1` to restart without prompting, or
-`GESTA_RESTART_CODEX=0` to skip the restart in automation.
+After installation, an interactive terminal detects active Codex Desktop and
+interactive Codex/Claude CLI sessions and asks once whether to restart them.
+Codex Desktop reopens automatically; CLI sessions must be started again. A
+non-interactive installation leaves all clients running.
 
 ## Uninstall
 
@@ -121,8 +122,9 @@ before they run, including arbitrary Bash commands such as `ls -al`.
 `UserPromptSubmit` evaluates prompts before submission so sensitive-data rules
 can block prompt text before it leaves the local client. The hook uses the local
 policy and sensitive-rule caches first, then falls back to the control plane or
-built-in defaults. Restart Codex Desktop or open a new Codex thread after
-installing the hook so the runtime reloads hook configuration.
+built-in defaults. If no restart prompt appeared, or you chose not to restart,
+restart Codex Desktop and open new Codex/Claude CLI sessions when convenient so
+the runtime reloads hook configuration.
 
 Organization Context `keyword_any` rules match case-insensitively. Keywords
 whose edges use ASCII letters, digits, or underscores match only at word
