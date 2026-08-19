@@ -61,3 +61,59 @@ func TestNewActivityViewExplainsMemoryRecallTimeout(t *testing.T) {
 		t.Fatalf("memory presentation = %q, %q", view.MemoryLabel, view.MemoryEmpty)
 	}
 }
+
+func TestNewActivityViewExplainsMemoryRecallFailures(t *testing.T) {
+	tests := []struct {
+		name    string
+		failure activitydetail.MemoryRecallFailure
+		label   string
+		empty   string
+	}{
+		{
+			name:    "service unavailable",
+			failure: activitydetail.MemoryRecallFailureServiceUnavailable,
+			label:   "Unavailable",
+			empty:   "The memory service was unavailable.",
+		},
+		{
+			name:    "invalid response",
+			failure: activitydetail.MemoryRecallFailureInvalidResponse,
+			label:   "Invalid response",
+			empty:   "The memory service returned an invalid response.",
+		},
+		{
+			name:    "sensitive input",
+			failure: activitydetail.MemoryRecallFailureSensitiveInput,
+			label:   "Blocked",
+			empty:   "Memory recall was skipped because the request contained sensitive information.",
+		},
+		{
+			name:    "rules unavailable",
+			failure: activitydetail.MemoryRecallFailureRulesUnavailable,
+			label:   "Rules unavailable",
+			empty:   "Memory recall was skipped because sensitive-data rules were unavailable.",
+		},
+		{
+			name:    "unknown",
+			failure: activitydetail.MemoryRecallFailureUnknown,
+			label:   "Error",
+			empty:   "Memory recall failed before results were available.",
+		},
+		{
+			name:  "legacy record without failure",
+			label: "Error",
+			empty: "Memory recall failed before results were available.",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			view := newActivityView(activitydetail.Detail{
+				MemoryRecallStatus:  activitydetail.MemoryRecallError,
+				MemoryRecallFailure: test.failure,
+			})
+			if view.MemoryLabel != test.label || view.MemoryEmpty != test.empty {
+				t.Fatalf("memory presentation = %q, %q", view.MemoryLabel, view.MemoryEmpty)
+			}
+		})
+	}
+}

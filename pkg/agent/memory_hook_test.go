@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -27,21 +29,69 @@ func TestFormatMemoryContextEscapesMarkupAndLabelsFactsAsUntrusted(t *testing.T)
 	}
 }
 
-func TestMemoryRecallStatusClassifiesFailures(t *testing.T) {
+func TestMemoryRecallClassifiesFailures(t *testing.T) {
+	var invalidPayload map[string]interface{}
+	invalidResponseErr := json.Unmarshal([]byte("{"), &invalidPayload)
 	tests := []struct {
 		name string
 		err  error
-		want activitydetail.MemoryRecallStatus
+		want memoryRecallClassification
 	}{
-		{name: "success", want: activitydetail.MemoryRecallSuccess},
-		{name: "timeout", err: context.DeadlineExceeded, want: activitydetail.MemoryRecallTimeout},
-		{name: "disabled", err: memoryproxy.ErrDisabled, want: activitydetail.MemoryRecallDisabled},
-		{name: "error", err: errors.New("unavailable"), want: activitydetail.MemoryRecallError},
+		{name: "success", want: memoryRecallClassification{Status: activitydetail.MemoryRecallSuccess}},
+		{
+			name: "wrapped timeout",
+			err:  fmt.Errorf("memory context: %w", context.DeadlineExceeded),
+			want: memoryRecallClassification{
+				Status:  activitydetail.MemoryRecallTimeout,
+				Failure: activitydetail.MemoryRecallFailureTimeout,
+			},
+		},
+		{name: "disabled", err: memoryproxy.ErrDisabled, want: memoryRecallClassification{Status: activitydetail.MemoryRecallDisabled}},
+		{
+			name: "sensitive input",
+			err:  memoryproxy.ErrSensitive,
+			want: memoryRecallClassification{
+				Status:  activitydetail.MemoryRecallError,
+				Failure: activitydetail.MemoryRecallFailureSensitiveInput,
+			},
+		},
+		{
+			name: "rules unavailable",
+			err:  memoryproxy.ErrRulesUnavailable,
+			want: memoryRecallClassification{
+				Status:  activitydetail.MemoryRecallError,
+				Failure: activitydetail.MemoryRecallFailureRulesUnavailable,
+			},
+		},
+		{
+			name: "invalid response",
+			err:  invalidResponseErr,
+			want: memoryRecallClassification{
+				Status:  activitydetail.MemoryRecallError,
+				Failure: activitydetail.MemoryRecallFailureInvalidResponse,
+			},
+		},
+		{
+			name: "transport unavailable",
+			err:  &url.Error{Op: "Post", Err: errors.New("connection refused")},
+			want: memoryRecallClassification{
+				Status:  activitydetail.MemoryRecallError,
+				Failure: activitydetail.MemoryRecallFailureServiceUnavailable,
+			},
+		},
+		{
+			name: "unknown",
+			err:  errors.New("unclassified"),
+			want: memoryRecallClassification{
+				Status:  activitydetail.MemoryRecallError,
+				Failure: activitydetail.MemoryRecallFailureUnknown,
+			},
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			if got := memoryRecallStatus(test.err); got != test.want {
-				t.Fatalf("status = %q, want %q", got, test.want)
+			if got := classifyMemoryRecall(test.err); got != test.want {
+				t.Fatalf("classification = %#v, want %#v", got, test.want)
 			}
 		})
 	}
@@ -161,5 +211,53 @@ func TestAutomaticMemoryRecordsCurrentActivityAndInjectsTrackingHeader(t *testin
 	recorded, err := activitydetail.NewStore(config.DataDir).Get(detail.ActivityID)
 	if err != nil || recorded.MemoryCount != 1 {
 		t.Fatalf("recorded activity = %#v, err = %v", recorded, err)
+	}
+}
+
+func TestAutomaticMemoryStoresOnlyServiceFailureClassification(t *testing.T) {
+	original := localMemoryProxyHealthy
+	t.Cleanup(func() { localMemoryProxyHealthy = original })
+	localMemoryProxyHealthy = func(context.Context, string) bool { return false }
+
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.WriteHeader(http.StatusServiceUnavailable)
+		_ = json.NewEncoder(writer).Encode(model.APIError{Error: "database connection details"})
+	}))
+	t.Cleanup(server.Close)
+	config := daemon.NewDirectRuntimeConfig(server.URL, "test-token")
+	config.DataDir = t.TempDir()
+	if err := rulecache.SaveMemorySettingsCache(config.DataDir, model.MemorySettings{Enabled: true}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if err := rulecache.SaveSensitiveRuleCache(config.DataDir, []model.SensitiveRule{}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	detail, err := activitydetail.NewStore(config.DataDir).Begin("codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	processMemoryContext(
+		context.Background(),
+		config,
+		agentHookEvent{ActivityID: detail.ActivityID},
+		"release branch",
+		"",
+		map[string]interface{}{},
+	)
+	recorded, err := activitydetail.NewStore(config.DataDir).Get(detail.ActivityID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recorded.MemoryRecallStatus != activitydetail.MemoryRecallError ||
+		recorded.MemoryRecallFailure != activitydetail.MemoryRecallFailureServiceUnavailable {
+		t.Fatalf("recorded activity = %#v", recorded)
+	}
+	encoded, err := json.Marshal(recorded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), "database connection details") || strings.Contains(string(encoded), server.URL) {
+		t.Fatalf("recorded activity leaked upstream details: %s", encoded)
 	}
 }

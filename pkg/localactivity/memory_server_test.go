@@ -116,6 +116,18 @@ func TestActivityNoticeReportsMemoryRecallTimeout(t *testing.T) {
 	}
 }
 
+func TestActivityNoticeReportsMemoryServiceUnavailable(t *testing.T) {
+	detail := activitydetail.Detail{
+		ActivityID:          "activity_0123456789abcdef0123456789abcdef",
+		MemoryRecallStatus:  activitydetail.MemoryRecallError,
+		MemoryRecallFailure: activitydetail.MemoryRecallFailureServiceUnavailable,
+	}
+	want := "Gesta · Context 0 · Memory unavailable · Last output 0 eLOC · [Details](" + ActivityURL(detail.ActivityID) + ")"
+	if got := formatActivityNotice(detail); got != want {
+		t.Fatalf("notice = %q, want %q", got, want)
+	}
+}
+
 func TestActivityNoticeReportsZeroValueCurrentActivity(t *testing.T) {
 	store := activitydetail.NewStore(t.TempDir())
 	detail, err := store.Begin("codex")
