@@ -32,6 +32,11 @@ jobs:
           staticcheck ./...
           deadcode ./...
 
+      - name: Test installer shell scripts
+        run: |
+          sh -n scripts/install.sh
+          sh scripts/test-install-client-restart.sh
+
       - name: Run tests with race detector
         run: go test -race ./...
 
