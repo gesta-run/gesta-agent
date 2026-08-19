@@ -97,7 +97,6 @@ control_url=${GESTA_CONTROL_URL:-}
 api_key=${GESTA_API_KEY:-${GESTA_APIKEY:-}}
 interval=${GESTA_DAEMON_INTERVAL:-1m}
 usage_window=${GESTA_DAEMON_USAGE_WINDOW:-10m}
-restart_codex=${GESTA_RESTART_CODEX:-ask}
 start_daemon=${GESTA_START_DAEMON:-auto}
 daemon_label=${GESTA_DAEMON_LABEL:-com.gesta.agent}
 data_dir=${GESTA_DAEMON_DATA_DIR:-${GESTA_DATA_DIR:-"$HOME/.gesta"}}
@@ -194,8 +193,6 @@ Options:
                               darwin/amd64, darwin/arm64, linux/amd64, linux/arm64.
   --daemon                    Start the background daemon after installing.
   --no-daemon                 Do not start the background daemon.
-  --restart-codex             Restart Codex Desktop without prompting.
-  --no-restart-codex          Do not restart Codex Desktop.
 USAGE
 }
 
@@ -453,6 +450,148 @@ start_daemon_service() {
   note "launch command uses saved config (no --apikey)"
 }
 
+list_active_ai_clients() {
+  client_os=$1
+  process_table=$(ps -ax -ww -o pid= -o uid= -o tty= -o args= 2>/dev/null) || return 1
+  printf '%s\n' "$process_table" | awk -v uid="$target_uid" -v os="$client_os" '
+    $2 == uid {
+      tty = $3
+      executable = $4
+      name = executable
+      sub(/^.*\//, "", name)
+      if (os == "darwin" && executable ~ /\/ChatGPT\.app\/Contents\/MacOS\/ChatGPT$/)
+        print $1, "desktop"
+      else if (tty != "?" && tty != "??" && tty != "-" && name == "codex")
+        print $1, "codex"
+      else if (tty != "?" && tty != "??" && tty != "-" && name == "claude")
+        print $1, "claude"
+    }
+  '
+}
+
+client_pids_named() {
+  process_name=$1
+  printf '%s\n' "$active_ai_clients" | awk -v name="$process_name" '$2 == name {print $1}'
+}
+
+show_active_ai_clients() {
+  if [ -n "$codex_desktop_pids" ]; then
+    field "running" "Codex Desktop"
+  fi
+  if [ -n "$codex_cli_pids" ]; then
+    field "running" "Codex CLI"
+  fi
+  if [ -n "$claude_cli_pids" ]; then
+    field "running" "Claude Code CLI"
+  fi
+}
+
+client_restart_answer_is_yes() {
+  case "$1" in
+    [yY]|[yY][eE][sS])
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+confirm_client_restart() {
+  restart_tty=${1:-/dev/tty}
+  if ! printf '%s' "Restart active AI clients now to load the new Gesta hooks? [y/N] " 2>/dev/null >"$restart_tty"; then
+    return 1
+  fi
+  IFS= read -r answer <"$restart_tty" 2>/dev/null || answer=
+  client_restart_answer_is_yes "$answer"
+}
+
+schedule_client_restart() {
+  codex_desktop_pids=$1
+  shift
+  if [ -n "$codex_desktop_pids" ] && \
+    { ! command -v osascript >/dev/null 2>&1 || ! command -v open >/dev/null 2>&1; }; then
+    return 1
+  fi
+  restart_helper=$(mktemp "$data_dir/.restart-clients.XXXXXX") || return 1
+  if ! (umask 077 && cat >"$restart_helper") <<'HELPER'
+#!/bin/sh
+codex_desktop_pids=$1
+shift
+sleep 2
+for pid in "$@"; do
+  process_name=$(ps -p "$pid" -ww -o tty= -o args= 2>/dev/null | awk '
+    NR == 1 {
+      tty = $1
+      executable = $2
+      name = executable
+      sub(/^.*\//, "", name)
+      if (tty != "?" && tty != "??" && tty != "-" && (name == "codex" || name == "claude"))
+        print name
+    }
+  ')
+  case "$process_name" in
+    codex|claude)
+      kill -TERM "$pid" >/dev/null 2>&1 || true
+      ;;
+  esac
+done
+if [ -n "$codex_desktop_pids" ]; then
+  osascript -e 'tell application "ChatGPT" to quit' >/dev/null 2>&1 || true
+  attempts=0
+  desktop_running=1
+  while [ "$attempts" -lt 10 ]; do
+    desktop_running=0
+    for pid in $codex_desktop_pids; do
+      if kill -0 "$pid" 2>/dev/null; then
+        desktop_running=1
+        break
+      fi
+    done
+    [ "$desktop_running" -eq 0 ] && break
+    attempts=$((attempts + 1))
+    sleep 1
+  done
+  if [ "$desktop_running" -eq 0 ]; then
+    open -a "ChatGPT" >/dev/null 2>&1 || true
+  fi
+fi
+rm -f -- "$0"
+HELPER
+  then
+    rm -f "$restart_helper"
+    return 1
+  fi
+  if ! chmod 700 "$restart_helper"; then
+    rm -f "$restart_helper"
+    return 1
+  fi
+  chown_target_user_path "$restart_helper"
+
+  if ! command -v nohup >/dev/null 2>&1; then
+    rm -f "$restart_helper"
+    return 1
+  fi
+  if [ "$run_uid" = "0" ] && [ -n "$target_uid" ] && [ "$target_uid" != "0" ]; then
+    if command -v sudo >/dev/null 2>&1; then
+      nohup sudo -u "#$target_uid" env HOME="$HOME" /bin/sh "$restart_helper" "$codex_desktop_pids" "$@" \
+        </dev/null >/dev/null 2>&1 &
+      return 0
+    fi
+    if [ -n "$target_user" ] && command -v runuser >/dev/null 2>&1; then
+      nohup runuser -u "$target_user" -- env HOME="$HOME" /bin/sh "$restart_helper" "$codex_desktop_pids" "$@" \
+        </dev/null >/dev/null 2>&1 &
+      return 0
+    fi
+  else
+    nohup /bin/sh "$restart_helper" "$codex_desktop_pids" "$@" </dev/null >/dev/null 2>&1 &
+    return 0
+  fi
+
+  rm -f "$restart_helper"
+  return 1
+}
+
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --apikey|--api-key)
@@ -521,14 +660,6 @@ while [ "$#" -gt 0 ]; do
       ;;
     --no-daemon)
       start_daemon=0
-      shift
-      ;;
-    --restart-codex)
-      restart_codex=1
-      shift
-      ;;
-    --no-restart-codex)
-      restart_codex=0
       shift
       ;;
     -h|--help)
@@ -609,32 +740,53 @@ printf '\n'
 printf '  %sManual foreground run command:%s\n' "$c_dim" "$c_reset"
 note "$agent_bin run --control-url $control_url --apikey $api_key --interval $interval --usage-window $usage_window"
 
-if [ "$restart_codex" = "ask" ]; then
-  if [ -t 0 ]; then
-    printf '%s' "Restart Codex Desktop now so hook changes take effect? [y/N] "
-    read answer || answer=
-    case "$answer" in
-      y|Y|yes|YES)
-        restart_codex=1
-        ;;
-      *)
-        restart_codex=0
-        ;;
-    esac
-  else
-    restart_codex=0
-  fi
-fi
-
 printf '\n'
-if [ "$restart_codex" = "1" ]; then
-  if command -v osascript >/dev/null 2>&1 && command -v open >/dev/null 2>&1 && command -v nohup >/dev/null 2>&1; then
-    nohup sh -c 'sleep 2; open -a "Codex"' >/dev/null 2>&1 &
-    osascript -e 'tell application "Codex" to quit' >/dev/null 2>&1 || true
-    ok "Codex Desktop restart requested."
+client_os=$(detect_os)
+client_detection_ok=1
+if ! active_ai_clients=$(list_active_ai_clients "$client_os"); then
+  active_ai_clients=
+  client_detection_ok=0
+fi
+codex_desktop_pids=$(client_pids_named desktop)
+codex_cli_pids=$(client_pids_named codex)
+claude_cli_pids=$(client_pids_named claude)
+
+if [ "$client_detection_ok" = "0" ]; then
+  warn "Could not inspect active AI clients; leaving them running."
+  step "Restart Codex Desktop or start new Codex CLI / Claude Code sessions later."
+elif [ -n "$active_ai_clients" ]; then
+  show_active_ai_clients
+  if [ -n "$codex_desktop_pids" ] && { [ -n "$codex_cli_pids" ] || [ -n "$claude_cli_pids" ]; }; then
+    note "Codex Desktop will reopen; interactive CLI sessions will close and must be started again."
+  elif [ -n "$codex_desktop_pids" ]; then
+    note "Codex Desktop will reopen after it closes."
   else
-    warn "Codex Desktop restart is only supported on macOS; restart Codex manually."
+    note "Interactive CLI sessions will close and must be started again."
+  fi
+  if confirm_client_restart; then
+    cli_pids=$(printf '%s\n%s\n' "$codex_cli_pids" "$claude_cli_pids" | awk 'NF')
+    # Word splitting is intentional: each detected numeric PID is a helper argument.
+    # shellcheck disable=SC2086
+    if schedule_client_restart "$codex_desktop_pids" $cli_pids; then
+      if [ -n "$codex_desktop_pids" ] && [ -n "$cli_pids" ]; then
+        ok "Client restart scheduled. Run codex or claude again for new CLI sessions."
+      elif [ -n "$codex_desktop_pids" ]; then
+        ok "Codex Desktop restart scheduled."
+      else
+        ok "Interactive CLI shutdown scheduled. Run codex or claude again for new sessions."
+      fi
+    else
+      warn "Could not schedule client restart; restart clients manually."
+    fi
+  else
+    if [ -n "$codex_desktop_pids" ] && { [ -n "$codex_cli_pids" ] || [ -n "$claude_cli_pids" ]; }; then
+      step "Restart Codex Desktop and start new Codex CLI / Claude Code sessions later."
+    elif [ -n "$codex_desktop_pids" ]; then
+      step "Restart Codex Desktop later."
+    else
+      step "Start new Codex CLI / Claude Code sessions later."
+    fi
   fi
 else
-  step "Restart Codex / Claude Code or open new sessions for hook changes to take effect."
+  ok "No active AI clients need to be restarted."
 fi
