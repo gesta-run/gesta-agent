@@ -81,10 +81,18 @@ func TestContextForwardsRecallQueryAndSuppliedOrganizationContext(t *testing.T) 
 	}
 }
 
-func TestContextTimeoutExceedsControlDefaultBudget(t *testing.T) {
-	const controlDefaultContextTimeout = 5 * time.Second
-	if contextRequestTimeout <= controlDefaultContextTimeout {
-		t.Fatalf("context timeout = %s, must exceed Control budget %s", contextRequestTimeout, controlDefaultContextTimeout)
+func TestReadTimeoutsExceedControlDefaultBudget(t *testing.T) {
+	const controlDefaultTimeout = 7 * time.Second
+	for _, test := range []struct {
+		name    string
+		timeout time.Duration
+	}{
+		{name: "context", timeout: contextRequestTimeout},
+		{name: "search", timeout: searchRequestTimeout},
+	} {
+		if test.timeout <= controlDefaultTimeout {
+			t.Errorf("%s timeout = %s, must exceed Control budget %s", test.name, test.timeout, controlDefaultTimeout)
+		}
 	}
 }
 
