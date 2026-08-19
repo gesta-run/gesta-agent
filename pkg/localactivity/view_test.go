@@ -34,9 +34,6 @@ func TestNewActivityViewBuildsConsoleSummaryAndRuleKinds(t *testing.T) {
 	if view.Rules[0].MatchClass != "regex" || view.Rules[1].MatchClass != "keyword" {
 		t.Fatalf("rule classes = %#v", view.Rules)
 	}
-	if !view.Rules[0].Open || view.Rules[1].Open {
-		t.Fatalf("rule open states = %#v", view.Rules)
-	}
 	if view.Rules[0].Content != "Review the diff." {
 		t.Fatalf("rule content = %q", view.Rules[0].Content)
 	}

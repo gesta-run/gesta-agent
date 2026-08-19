@@ -16,7 +16,7 @@ type activityView struct {
 	Rules         []ruleView
 	MemoryLabel   string
 	MemoryEmpty   string
-	Memories      []memoryView
+	Memories      []string
 	Output        []metricView
 	HasOutput     bool
 	EquivalentLOC string
@@ -29,7 +29,6 @@ type ruleView struct {
 	MatchClass string
 	Priority   int
 	Content    string
-	Open       bool
 }
 
 type metricView struct {
@@ -37,26 +36,20 @@ type metricView struct {
 	Label string
 }
 
-type memoryView struct {
-	Content string
-	Open    bool
-}
-
 func newActivityView(detail activitydetail.Detail) activityView {
 	rules := make([]ruleView, 0, len(detail.ContextMatches))
-	for index, match := range detail.ContextMatches {
+	for _, match := range detail.ContextMatches {
 		rules = append(rules, ruleView{
 			Name:       match.Name,
 			MatchLabel: matchTypeLabel(match.MatchType),
 			MatchClass: matchTypeClass(match.MatchType),
 			Priority:   match.Priority,
 			Content:    match.Content,
-			Open:       index == 0,
 		})
 	}
-	memories := make([]memoryView, 0, len(detail.Memories))
-	for index, memory := range detail.Memories {
-		memories = append(memories, memoryView{Content: memory.Content, Open: index == 0})
+	memories := make([]string, 0, len(detail.Memories))
+	for _, memory := range detail.Memories {
+		memories = append(memories, memory.Content)
 	}
 	memoryLabel, memoryEmpty := memoryRecallPresentation(detail.MemoryRecallStatus, detail.MemoryCount)
 	output := make([]metricView, 0, 5)

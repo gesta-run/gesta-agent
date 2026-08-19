@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/gesta-run/gesta-agent/pkg/activitydetail"
+	"github.com/gesta-run/gesta-agent/pkg/model"
 	"github.com/gesta-run/gesta-agent/pkg/turnreceipt"
 )
 
@@ -69,6 +70,12 @@ func TestHandlerRendersEscapedActivityDetailWithoutRemoteResources(t *testing.T)
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
+	if err := store.RecordMemories(detail.ActivityID, []model.Memory{
+		{FactID: "memory-a", Content: "First recalled fact."},
+		{FactID: "memory-b", Content: "Second recalled fact."},
+	}); err != nil {
+		t.Fatalf("RecordMemories: %v", err)
+	}
 	handler := newHandlerWithDaemonID(store, "")
 	request := httptest.NewRequest(http.MethodGet, ActivityURL(detail.ActivityID), nil)
 	request.Host = Address
@@ -83,10 +90,16 @@ func TestHandlerRendersEscapedActivityDetailWithoutRemoteResources(t *testing.T)
 		"Claude Code",
 		"Review Standards",
 		"Regex match",
-		"Appended content",
+		"Appended verbatim",
 		"Preserve this line.",
+		"Evidence ledger",
+		"Applied context",
+		"Recalled memory",
+		"First recalled fact.",
+		"Second recalled fact.",
 		`aria-label="Gesta"`,
-		"--background: #0a0a0a",
+		"--background: oklch(0.145 0 0)",
+		"--card: oklch(0.205 0 0)",
 		"42",
 		"code lines",
 	} {
@@ -97,9 +110,11 @@ func TestHandlerRendersEscapedActivityDetailWithoutRemoteResources(t *testing.T)
 	if strings.Contains(body, `<script>alert`) {
 		t.Fatalf("activity body did not escape rule name: %s", body)
 	}
-	if strings.Count(body, `<details class="rule"`) != 2 ||
-		strings.Count(body, `<details class="rule" open`) != 1 {
-		t.Fatalf("activity disclosure states are incorrect: %s", body)
+	if strings.Contains(body, `<details`) ||
+		strings.Count(body, `role="list"`) != 2 ||
+		strings.Count(body, `<li class="evidence-row`) != 4 ||
+		strings.Count(body, `tabindex="0"`) != 4 {
+		t.Fatalf("activity evidence ledger is incorrect: %s", body)
 	}
 	for _, forbidden := range []string{
 		"<script",
@@ -108,6 +123,7 @@ func TestHandlerRendersEscapedActivityDetailWithoutRemoteResources(t *testing.T)
 		`href="http`,
 		"url(http",
 		"@import",
+		"gradient(",
 	} {
 		if strings.Contains(body, forbidden) {
 			t.Fatalf("activity body contains forbidden resource %q", forbidden)
@@ -132,7 +148,7 @@ func TestHandlerRendersEmbeddedUnavailablePage(t *testing.T) {
 	for _, expected := range []string{
 		"Activity unavailable",
 		`aria-label="Gesta"`,
-		"--background: #0a0a0a",
+		"--background: oklch(0.145 0 0)",
 	} {
 		if !strings.Contains(body, expected) {
 			t.Fatalf("unavailable body missing %q: %s", expected, body)
