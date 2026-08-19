@@ -24,8 +24,8 @@ var (
 )
 
 const (
-	contextRequestTimeout  = 6500 * time.Millisecond
-	searchRequestTimeout   = 5500 * time.Millisecond
+	contextRequestTimeout  = 7500 * time.Millisecond
+	searchRequestTimeout   = 7500 * time.Millisecond
 	rememberRequestTimeout = 185 * time.Second
 )
 
