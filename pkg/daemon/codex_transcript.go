@@ -179,53 +179,110 @@ func readCodexTranscript(path string) ([]map[string]interface{}, bool, error) {
 
 	scanner := bufio.NewScanner(transcriptReader(file))
 	scanner.Buffer(make([]byte, 64*1024), 10*1024*1024)
+	var candidates []codexTranscriptCandidate
+	for scanner.Scan() {
+		if candidate, ok := codexTranscriptCandidateFromJSON(scanner.Bytes()); ok {
+			candidates = append(candidates, candidate)
+		}
+	}
+	candidates = codexLatestTranscriptCandidates(candidates)
+	messages, truncated := codexTranscriptMessages(codexVisibleTranscriptCandidates(candidates))
+	return messages, truncated, scanner.Err()
+}
+
+type codexTranscriptCandidate struct {
+	Timestamp string
+	ItemType  string
+	Role      string
+	Text      string
+	MessageID string
+	Phase     string
+}
+
+func codexTranscriptCandidateFromJSON(data []byte) (codexTranscriptCandidate, bool) {
+	var record struct {
+		Timestamp string                 `json:"timestamp"`
+		Type      string                 `json:"type"`
+		Payload   map[string]interface{} `json:"payload"`
+	}
+	if err := json.Unmarshal(data, &record); err != nil || record.Type != "response_item" || record.Payload == nil {
+		return codexTranscriptCandidate{}, false
+	}
+	itemType := firstString(record.Payload, "type")
+	if itemType == "function_call" || itemType == "function_call_output" || itemType == "tool_call" {
+		return codexTranscriptCandidate{}, false
+	}
+	role := strings.ToLower(strings.TrimSpace(firstString(record.Payload, "role")))
+	text := codexContentText(record.Payload["content"])
+	if !isCodexTranscriptRole(role) || isCodexNonChatText(text) {
+		return codexTranscriptCandidate{}, false
+	}
+	return codexTranscriptCandidate{
+		Timestamp: record.Timestamp,
+		ItemType:  itemType,
+		Role:      role,
+		Text:      text,
+		MessageID: firstString(record.Payload, "id", "message_id"),
+		Phase:     firstString(record.Payload, "phase"),
+	}, true
+}
+
+func codexVisibleTranscriptCandidates(candidates []codexTranscriptCandidate) []codexTranscriptCandidate {
+	visible := make([]codexTranscriptCandidate, 0, len(candidates))
+	for index := 0; index < len(candidates); index++ {
+		candidate := candidates[index]
+		if isCodexApprovalEnvelope(candidate.Role, candidate.Text) &&
+			index+1 < len(candidates) &&
+			isCodexApprovalDecision(candidates[index+1].Role, candidates[index+1].Text) {
+			index++
+			continue
+		}
+		visible = append(visible, candidate)
+	}
+	return visible
+}
+
+func codexLatestTranscriptCandidates(candidates []codexTranscriptCandidate) []codexTranscriptCandidate {
+	latest := make([]codexTranscriptCandidate, 0, len(candidates))
+	indexes := make(map[string]int, len(candidates))
+	for _, candidate := range candidates {
+		if index, exists := indexes[candidate.MessageID]; candidate.MessageID != "" && exists {
+			latest[index] = candidate
+			continue
+		}
+		if candidate.MessageID != "" {
+			indexes[candidate.MessageID] = len(latest)
+		}
+		latest = append(latest, candidate)
+	}
+	return latest
+}
+
+func codexTranscriptMessages(candidates []codexTranscriptCandidate) ([]map[string]interface{}, bool) {
 	var messages []map[string]interface{}
 	totalBytes := 0
 	truncated := false
-	for scanner.Scan() {
-		var record struct {
-			Timestamp string                 `json:"timestamp"`
-			Type      string                 `json:"type"`
-			Payload   map[string]interface{} `json:"payload"`
-		}
-		if err := json.Unmarshal(scanner.Bytes(), &record); err != nil {
-			continue
-		}
-		if record.Type != "response_item" || record.Payload == nil {
-			continue
-		}
-		itemType := firstString(record.Payload, "type")
-		if itemType == "function_call" || itemType == "function_call_output" || itemType == "tool_call" {
-			continue
-		}
-		role := strings.ToLower(strings.TrimSpace(firstString(record.Payload, "role")))
-		if !isCodexTranscriptRole(role) {
-			continue
-		}
-		text := codexContentText(record.Payload["content"])
-		if isCodexNonChatText(text) {
-			continue
-		}
-		text = privacy.RedactAndTruncate(text, codexMaxTranscriptMessageBytes)
+	for _, candidate := range candidates {
+		text := privacy.RedactAndTruncate(candidate.Text, codexMaxTranscriptMessageBytes)
 		if totalBytes+len(text) > codexMaxTranscriptTotalBytes {
 			truncated = true
 			break
 		}
 		message := map[string]interface{}{
-			"role": role,
+			"role": candidate.Role,
 			"text": text,
 		}
-		if role == "assistant" {
-			message["summary_phase"] = codexTranscriptSummaryPhase(firstString(record.Payload, "phase"))
+		if candidate.Role == "assistant" {
+			message["summary_phase"] = codexTranscriptSummaryPhase(candidate.Phase)
 		}
-		if messageID := firstString(record.Payload, "id", "message_id"); messageID != "" {
-			message["message_id"] = messageID
+		if candidate.MessageID != "" {
+			message["message_id"] = candidate.MessageID
 		}
-		if itemType := firstString(record.Payload, "type"); itemType != "" {
-			message["type"] = itemType
+		if candidate.ItemType != "" {
+			message["type"] = candidate.ItemType
 		}
-		if record.Timestamp != "" {
-			message["timestamp"] = record.Timestamp
+		if candidate.Timestamp != "" {
+			message["timestamp"] = candidate.Timestamp
 		}
 		messages = append(messages, message)
 		totalBytes += len(text)
@@ -238,10 +295,7 @@ func readCodexTranscript(path string) ([]map[string]interface{}, bool, error) {
 			truncated = true
 		}
 	}
-	if err := scanner.Err(); err != nil {
-		return messages, truncated, err
-	}
-	return messages, truncated, nil
+	return messages, truncated
 }
 
 func readCodexToolCalls(path string) ([]codexTranscriptToolCall, error) {
@@ -395,6 +449,35 @@ func isCodexNonChatText(value string) bool {
 		strings.HasPrefix(lower, "<command-stderr>") ||
 		strings.HasPrefix(lower, "<command-error>") ||
 		(strings.Contains(lower, "<cwd>") && strings.Contains(lower, "<current_date>"))
+}
+
+func isCodexApprovalEnvelope(role, value string) bool {
+	if role != "user" {
+		return false
+	}
+	lower := strings.ToLower(strings.TrimSpace(value))
+	approvalRequest := strings.HasPrefix(lower, ">>> approval request start") &&
+		strings.Contains(lower, ">>> approval request end")
+	transcriptDelta := strings.HasPrefix(lower, "the following is the codex agent history added since your last approval assessment.") &&
+		strings.Contains(lower, ">>> transcript delta start") &&
+		strings.Contains(lower, ">>> transcript delta end")
+	return approvalRequest || transcriptDelta
+}
+
+func isCodexApprovalDecision(role, value string) bool {
+	if role != "assistant" {
+		return false
+	}
+	var decision map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(strings.TrimSpace(value)), &decision); err != nil {
+		return false
+	}
+	for _, key := range []string{"outcome", "rationale", "risk_level", "user_authorization"} {
+		if _, ok := decision[key]; !ok {
+			return false
+		}
+	}
+	return true
 }
 
 func codexContentText(value interface{}) string {
