@@ -83,10 +83,35 @@ func transcriptTitle(messages []map[string]interface{}) string {
 	return ""
 }
 
+var codexTitleFields = []string{"title", "thread_name", "session_title", "conversation_title", "thread_title"}
+
+func copyCodexTitleFields(destination, source map[string]interface{}) {
+	for _, field := range codexTitleFields {
+		if title := codexSafeExplicitTitle(firstString(source, field)); title != "" {
+			destination[field] = title
+		}
+	}
+}
+
+func codexSafeExplicitTitle(value string) string {
+	normalized := strings.TrimSpace(value)
+	if isCodexApprovalReviewTitle(normalized) {
+		return ""
+	}
+	return normalized
+}
+
+func isCodexApprovalReviewTitle(value string) bool {
+	lower := strings.ToLower(strings.TrimSpace(value))
+	return strings.HasPrefix(lower, ">>> approval request start") ||
+		strings.HasPrefix(lower, "the following is the codex agent history added since your last approval assessment.") ||
+		strings.HasPrefix(lower, "the following is the codex agent history whose request action you are assessing.")
+}
+
 func titleFromTranscriptText(value string) string {
 	normalized := strings.Join(strings.Fields(value), " ")
 	lower := strings.ToLower(normalized)
-	if normalized == "" || strings.HasPrefix(lower, "<environment_context>") || strings.HasPrefix(lower, "<system_context>") {
+	if normalized == "" || isCodexApprovalReviewTitle(normalized) || strings.HasPrefix(lower, "<environment_context>") || strings.HasPrefix(lower, "<system_context>") {
 		return ""
 	}
 	const maxTitleLength = 120

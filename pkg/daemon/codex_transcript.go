@@ -67,11 +67,12 @@ func mergeCodexTranscriptFallbacks(
 }
 
 func codexTranscriptPayloadFromSession(session turnusage.CodexSession, modifiedAt time.Time) map[string]interface{} {
+	title := codexSafeExplicitTitle(session.Title)
 	row := map[string]interface{}{
 		"rollout_path":   session.RolloutPath,
 		"model":          session.Model,
 		"model_provider": session.ModelProvider,
-		"title":          session.Title,
+		"title":          title,
 	}
 	if !modifiedAt.IsZero() {
 		row["updated_at"] = modifiedAt.UTC().Format(time.RFC3339Nano)
@@ -83,7 +84,7 @@ func codexTranscriptPayloadFromSession(session turnusage.CodexSession, modifiedA
 		"parent_session_id":      session.ParentSessionID,
 		"parent_session_id_hash": session.ParentSessionID,
 		"repo":                   session.Repo,
-		"title":                  session.Title,
+		"title":                  title,
 	}
 	return codexTranscriptPayload(row, usage, nil)
 }
@@ -129,10 +130,7 @@ func codexTranscriptPayload(row map[string]interface{}, usagePayload map[string]
 	}
 	copyStringField(payload, row, "model_provider")
 	copyStringField(payload, row, "model")
-	copyStringField(payload, row, "title")
-	copyStringField(payload, row, "session_title")
-	copyStringField(payload, row, "conversation_title")
-	copyStringField(payload, row, "thread_title")
+	copyCodexTitleFields(payload, row)
 	if title := codexSessionIndexTitle(row, sessionTitles); title != "" {
 		payload["title"] = title
 		payload["title_source"] = "codex_session_index"
@@ -146,7 +144,7 @@ func codexTranscriptPayload(row map[string]interface{}, usagePayload map[string]
 	copyCodexTimeField(payload, row, "created_at")
 	copyCodexTimeField(payload, row, "updated_at")
 	copyStringField(payload, usagePayload, "repo")
-	if title := firstString(payload, "title", "session_title", "conversation_title", "thread_title"); title == "" {
+	if title := firstString(payload, "title", "thread_name", "session_title", "conversation_title", "thread_title"); title == "" {
 		if title := transcriptTitle(messages); title != "" {
 			payload["title"] = title
 		}
@@ -229,12 +227,17 @@ func codexTranscriptCandidateFromJSON(data []byte) (codexTranscriptCandidate, bo
 
 func codexVisibleTranscriptCandidates(candidates []codexTranscriptCandidate) []codexTranscriptCandidate {
 	visible := make([]codexTranscriptCandidate, 0, len(candidates))
-	for index := 0; index < len(candidates); index++ {
-		candidate := candidates[index]
-		if isCodexApprovalEnvelope(candidate.Role, candidate.Text) &&
-			index+1 < len(candidates) &&
-			isCodexApprovalDecision(candidates[index+1].Role, candidates[index+1].Text) {
-			index++
+	approvalPending := false
+	for _, candidate := range candidates {
+		if isCodexApprovalEnvelope(candidate.Role, candidate.Text) {
+			approvalPending = true
+			continue
+		}
+		if candidate.Role == "user" {
+			approvalPending = false
+		}
+		if approvalPending && isCodexApprovalDecision(candidate.Role, candidate.Text) {
+			approvalPending = false
 			continue
 		}
 		visible = append(visible, candidate)
@@ -469,11 +472,16 @@ func isCodexApprovalDecision(role, value string) bool {
 		return false
 	}
 	var decision map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(strings.TrimSpace(value)), &decision); err != nil {
+	if err := json.Unmarshal([]byte(strings.TrimSpace(value)), &decision); err != nil || len(decision) != 4 {
 		return false
 	}
 	for _, key := range []string{"outcome", "rationale", "risk_level", "user_authorization"} {
-		if _, ok := decision[key]; !ok {
+		raw, ok := decision[key]
+		if !ok {
+			return false
+		}
+		var text string
+		if err := json.Unmarshal(raw, &text); err != nil || strings.TrimSpace(text) == "" {
 			return false
 		}
 	}
