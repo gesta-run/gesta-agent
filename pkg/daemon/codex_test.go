@@ -475,8 +475,27 @@ func TestReadCodexTranscriptFiltersApprovalProtocol(t *testing.T) {
 	if err != nil {
 		t.Fatalf("readCodexTranscript: %v", err)
 	}
-	if len(messages) != 5 || !strings.Contains(firstString(messages[0], "text"), "Why does the log contain") || !strings.Contains(firstString(messages[1], "text"), "example") || messages[2]["text"] != "keep this question" || !strings.Contains(firstString(messages[3], "text"), "ordinary JSON") || !strings.Contains(firstString(messages[4], "text"), "quoted without a decision") {
+	if len(messages) != 4 || !strings.Contains(firstString(messages[0], "text"), "Why does the log contain") || !strings.Contains(firstString(messages[1], "text"), "example") || messages[2]["text"] != "keep this question" || !strings.Contains(firstString(messages[3], "text"), "ordinary JSON") {
 		t.Fatalf("messages = %#v, want only ordinary chat", messages)
+	}
+}
+
+func TestCodexApprovalDecisionRequiresExactStringSchema(t *testing.T) {
+	for _, testCase := range []struct {
+		name string
+		text string
+		want bool
+	}{
+		{"exact decision", `{"outcome":"allow","rationale":"safe","risk_level":"low","user_authorization":"high"}`, true},
+		{"unknown field", `{"outcome":"allow","rationale":"safe","risk_level":"low","user_authorization":"high","extra":true}`, false},
+		{"non-string field", `{"outcome":"allow","rationale":"safe","risk_level":"low","user_authorization":true}`, false},
+		{"empty rationale", `{"outcome":"allow","rationale":"","risk_level":"low","user_authorization":"high"}`, false},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			if got := isCodexApprovalDecision("assistant", testCase.text); got != testCase.want {
+				t.Fatalf("isCodexApprovalDecision() = %v, want %v", got, testCase.want)
+			}
+		})
 	}
 }
 
@@ -528,6 +547,39 @@ func TestCodexSessionIndexTitleUsesThreadName(t *testing.T) {
 	}
 	if payload["title_source"] != "codex_session_index" {
 		t.Fatalf("title_source = %#v", payload["title_source"])
+	}
+}
+
+func TestCodexTurnSessionUsesThreadName(t *testing.T) {
+	session, ok := codexTurnSession(
+		map[string]interface{}{"rollout_path": "/tmp/rollout.jsonl"},
+		map[string]interface{}{"session_id": "session-1", "thread_name": "Fix Android preview"},
+	)
+	if !ok || session.Title != "Fix Android preview" {
+		t.Fatalf("session = %#v, ok = %v", session, ok)
+	}
+}
+
+func TestCodexProtocolTitlesAreRejected(t *testing.T) {
+	for _, title := range []string{
+		">>> APPROVAL REQUEST START\n{}",
+		"The following is the Codex agent history added since your last approval assessment.",
+		"The following is the Codex agent history whose request action you are assessing.",
+	} {
+		if got := titleFromTranscriptText(title); got != "" {
+			t.Fatalf("titleFromTranscriptText(%q) = %q, want empty", title, got)
+		}
+		if got := codexSafeExplicitTitle(title); got != "" {
+			t.Fatalf("codexSafeExplicitTitle(%q) = %q, want empty", title, got)
+		}
+	}
+	payload := map[string]interface{}{}
+	copyCodexTitleFields(payload, map[string]interface{}{
+		"title":       ">>> APPROVAL REQUEST START\n{}",
+		"thread_name": "Fix the Android preview startup",
+	})
+	if _, exists := payload["title"]; exists || payload["thread_name"] != "Fix the Android preview startup" {
+		t.Fatalf("copied titles = %#v", payload)
 	}
 }
 

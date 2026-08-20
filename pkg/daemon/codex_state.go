@@ -113,7 +113,7 @@ func codexTurnSession(row, usagePayload map[string]interface{}) (turnusage.Codex
 		SessionID:       firstString(usagePayload, "session_id_hash", "session_id"),
 		ParentSessionID: firstString(usagePayload, "parent_session_id_hash", "parent_session_id"),
 		RolloutPath:     firstString(row, "rollout_path"),
-		Title:           firstString(usagePayload, "title", "session_title", "conversation_title", "thread_title"),
+		Title:           firstString(usagePayload, "title", "thread_name", "session_title", "conversation_title", "thread_title"),
 		Model:           firstString(row, "model", "model_name", "model_id"),
 		Repo:            firstString(usagePayload, "repo", "repo_path_hash", "cwd_hash", "source_hash", "workspace_hash"),
 		ModelProvider:   firstString(row, "model_provider"),
@@ -276,10 +276,7 @@ func codexUsagePayload(row map[string]interface{}, sessionTitles map[string]stri
 	}
 	copyStringField(payload, row, "model_provider")
 	copyStringField(payload, row, "model")
-	copyStringField(payload, row, "title")
-	copyStringField(payload, row, "session_title")
-	copyStringField(payload, row, "conversation_title")
-	copyStringField(payload, row, "thread_title")
+	copyCodexTitleFields(payload, row)
 	if title := codexSessionIndexTitle(row, sessionTitles); title != "" {
 		payload["title"] = title
 		payload["title_source"] = "codex_session_index"
