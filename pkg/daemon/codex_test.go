@@ -453,6 +453,33 @@ func TestReadCodexTranscriptMapsAssistantSummaryPhases(t *testing.T) {
 	}
 }
 
+func TestReadCodexTranscriptFiltersApprovalProtocol(t *testing.T) {
+	rolloutPath := filepath.Join(t.TempDir(), "approval-rollout.jsonl")
+	lines := []string{
+		`{"timestamp":"2026-08-20T00:00:00Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"text","text":"Why does the log contain >>> APPROVAL REQUEST START?"}]}}`,
+		`{"timestamp":"2026-08-20T00:00:30Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"text","text":"{\"outcome\":\"allow\",\"rationale\":\"example\",\"risk_level\":\"low\",\"user_authorization\":\"high\"}"}]}}`,
+		`{"timestamp":"2026-08-20T00:01:00Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"text","text":">>> APPROVAL REQUEST START\n{\"command\":[\"/bin/zsh\"],\"cwd\":\"/private/workspace\"}\n>>> APPROVAL REQUEST END"}]}}`,
+		`{"timestamp":"2026-08-20T00:01:30Z","type":"response_item","payload":{"type":"message","role":"assistant","id":"approval-decision","content":[{"type":"text","text":"{\"outcome\":\"allow\"}"}]}}`,
+		`{"timestamp":"2026-08-20T00:02:00Z","type":"response_item","payload":{"type":"message","role":"assistant","id":"approval-decision","content":[{"type":"text","text":"{\"outcome\":\"allow\",\"rationale\":\"safe\",\"risk_level\":\"low\",\"user_authorization\":\"high\"}"}]}}`,
+		`{"timestamp":"2026-08-20T00:03:00Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"text","text":"The following is the Codex agent history added since your last approval assessment.\n>>> TRANSCRIPT DELTA START\ntool output\n>>> TRANSCRIPT DELTA END"}]}}`,
+		`{"timestamp":"2026-08-20T00:03:30Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"text","text":"{\"outcome\":\"allow\",\"rationale\":\"safe\",\"risk_level\":\"low\",\"user_authorization\":\"high\"}"}]}}`,
+		`{"timestamp":"2026-08-20T00:04:00Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"text","text":"keep this question"}]}}`,
+		`{"timestamp":"2026-08-20T00:05:00Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"text","text":"{\"outcome\":\"allow\",\"message\":\"This is ordinary JSON.\"}"}]}}`,
+		`{"timestamp":"2026-08-20T00:06:00Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"text","text":">>> APPROVAL REQUEST START\nquoted without a decision\n>>> APPROVAL REQUEST END"}]}}`,
+	}
+	if err := os.WriteFile(rolloutPath, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+		t.Fatalf("write rollout: %v", err)
+	}
+
+	messages, _, err := readCodexTranscript(rolloutPath)
+	if err != nil {
+		t.Fatalf("readCodexTranscript: %v", err)
+	}
+	if len(messages) != 5 || !strings.Contains(firstString(messages[0], "text"), "Why does the log contain") || !strings.Contains(firstString(messages[1], "text"), "example") || messages[2]["text"] != "keep this question" || !strings.Contains(firstString(messages[3], "text"), "ordinary JSON") || !strings.Contains(firstString(messages[4], "text"), "quoted without a decision") {
+		t.Fatalf("messages = %#v, want only ordinary chat", messages)
+	}
+}
+
 func TestReadCodexTranscriptKeepsLatestMessages(t *testing.T) {
 	rolloutPath := filepath.Join(t.TempDir(), "long-rollout.jsonl")
 	lines := make([]string, 0, codexMaxTranscriptMessages+5)
