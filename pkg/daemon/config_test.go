@@ -95,3 +95,14 @@ func TestStatePathUsesExplicitDataDir(t *testing.T) {
 		t.Fatalf("explicit state path mismatch: got %q want %q", got, want)
 	}
 }
+
+func TestValidateDeregisterDoesNotRequireDeviceID(t *testing.T) {
+	cfg := Config{
+		ServerURL: "https://control.example",
+		DaemonID:  "daemon_test",
+		Token:     "dtok_test",
+	}
+	if err := cfg.ValidateDeregister(); err != nil {
+		t.Fatalf("ValidateDeregister: %v", err)
+	}
+}

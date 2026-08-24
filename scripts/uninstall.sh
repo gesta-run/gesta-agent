@@ -52,6 +52,31 @@ fail() {
   exit 1
 }
 
+agent_process_running() {
+  process_id=$1
+  process_command=$(ps -p "$process_id" -o command= 2>/dev/null || true)
+  case "$process_command" in
+    *"$agent_bin"*" run"*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+stop_agent_process() {
+  process_id=$1
+  agent_process_running "$process_id" || return 0
+  kill "$process_id" 2>/dev/null || true
+  stop_attempt=0
+  while agent_process_running "$process_id" && [ "$stop_attempt" -lt 10 ]; do
+    sleep 1
+    stop_attempt=$((stop_attempt + 1))
+  done
+  if agent_process_running "$process_id"; then
+    kill -9 "$process_id" 2>/dev/null || true
+    sleep 1
+  fi
+  agent_process_running "$process_id" && fail "could not stop Gesta Agent process $process_id"
+}
+
 canonical_directory() {
   path=$1
   if [ -d "$path" ]; then
@@ -153,14 +178,17 @@ if [ -f "$daemon_pid" ]; then
   case "$pid" in
     ''|*[!0-9]*) ;;
     *)
-      command_line=$(ps -p "$pid" -o command= 2>/dev/null || true)
-      case "$command_line" in
-        *"$agent_bin"*" run"*)
-          kill "$pid" 2>/dev/null || true
-          ;;
-      esac
+      stop_agent_process "$pid"
       ;;
   esac
+fi
+
+if run_as_target_user "$agent_bin" capabilities 2>/dev/null | grep -qx 'deregister'; then
+  printf '%s\n' 'Removing Gesta Agent from the control plane...'
+  run_as_target_user "$agent_bin" deregister --data-dir "$data_dir" || \
+    fail "control-plane removal failed; local files were kept so you can retry"
+else
+  printf '%s\n' 'WARNING: This older Agent cannot remove its server record; continuing with local uninstall.' >&2
 fi
 
 rm -f -- "$daemon_plist" "$legacy_daemon_plist" "$daemon_pid" "$agent_bin"
