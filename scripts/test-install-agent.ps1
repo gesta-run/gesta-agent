@@ -24,8 +24,10 @@ $installedAgent = Join-Path $installDir "gesta-agent.exe"
 $installedHook = Join-Path $installDir "gesta-agent-hook-launcher.exe"
 $baseUrl = "http://127.0.0.1:18765"
 $server = $null
+$controlServer = $null
 $daemon = $null
 $taskName = "Gesta Agent"
+$controlRequestLog = Join-Path $testRoot "control-request.json"
 
 function Set-TestChecksums([string]$AgentHash, [string]$HookHash) {
     Set-Content -LiteralPath (Join-Path $siteRoot "SHA256SUMS") -Encoding Ascii -Value @(
@@ -79,6 +81,18 @@ function Wait-TestArtifactServer() {
     throw "Local artifact server did not start."
 }
 
+function Wait-TestControlServer() {
+    for ($attempt = 0; $attempt -lt 20; $attempt++) {
+        try {
+            Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:18080/healthz" | Out-Null
+            return
+        } catch {
+            Start-Sleep -Milliseconds 250
+        }
+    }
+    throw "Local control server did not start."
+}
+
 function Assert-HookLauncherInstalled() {
     if ($LASTEXITCODE -ne 0 -or
         -not (Test-Path -LiteralPath $installedAgent) -or
@@ -118,6 +132,18 @@ function Assert-AgentUninstalled() {
     }
 }
 
+function Assert-DeregisterRequest([string]$ExpectedDaemonID) {
+    if (-not (Test-Path -LiteralPath $controlRequestLog)) {
+        throw "Windows uninstaller did not deregister the Agent."
+    }
+    $request = Get-Content -LiteralPath $controlRequestLog -Raw | ConvertFrom-Json
+    if ($request.path -ne "/api/v1/daemon" -or
+        $request.daemon_id -ne $ExpectedDaemonID -or
+        $request.authorization -ne "Bearer sk-ci-windows") {
+        throw "Unexpected deregistration request."
+    }
+}
+
 try {
     New-Item -ItemType Directory -Path $siteBin, $testHome, $installDir -Force | Out-Null
     Copy-Item -LiteralPath $BuiltAgent -Destination $siteAgent
@@ -133,6 +159,10 @@ try {
         "-m", "http.server", "18765", "--bind", "127.0.0.1", "--directory", $siteRoot
     ) -PassThru -WindowStyle Hidden
     Wait-TestArtifactServer
+    $controlServer = Start-Process python -ArgumentList @(
+        "$PSScriptRoot/test-control-server.py", "--port", "18080", "--request-log", $controlRequestLog
+    ) -PassThru -WindowStyle Hidden
+    Wait-TestControlServer
 
     $env:USERPROFILE = $testHome
     & "$PSScriptRoot/install-agent.ps1" `
@@ -175,14 +205,19 @@ try {
     Set-TestChecksums -AgentHash $hash -HookHash $hookHash
 
     $dataDir = Join-Path $testHome ".gesta"
+    $expectedDaemonID = (Get-Content -LiteralPath (Join-Path $dataDir "state.json") -Raw | ConvertFrom-Json).daemon_id
     & "$PSScriptRoot/uninstall-agent.ps1" -Yes -DataDir $dataDir -InstallDir $installDir
     Assert-AgentUninstalled
+    Assert-DeregisterRequest -ExpectedDaemonID $expectedDaemonID
 } finally {
     if ($null -ne $daemon -and -not $daemon.HasExited) {
         Stop-Process -Id $daemon.Id -Force -ErrorAction SilentlyContinue
     }
     if ($null -ne $server -and -not $server.HasExited) {
         Stop-Process -Id $server.Id -Force -ErrorAction SilentlyContinue
+    }
+    if ($null -ne $controlServer -and -not $controlServer.HasExited) {
+        Stop-Process -Id $controlServer.Id -Force -ErrorAction SilentlyContinue
     }
     Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
     Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
