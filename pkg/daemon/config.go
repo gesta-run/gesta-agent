@@ -203,6 +203,13 @@ func (c Config) ValidateEnrolled() error {
 	return nil
 }
 
+func (c Config) ValidateDeregister() error {
+	if c.EffectiveServerURL() == "" || c.DaemonID == "" || c.Token == "" {
+		return errors.New("daemon deregistration config is incomplete")
+	}
+	return nil
+}
+
 func RuntimeOS() string {
 	return runtime.GOOS
 }

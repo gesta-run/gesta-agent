@@ -14,6 +14,7 @@ import (
 
 	"github.com/gesta-run/gesta-agent/pkg/agent/options"
 	"github.com/gesta-run/gesta-agent/pkg/agentupgrade"
+	"github.com/gesta-run/gesta-agent/pkg/controlclient"
 	"github.com/gesta-run/gesta-agent/pkg/daemon"
 	"github.com/gesta-run/gesta-agent/pkg/hookinstall"
 	"github.com/gesta-run/gesta-agent/pkg/localactivity"
@@ -49,9 +50,49 @@ func Run(ctx context.Context, args []string) error {
 		return install(args[1:])
 	case "uninstall-hooks":
 		return uninstallHooks(args[1:])
+	case "deregister":
+		return deregister(args[1:])
+	case "capabilities":
+		return capabilities(args[1:])
 	default:
 		return usageError()
 	}
+}
+
+func capabilities(args []string) error {
+	if len(args) != 0 {
+		return fmt.Errorf("capabilities does not accept arguments")
+	}
+	fmt.Println("deregister")
+	return nil
+}
+
+func deregister(args []string) error {
+	fs := flag.NewFlagSet("deregister", flag.ContinueOnError)
+	var dataDir string
+	fs.StringVar(&dataDir, "data-dir", "", "agent state directory")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		return fmt.Errorf("deregister does not accept positional arguments")
+	}
+	configPath := ""
+	if strings.TrimSpace(dataDir) != "" {
+		configPath = daemon.StatePath(dataDir)
+	}
+	cfg, err := daemon.LoadConfig(configPath)
+	if err != nil {
+		return fmt.Errorf("load daemon state: %w", err)
+	}
+	if err := cfg.ValidateDeregister(); err != nil {
+		return err
+	}
+	if err := controlclient.NewClient(cfg.EffectiveServerURL(), cfg.Token).Deregister(cfg.DaemonID); err != nil {
+		return fmt.Errorf("remove daemon from control plane: %w", err)
+	}
+	uiOK("Gesta Agent removed from control plane", cfg.DaemonID)
+	return nil
 }
 
 func uninstallHooks(args []string) error {
@@ -385,8 +426,10 @@ Commands:
   guard --agent codex -- <command...>
 
 Internal commands:
+  capabilities  reports optional commands supported by this binary
   codex-hook    invoked by the Codex hook integration
   claude-hook   invoked by the Claude Code hook integration
+  deregister    invoked by the uninstall scripts
   uninstall-hooks  invoked by the uninstall scripts
 
 Environment:

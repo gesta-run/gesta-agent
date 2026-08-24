@@ -72,6 +72,10 @@ func (c *Client) Heartbeat(req model.HeartbeatRequest) (model.HeartbeatResponse,
 	return resp, nil
 }
 
+func (c *Client) Deregister(daemonID string) error {
+	return c.delete("/api/v1/daemon", c.token, map[string]string{"daemon_id": daemonID})
+}
+
 func (c *Client) MemoryContext(ctx context.Context, request model.MemoryContextRequest) (model.MemorySearchResponse, error) {
 	var response model.MemorySearchResponse
 	if err := c.postWithContext(ctx, "/api/v1/memory/context", request, &response); err != nil {
@@ -313,6 +317,30 @@ func (c *Client) get(path, token string, out interface{}) error {
 	}
 	if out != nil {
 		return json.NewDecoder(resp.Body).Decode(out)
+	}
+	return nil
+}
+
+func (c *Client) delete(path, token string, body interface{}) error {
+	data, err := json.Marshal(body)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequest(http.MethodDelete, c.baseURL+path, bytes.NewReader(data))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return decodeHTTPStatusError(resp)
 	}
 	return nil
 }
