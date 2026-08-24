@@ -110,6 +110,40 @@ func TestClientHeartbeatSendsDaemonTokenAndHostType(t *testing.T) {
 	}
 }
 
+func TestClientDeregisterRemovesDaemon(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete || r.URL.Path != "/api/v1/daemon" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer sk-test" {
+			t.Fatalf("unexpected authorization header: %q", got)
+		}
+		var payload map[string]string
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode deregister request: %v", err)
+		}
+		if payload["daemon_id"] != "daemon_test" {
+			t.Fatalf("daemon_id = %q, want daemon_test", payload["daemon_id"])
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	if err := NewClient(server.URL, "sk-test").Deregister("daemon_test"); err != nil {
+		t.Fatalf("deregister: %v", err)
+	}
+}
+
+func TestClientDeregisterReturnsNotFound(t *testing.T) {
+	server := httptest.NewServer(http.NotFoundHandler())
+	defer server.Close()
+
+	err := NewClient(server.URL, "sk-test").Deregister("daemon_test")
+	if status, ok := StatusCode(err); !ok || status != http.StatusNotFound {
+		t.Fatalf("deregister error = %v, want 404", err)
+	}
+}
+
 func TestClientSendEventsDropsUnmatchedPolicyDecisions(t *testing.T) {
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

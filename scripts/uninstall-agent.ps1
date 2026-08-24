@@ -69,6 +69,23 @@ foreach ($process in $agentProcesses) {
     Wait-Process -Id $process.ProcessId -Timeout 10 -ErrorAction SilentlyContinue
 }
 
+$supportsDeregister = $false
+try {
+    $capabilities = @(& $agentPath capabilities 2>$null)
+    $supportsDeregister = $LASTEXITCODE -eq 0 -and $capabilities -contains "deregister"
+} catch {
+    $supportsDeregister = $false
+}
+if ($supportsDeregister) {
+    Write-Host "Removing Gesta Agent from the control plane..." -ForegroundColor Cyan
+    & $agentPath deregister --data-dir $dataPath
+    if ($LASTEXITCODE -ne 0) {
+        throw "Control-plane removal failed; local files were kept so you can retry."
+    }
+} else {
+    Write-Warning "This older Agent cannot remove its server record; continuing with local uninstall."
+}
+
 foreach ($binaryPath in @($hookPath, $agentPath)) {
     for ($attempt = 0; $attempt -lt 20 -and (Test-Path -LiteralPath $binaryPath); $attempt++) {
         Remove-Item -LiteralPath $binaryPath -Force -ErrorAction SilentlyContinue
