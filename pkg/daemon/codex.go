@@ -168,6 +168,26 @@ func firstNonEmptyString(values ...string) string {
 	return ""
 }
 
+func codexSessionIdentity(id, sessionID string) (string, string) {
+	canonical := firstNonEmptyString(id, sessionID)
+	legacy := strings.TrimSpace(sessionID)
+	if legacy == canonical {
+		legacy = ""
+	}
+	return canonical, legacy
+}
+
+func codexSessionIdentityFromRow(row map[string]interface{}) (string, string) {
+	return codexSessionIdentity(firstString(row, "id"), firstString(row, "session_id"))
+}
+
+func hashOptionalCodexSessionID(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return ""
+	}
+	return util.ShortHash(value)
+}
+
 func stringInt(value int64) string {
 	return strconv.FormatInt(value, 10)
 }

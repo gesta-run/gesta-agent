@@ -469,6 +469,107 @@ func TestCollectCodexForkWithoutParentSeedsConservatively(t *testing.T) {
 	}
 }
 
+func TestCollectCodexMigratesLegacyIdentityWithoutReplay(t *testing.T) {
+	dataDir := t.TempDir()
+	observedAt := time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)
+	legacyID := "root"
+	firstPath := filepath.Join(t.TempDir(), "first.jsonl")
+	writeLines(t, firstPath, []string{
+		sessionMetaLine("2026-08-20T11:00:00Z", "first", ""),
+		turnLine("2026-08-20T11:00:01Z", "task_started", "first-old"),
+		tokenLine("2026-08-20T11:00:02Z", 100, 0, 0, 0),
+		turnLine("2026-08-20T11:00:03Z", "task_complete", "first-old"),
+	})
+	pathHash := util.HashString(firstPath)
+	legacyCursor, err := seedCodexCursor(firstPath, pathHash, observedAt.Add(-time.Minute))
+	if err != nil {
+		t.Fatalf("seed legacy cursor: %v", err)
+	}
+	if err := saveCursorStore(dataDir, cursorStore{
+		InitializedAt: observedAt.Add(-time.Hour).Format(time.RFC3339Nano),
+		Sessions:      map[string]Cursor{legacyID: legacyCursor},
+	}); err != nil {
+		t.Fatalf("save legacy cursor: %v", err)
+	}
+	appendLines(t, firstPath, []string{
+		turnLine("2026-08-20T11:30:00Z", "task_started", "first-new"),
+		tokenLine("2026-08-20T11:30:01Z", 150, 0, 0, 0),
+		turnLine("2026-08-20T11:30:02Z", "task_complete", "first-new"),
+	})
+
+	secondPath := filepath.Join(t.TempDir(), "second.jsonl")
+	writeLines(t, secondPath, []string{
+		sessionMetaLine("2026-08-20T11:10:00Z", "second", ""),
+		turnLine("2026-08-20T11:10:01Z", "task_started", "second-old"),
+		tokenLine("2026-08-20T11:10:02Z", 200, 0, 0, 0),
+		turnLine("2026-08-20T11:10:03Z", "task_complete", "second-old"),
+	})
+	sessions := []CodexSession{
+		{SessionID: "first", LegacySessionID: legacyID, RolloutPath: firstPath},
+		{SessionID: "second", LegacySessionID: legacyID, RolloutPath: secondPath},
+	}
+	events, commit, err := CollectCodex(Config{DataDir: dataDir, DaemonID: "daemon"}, sessions, observedAt)
+	if err != nil || len(events) != 1 || events[0].SessionIDHash != "first" || events[0].Tokens.Total() != 50 {
+		t.Fatalf("migration events = %#v, err=%v", events, err)
+	}
+	if err := commit(); err != nil {
+		t.Fatalf("commit migration: %v", err)
+	}
+	store, err := loadCursorStore(dataDir)
+	if err != nil || store.CodexIdentityCutoverAt == "" {
+		t.Fatalf("migration store = %#v, err=%v", store, err)
+	}
+	if store.Sessions["first"].Offset != store.Sessions[legacyID].Offset {
+		t.Fatalf("legacy cursor was not advanced with canonical cursor: %#v", store.Sessions)
+	}
+
+	appendLines(t, secondPath, []string{
+		turnLine("2026-08-20T12:01:00Z", "task_started", "second-new"),
+		tokenLine("2026-08-20T12:01:01Z", 250, 0, 0, 0),
+		turnLine("2026-08-20T12:01:02Z", "task_complete", "second-new"),
+	})
+	events, _, err = CollectCodex(Config{DataDir: dataDir, DaemonID: "daemon"}, sessions, observedAt.Add(2*time.Minute))
+	if err != nil || len(events) != 1 || events[0].SessionIDHash != "second" || events[0].Tokens.Total() != 50 {
+		t.Fatalf("post-migration events = %#v, err=%v", events, err)
+	}
+}
+
+func TestCollectCodexSkipsSelfParentSession(t *testing.T) {
+	dataDir := t.TempDir()
+	observedAt := time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)
+	if err := saveCursorStore(dataDir, cursorStore{
+		InitializedAt: observedAt.Add(-time.Hour).Format(time.RFC3339Nano),
+		Sessions:      map[string]Cursor{},
+	}); err != nil {
+		t.Fatalf("save cursor: %v", err)
+	}
+	path := filepath.Join(t.TempDir(), "self-parent.jsonl")
+	writeLines(t, path, []string{
+		sessionMetaLine("2026-08-20T12:00:00Z", "self", "self"),
+		turnLine("2026-08-20T12:00:01Z", "task_started", "turn"),
+		tokenLine("2026-08-20T12:00:02Z", 100, 0, 0, 0),
+		turnLine("2026-08-20T12:00:03Z", "task_complete", "turn"),
+	})
+	events, commit, err := CollectCodex(Config{DataDir: dataDir, DaemonID: "daemon"}, []CodexSession{{
+		SessionID:       "self",
+		ParentSessionID: "self",
+		RolloutPath:     path,
+	}}, observedAt.Add(time.Minute))
+	if err != nil || len(events) != 0 || commit == nil {
+		t.Fatalf("self-parent collection: events=%#v commit=%v err=%v", events, commit != nil, err)
+	}
+	if err := commit(); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+	store, err := loadCursorStore(dataDir)
+	if err != nil {
+		t.Fatalf("load cursor: %v", err)
+	}
+	if _, ok := store.Sessions["self"]; ok {
+		t.Fatalf("self-parent session received a cursor: %#v", store.Sessions)
+	}
+}
+
 func TestClassifierUsesWordBoundaries(t *testing.T) {
 	scores := map[string]int{}
 	scoreText(scores, "product planning for a digital workspace", 7)

@@ -30,7 +30,10 @@ type CounterReset struct {
 }
 
 type CodexSession struct {
-	SessionID             string
+	SessionID string
+	// LegacySessionID is the previously preferred shared session_id. It is
+	// retained only to migrate pre-canonical cursors without replaying history.
+	LegacySessionID       string
 	ParentSessionID       string
 	RolloutPath           string
 	Title                 string

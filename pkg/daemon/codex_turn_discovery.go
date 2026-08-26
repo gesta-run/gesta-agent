@@ -15,6 +15,8 @@ import (
 
 const codexFallbackTitleScanBytes = 1024 * 1024
 
+var errCodexSelfParent = errors.New("codex fork parent matches canonical session id")
+
 func defaultCodexSessionsRoot() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -50,19 +52,23 @@ func readCodexTurnSession(path string) (turnusage.CodexSession, bool, bool, erro
 	if record.Type != "session_meta" {
 		return turnusage.CodexSession{}, false, false, nil
 	}
-	rawID := firstNonEmptyString(record.Payload.SessionID, record.Payload.ID)
+	rawID, legacyID := codexSessionIdentity(record.Payload.ID, record.Payload.SessionID)
 	if rawID == "" {
 		return turnusage.CodexSession{}, false, false, nil
 	}
 	title, titlePending := firstCodexUserTitle(reader)
 	session := turnusage.CodexSession{
-		SessionID:     util.ShortHash(rawID),
-		RolloutPath:   path,
-		Title:         title,
-		Model:         strings.TrimSpace(record.Payload.Model),
-		ModelProvider: strings.TrimSpace(record.Payload.ModelProvider),
+		SessionID:       util.ShortHash(rawID),
+		LegacySessionID: hashOptionalCodexSessionID(legacyID),
+		RolloutPath:     path,
+		Title:           title,
+		Model:           strings.TrimSpace(record.Payload.Model),
+		ModelProvider:   strings.TrimSpace(record.Payload.ModelProvider),
 	}
 	if parentID := codexForkParentFromJSONLine([]byte(line)); parentID != "" {
+		if strings.TrimSpace(parentID) == rawID {
+			return turnusage.CodexSession{}, false, false, errCodexSelfParent
+		}
 		session.ParentSessionID = util.ShortHash(parentID)
 	}
 	if cwd := strings.TrimSpace(record.Payload.CWD); cwd != "" {
