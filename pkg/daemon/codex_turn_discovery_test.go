@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	turnusage "github.com/gesta-run/gesta-agent/pkg/turn"
 	"github.com/gesta-run/gesta-agent/pkg/util"
 )
 
@@ -86,6 +87,122 @@ func TestCodexTurnSessionDiscoversHashedParent(t *testing.T) {
 				t.Fatalf("session = %#v, ok=%v, err=%v", session, ok, err)
 			}
 		})
+	}
+}
+
+func TestCodexTurnSessionPrefersCanonicalIDAndKeepsLegacyID(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "rollout.jsonl")
+	contents := `{"type":"session_meta","payload":{"id":"child","session_id":"root","forked_from_id":"parent"}}` + "\n"
+	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
+		t.Fatalf("write rollout: %v", err)
+	}
+
+	session, ok, _, err := readCodexTurnSession(path)
+	if err != nil || !ok {
+		t.Fatalf("read session: ok=%v err=%v", ok, err)
+	}
+	if session.SessionID != util.ShortHash("child") || session.LegacySessionID != util.ShortHash("root") {
+		t.Fatalf("session identity = %#v", session)
+	}
+	if session.ParentSessionID != util.ShortHash("parent") {
+		t.Fatalf("parent session = %q", session.ParentSessionID)
+	}
+}
+
+func TestCodexTurnSessionRejectsSelfParent(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "rollout.jsonl")
+	contents := `{"type":"session_meta","payload":{"id":"child","session_id":"root","forked_from_id":"child"}}` + "\n"
+	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
+		t.Fatalf("write rollout: %v", err)
+	}
+	if _, ok, _, err := readCodexTurnSession(path); err == nil || ok {
+		t.Fatalf("self-parent session: ok=%v err=%v", ok, err)
+	}
+	if sessions, err := discoverCodexTurnSessionsWithTitles(root, nil); err == nil || len(sessions) != 0 {
+		t.Fatalf("first discovery: sessions=%#v err=%v", sessions, err)
+	}
+	if sessions, err := discoverCodexTurnSessionsWithTitles(root, nil); err != nil || len(sessions) != 0 {
+		t.Fatalf("unchanged discovery retried permanent error: sessions=%#v err=%v", sessions, err)
+	}
+	contents = `{"type":"session_meta","payload":{"id":"child","session_id":"root","forked_from_id":"repaired-parent"}}` + "\n"
+	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
+		t.Fatalf("repair rollout: %v", err)
+	}
+	if sessions, err := discoverCodexTurnSessionsWithTitles(root, nil); err != nil || len(sessions) != 1 {
+		t.Fatalf("changed rollout was not revalidated: sessions=%#v err=%v", sessions, err)
+	}
+}
+
+func TestCodexDualIdentitySiblingForksEmitOnlyUniqueTurns(t *testing.T) {
+	root := t.TempDir()
+	dataDir := t.TempDir()
+	cutover := time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)
+	parentPath := filepath.Join(root, "parent.jsonl")
+	writeCodexDiscoveryRollout(t, parentPath, []string{
+		`{"timestamp":"2026-08-20T11:59:00Z","type":"session_meta","payload":{"id":"parent","session_id":"root"}}`,
+		`{"timestamp":"2026-08-20T11:59:01Z","type":"event_msg","payload":{"type":"task_started","turn_id":"parent-turn"}}`,
+		`{"timestamp":"2026-08-20T11:59:02Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":100}}}}`,
+		`{"timestamp":"2026-08-20T11:59:03Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"parent-turn"}}`,
+	})
+	parentSessions, err := discoverCodexTurnSessionsWithTitles(root, nil)
+	if err != nil || len(parentSessions) != 1 {
+		t.Fatalf("parent discovery = %#v, err=%v", parentSessions, err)
+	}
+	_, commit, err := turnusage.CollectCodex(turnusage.Config{DataDir: dataDir, DaemonID: "daemon"}, parentSessions, cutover)
+	if err != nil || commit == nil {
+		t.Fatalf("initialize collector: commit=%v err=%v", commit != nil, err)
+	}
+	if err := commit(); err != nil {
+		t.Fatalf("commit initialization: %v", err)
+	}
+
+	writeCodexFork := func(path, childID, childTurn, startedAt string, finalInput int) {
+		writeCodexDiscoveryRollout(t, path, []string{
+			`{"timestamp":"` + startedAt + `","type":"session_meta","payload":{"id":"` + childID + `","session_id":"root","forked_from_id":"parent"}}`,
+			`{"timestamp":"2026-08-20T12:01:01Z","type":"event_msg","payload":{"type":"task_started","turn_id":"parent-turn"}}`,
+			`{"timestamp":"2026-08-20T12:01:02Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":100}}}}`,
+			`{"timestamp":"2026-08-20T12:01:03Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"parent-turn"}}`,
+			`{"timestamp":"2026-08-20T12:02:00Z","type":"event_msg","payload":{"type":"task_started","turn_id":"` + childTurn + `"}}`,
+			`{"timestamp":"2026-08-20T12:02:01Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":` + stringInt(int64(finalInput)) + `}}}}`,
+			`{"timestamp":"2026-08-20T12:02:02Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"` + childTurn + `"}}`,
+		})
+	}
+	writeCodexFork(filepath.Join(root, "child-a.jsonl"), "child-a", "child-a-turn", "2026-08-20T12:01:00Z", 150)
+	writeCodexFork(filepath.Join(root, "child-b.jsonl"), "child-b", "child-b-turn", "2026-08-20T12:01:10Z", 170)
+
+	sessions, err := discoverCodexTurnSessionsWithTitles(root, nil)
+	if err != nil || len(sessions) != 3 {
+		t.Fatalf("fork discovery = %#v, err=%v", sessions, err)
+	}
+	events, _, err := turnusage.CollectCodex(
+		turnusage.Config{DataDir: dataDir, DaemonID: "daemon"},
+		mergeCodexTurnSessions(nil, sessions),
+		cutover.Add(3*time.Minute),
+	)
+	if err != nil || len(events) != 2 {
+		t.Fatalf("fork events = %#v, err=%v", events, err)
+	}
+	want := map[string]int64{util.ShortHash("child-a"): 50, util.ShortHash("child-b"): 70}
+	for _, event := range events {
+		if event.Tokens.Total() != want[event.SessionIDHash] {
+			t.Fatalf("unexpected fork event = %#v", event)
+		}
+		delete(want, event.SessionIDHash)
+	}
+	if len(want) != 0 {
+		t.Fatalf("missing child events = %#v", want)
+	}
+}
+
+func writeCodexDiscoveryRollout(t *testing.T, path string, lines []string) {
+	t.Helper()
+	contents := ""
+	for _, line := range lines {
+		contents += line + "\n"
+	}
+	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
+		t.Fatalf("write rollout: %v", err)
 	}
 }
 

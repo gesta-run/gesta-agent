@@ -10,8 +10,11 @@ import (
 )
 
 type cursorStore struct {
-	InitializedAt string            `json:"initialized_at"`
-	Sessions      map[string]Cursor `json:"sessions"`
+	InitializedAt string `json:"initialized_at"`
+	// CodexIdentityCutoverAt separates pre-upgrade rollouts, which must be
+	// seeded conservatively, from new forks that can use parent-turn suppression.
+	CodexIdentityCutoverAt string            `json:"codex_identity_cutover_at,omitempty"`
+	Sessions               map[string]Cursor `json:"sessions"`
 }
 
 type Cursor struct {
@@ -62,7 +65,11 @@ func saveCursorStore(dataDir string, store cursorStore) error {
 }
 
 func cloneCursorStore(store cursorStore) cursorStore {
-	next := cursorStore{InitializedAt: store.InitializedAt, Sessions: make(map[string]Cursor, len(store.Sessions))}
+	next := cursorStore{
+		InitializedAt:          store.InitializedAt,
+		CodexIdentityCutoverAt: store.CodexIdentityCutoverAt,
+		Sessions:               make(map[string]Cursor, len(store.Sessions)),
+	}
 	for key, cursor := range store.Sessions {
 		if cursor.Active != nil {
 			active := *cursor.Active

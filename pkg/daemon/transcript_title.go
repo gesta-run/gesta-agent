@@ -55,7 +55,7 @@ func codexSessionIndexTitle(row map[string]interface{}, sessionTitles map[string
 	if len(sessionTitles) == 0 {
 		return ""
 	}
-	sessionID := firstString(row, "session_id", "id")
+	sessionID, _ := codexSessionIdentityFromRow(row)
 	if sessionID == "" {
 		return ""
 	}

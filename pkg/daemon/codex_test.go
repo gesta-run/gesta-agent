@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	turnusage "github.com/gesta-run/gesta-agent/pkg/turn"
 	"github.com/gesta-run/gesta-agent/pkg/util"
 )
 
@@ -140,6 +141,61 @@ func TestCodexUsagePayloadIsMetadataOnly(t *testing.T) {
 	serialized := string(data)
 	if strings.Contains(serialized, "raw-session-id") || strings.Contains(serialized, "/Users/alice/private/repo") {
 		t.Fatalf("payload leaked raw local identifiers: %s", serialized)
+	}
+}
+
+func TestCodexStateRowsPreferCanonicalIDAndKeepLegacyID(t *testing.T) {
+	row := map[string]interface{}{
+		"id":           "child",
+		"session_id":   "root",
+		"rollout_path": filepath.Join(t.TempDir(), "rollout.jsonl"),
+		"tokens_used":  int64(10),
+	}
+	payload := codexUsagePayload(row, nil)
+	if payload["session_id_hash"] != util.ShortHash("child") {
+		t.Fatalf("payload session = %#v", payload["session_id_hash"])
+	}
+	session, ok := codexTurnSession(row, payload)
+	if !ok || session.SessionID != util.ShortHash("child") || session.LegacySessionID != util.ShortHash("root") {
+		t.Fatalf("turn session = %#v, ok=%v", session, ok)
+	}
+}
+
+func TestMergeCodexTurnSessionsDeduplicatesMixedIdentitiesByRollout(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "rollout.jsonl")
+	tests := []struct {
+		name       string
+		state      turnusage.CodexSession
+		discovered turnusage.CodexSession
+	}{
+		{
+			name:       "canonical discovery",
+			state:      turnusage.CodexSession{SessionID: "root", RolloutPath: path},
+			discovered: turnusage.CodexSession{SessionID: "child", LegacySessionID: "root", RolloutPath: path},
+		},
+		{
+			name:       "canonical state",
+			state:      turnusage.CodexSession{SessionID: "child", LegacySessionID: "root", RolloutPath: path},
+			discovered: turnusage.CodexSession{SessionID: "root", RolloutPath: path},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			sessions := mergeCodexTurnSessions([]turnusage.CodexSession{test.state}, []turnusage.CodexSession{test.discovered})
+			if len(sessions) != 1 || sessions[0].SessionID != "child" || sessions[0].LegacySessionID != "root" {
+				t.Fatalf("merged sessions = %#v", sessions)
+			}
+		})
+	}
+}
+
+func TestFilterInvalidCodexTurnSessionsRejectsSelfParent(t *testing.T) {
+	sessions, invalid := filterInvalidCodexTurnSessions([]turnusage.CodexSession{
+		{SessionID: "valid", ParentSessionID: "parent"},
+		{SessionID: "invalid", ParentSessionID: "invalid"},
+	})
+	if !invalid || len(sessions) != 1 || sessions[0].SessionID != "valid" {
+		t.Fatalf("filtered sessions = %#v, invalid=%v", sessions, invalid)
 	}
 }
 

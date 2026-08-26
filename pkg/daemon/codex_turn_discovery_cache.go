@@ -14,11 +14,12 @@ import (
 )
 
 type codexRolloutCacheEntry struct {
-	size         int64
-	modifiedAt   int64
-	titlePending bool
-	retryPending bool
-	session      turnusage.CodexSession
+	size             int64
+	modifiedAt       int64
+	titlePending     bool
+	retryPending     bool
+	validationFailed bool
+	session          turnusage.CodexSession
 }
 
 var codexRolloutCache = struct {
@@ -137,10 +138,13 @@ func cachedCodexTurnSession(path string, info fs.FileInfo) (turnusage.CodexSessi
 	codexRolloutCache.Lock()
 	entry, found := codexRolloutCache.entries[path]
 	codexRolloutCache.Unlock()
+	if found && entry.size == info.Size() && entry.modifiedAt == info.ModTime().UnixNano() && entry.validationFailed {
+		return turnusage.CodexSession{}, false, nil
+	}
 	if found && entry.size == info.Size() && entry.modifiedAt == info.ModTime().UnixNano() && !entry.retryPending {
 		return entry.session, true, nil
 	}
-	if found && info.Size() > entry.size && !entry.titlePending && !entry.retryPending {
+	if found && info.Size() > entry.size && !entry.titlePending && !entry.retryPending && !entry.validationFailed {
 		entry.size = info.Size()
 		entry.modifiedAt = info.ModTime().UnixNano()
 		codexRolloutCache.Lock()
@@ -150,11 +154,13 @@ func cachedCodexTurnSession(path string, info fs.FileInfo) (turnusage.CodexSessi
 	}
 	session, ok, titlePending, err := readCodexTurnSession(path)
 	if err != nil || !ok {
+		validationFailed := errors.Is(err, errCodexSelfParent)
 		codexRolloutCache.Lock()
 		codexRolloutCache.entries[path] = codexRolloutCacheEntry{
-			size:         info.Size(),
-			modifiedAt:   info.ModTime().UnixNano(),
-			retryPending: true,
+			size:             info.Size(),
+			modifiedAt:       info.ModTime().UnixNano(),
+			retryPending:     !validationFailed,
+			validationFailed: validationFailed,
 		}
 		codexRolloutCache.Unlock()
 		return turnusage.CodexSession{}, ok, err
@@ -179,7 +185,7 @@ func refreshPendingCodexRollouts(root string, titles map[string]string, discover
 	codexRolloutCache.Lock()
 	for path, entry := range codexRolloutCache.entries {
 		needsTitle := entry.titlePending && strings.TrimSpace(titles[entry.session.SessionID]) == ""
-		if pathWithin(root, path) && (entry.retryPending || needsTitle) {
+		if pathWithin(root, path) && (entry.retryPending || entry.validationFailed || needsTitle) {
 			pending = append(pending, pendingEntry{path: path, entry: entry})
 		}
 	}

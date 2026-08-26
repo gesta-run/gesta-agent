@@ -86,7 +86,7 @@ func collectCodexRows(usageRows []map[string]interface{}, spawnParents, sessionT
 	transcripts := make([]map[string]interface{}, 0, len(usageRows))
 	turnSessions := make([]turnusage.CodexSession, 0, len(usageRows))
 	for index, row := range usageRows {
-		if sessionID := firstString(row, "session_id", "id"); sessionID != "" {
+		if sessionID, _ := codexSessionIdentityFromRow(row); sessionID != "" {
 			if parentID := spawnParents[sessionID]; parentID != "" {
 				row["parent_session_id"] = parentID
 			}
@@ -109,8 +109,10 @@ func collectCodexRows(usageRows []map[string]interface{}, spawnParents, sessionT
 }
 
 func codexTurnSession(row, usagePayload map[string]interface{}) (turnusage.CodexSession, bool) {
+	_, legacyID := codexSessionIdentityFromRow(row)
 	session := turnusage.CodexSession{
 		SessionID:       firstString(usagePayload, "session_id_hash", "session_id"),
+		LegacySessionID: hashOptionalCodexSessionID(legacyID),
 		ParentSessionID: firstString(usagePayload, "parent_session_id_hash", "parent_session_id"),
 		RolloutPath:     firstString(row, "rollout_path"),
 		Title:           firstString(usagePayload, "title", "thread_name", "session_title", "conversation_title", "thread_title"),
@@ -250,7 +252,7 @@ func codexUsagePayload(row map[string]interface{}, sessionTitles map[string]stri
 		"agent_type":    "codex",
 		"metadata_only": true,
 	}
-	if sessionID := firstString(row, "session_id", "id"); sessionID != "" {
+	if sessionID, _ := codexSessionIdentityFromRow(row); sessionID != "" {
 		hashed := util.ShortHash(sessionID)
 		payload["session_id"] = hashed
 		payload["session_id_hash"] = hashed

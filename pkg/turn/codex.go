@@ -25,8 +25,16 @@ func CollectCodex(cfg Config, sessions []CodexSession, observedAt time.Time) ([]
 	next := cloneCursorStore(store)
 	firstCollection := strings.TrimSpace(store.InitializedAt) == ""
 	initializedAt, _ := time.Parse(time.RFC3339Nano, store.InitializedAt)
+	identityCutoverAt, _ := time.Parse(time.RFC3339Nano, store.CodexIdentityCutoverAt)
+	if identityCutoverAt.IsZero() {
+		identityCutoverAt = observedAt
+		next.CodexIdentityCutoverAt = observedAt.UTC().Format(time.RFC3339Nano)
+	}
 	sessionsByID := make(map[string]CodexSession, len(sessions))
 	for _, session := range sessions {
+		if session.SessionID != "" && session.ParentSessionID == session.SessionID {
+			continue
+		}
 		sessionsByID[session.SessionID] = session
 	}
 	inheritedByParent := map[string]map[string]struct{}{}
@@ -34,7 +42,7 @@ func CollectCodex(cfg Config, sessions []CodexSession, observedAt time.Time) ([]
 	for _, session := range sessions {
 		session.TotalEncoding = cfg.TotalEncoding
 		session.OnCounterReset = cfg.OnCounterReset
-		if strings.TrimSpace(session.SessionID) == "" || strings.TrimSpace(session.RolloutPath) == "" {
+		if strings.TrimSpace(session.SessionID) == "" || strings.TrimSpace(session.RolloutPath) == "" || session.ParentSessionID == session.SessionID {
 			continue
 		}
 		if _, statErr := os.Stat(session.RolloutPath); statErr != nil {
@@ -42,6 +50,9 @@ func CollectCodex(cfg Config, sessions []CodexSession, observedAt time.Time) ([]
 		}
 		pathHash := util.HashString(session.RolloutPath)
 		cursor, exists := next.Sessions[session.SessionID]
+		if !firstCollection && !exists {
+			cursor, exists, err = migrateCodexIdentityCursor(next, session, pathHash, identityCutoverAt, observedAt)
+		}
 		if firstCollection || !exists {
 			if firstCollection {
 				cursor, err = seedCodexCursor(session.RolloutPath, pathHash, observedAt)
@@ -83,12 +94,42 @@ func CollectCodex(cfg Config, sessions []CodexSession, observedAt time.Time) ([]
 			return nil, nil, err
 		}
 		next.Sessions[session.SessionID] = cursor
+		if legacyCursor, ok := next.Sessions[session.LegacySessionID]; session.LegacySessionID != "" && ok && legacyCursor.RolloutPathHash == pathHash {
+			next.Sessions[session.LegacySessionID] = cursor
+		}
 	}
 	if firstCollection {
 		next.InitializedAt = observedAt.UTC().Format(time.RFC3339Nano)
 	}
 	commit := func() error { return saveCursorStore(cfg.DataDir, next) }
 	return events, commit, nil
+}
+
+func migrateCodexIdentityCursor(
+	store cursorStore,
+	session CodexSession,
+	pathHash string,
+	cutoverAt, observedAt time.Time,
+) (Cursor, bool, error) {
+	if session.LegacySessionID == "" || session.LegacySessionID == session.SessionID {
+		return Cursor{}, false, nil
+	}
+	if legacy, ok := store.Sessions[session.LegacySessionID]; ok && legacy.RolloutPathHash == pathHash {
+		info, err := os.Stat(session.RolloutPath)
+		if err != nil {
+			return Cursor{}, false, err
+		}
+		if info.Size() >= legacy.Offset {
+			return legacy, true, nil
+		}
+	}
+	if codexRolloutStartedAtOrAfter(session.RolloutPath, cutoverAt) {
+		return Cursor{}, false, nil
+	}
+	// Multiple old forks may share one legacy key, so only an exact path match
+	// is safe to migrate. Seed every other pre-cutover rollout without emission.
+	cursor, err := seedCodexCursor(session.RolloutPath, pathHash, observedAt)
+	return cursor, err == nil, err
 }
 
 func inheritedCodexTurnIDHashes(

@@ -2,6 +2,9 @@ package daemon
 
 import (
 	"context"
+	"errors"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/gesta-run/gesta-agent/pkg/model"
@@ -40,7 +43,10 @@ func collectCodexStateEvents(ctx context.Context, cfg Config, stateDB string, ob
 		events = append(events, codexWarningEvent(cfg, stateDB, "turn_discovery", discoveryErr))
 	}
 	aggregate["transcript_fallback_sessions"] = len(discoveredSessions)
-	turnSessions := mergeCodexTurnSessions(stateSessions, discoveredSessions)
+	turnSessions, invalidTurnIdentity := filterInvalidCodexTurnSessions(mergeCodexTurnSessions(stateSessions, discoveredSessions))
+	if invalidTurnIdentity {
+		events = append(events, codexWarningEvent(cfg, stateDB, "turn_identity", errors.New("ignored codex session with self-referential fork parent")))
+	}
 	var transcriptFallbacks int
 	transcriptEvents, transcriptFallbacks = mergeCodexTranscriptFallbacks(transcriptEvents, turnSessions)
 	aggregate["transcript_fallback_payloads"] = transcriptFallbacks
@@ -137,32 +143,81 @@ func codexWarningEvent(cfg Config, stateDB, scope string, err error) model.Event
 
 func mergeCodexTurnSessions(stateSessions, discoveredSessions []turnusage.CodexSession) []turnusage.CodexSession {
 	byID := make(map[string]turnusage.CodexSession, len(stateSessions)+len(discoveredSessions))
+	byRollout := make(map[string]string, len(stateSessions)+len(discoveredSessions))
 	for _, session := range stateSessions {
 		byID[session.SessionID] = session
+		if key := codexRolloutKey(session.RolloutPath); key != "" {
+			byRollout[key] = session.SessionID
+		}
 	}
 	for _, discovered := range discoveredSessions {
-		if existing, ok := byID[discovered.SessionID]; ok {
-			if discovered.ParentSessionID == "" {
-				discovered.ParentSessionID = existing.ParentSessionID
-			}
-			if discovered.Title == "" {
-				discovered.Title = existing.Title
-			}
-			if discovered.Model == "" {
-				discovered.Model = existing.Model
-			}
-			if discovered.Repo == "" {
-				discovered.Repo = existing.Repo
-			}
-			if discovered.ModelProvider == "" {
-				discovered.ModelProvider = existing.ModelProvider
-			}
+		existingID := discovered.SessionID
+		existing, ok := byID[existingID]
+		if !ok {
+			existingID, ok = byRollout[codexRolloutKey(discovered.RolloutPath)]
+			existing = byID[existingID]
+		}
+		if ok {
+			delete(byID, existingID)
+			delete(byRollout, codexRolloutKey(existing.RolloutPath))
+			discovered = mergeCodexTurnSession(existing, discovered)
 		}
 		byID[discovered.SessionID] = discovered
+		if key := codexRolloutKey(discovered.RolloutPath); key != "" {
+			byRollout[key] = discovered.SessionID
+		}
 	}
 	sessions := make([]turnusage.CodexSession, 0, len(byID))
 	for _, session := range byID {
 		sessions = append(sessions, session)
 	}
 	return sessions
+}
+
+func mergeCodexTurnSession(state, discovered turnusage.CodexSession) turnusage.CodexSession {
+	if state.SessionID == discovered.SessionID {
+		if discovered.LegacySessionID == "" {
+			discovered.LegacySessionID = state.LegacySessionID
+		}
+	} else if state.LegacySessionID == discovered.SessionID {
+		discovered.SessionID = state.SessionID
+		discovered.LegacySessionID = state.LegacySessionID
+	}
+	if discovered.ParentSessionID == "" {
+		discovered.ParentSessionID = state.ParentSessionID
+	}
+	if discovered.Title == "" {
+		discovered.Title = state.Title
+	}
+	if discovered.Model == "" {
+		discovered.Model = state.Model
+	}
+	if discovered.Repo == "" {
+		discovered.Repo = state.Repo
+	}
+	if discovered.ModelProvider == "" {
+		discovered.ModelProvider = state.ModelProvider
+	}
+	return discovered
+}
+
+func codexRolloutKey(path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return ""
+	}
+	return filepath.Clean(path)
+}
+
+func filterInvalidCodexTurnSessions(sessions []turnusage.CodexSession) ([]turnusage.CodexSession, bool) {
+	filtered := make([]turnusage.CodexSession, 0, len(sessions))
+	invalid := false
+	for _, session := range sessions {
+		if session.SessionID != "" && session.ParentSessionID == session.SessionID {
+			invalid = true
+			continue
+		}
+		filtered = append(filtered, session)
+	}
+	return filtered, invalid
 }
