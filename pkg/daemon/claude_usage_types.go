@@ -60,21 +60,32 @@ type claudeSessionUsage struct {
 	// breakdowns can be emitted as separate buckets.
 	ByModelDay map[claudeModelDayKey]claudeAssistantUsage
 	// Total is the session-wide sum across every assistant message.
-	Total               claudeAssistantUsage
-	Messages            []map[string]interface{}
-	TranscriptTruncated bool
-	MCPToolCalls        []claudeTranscriptToolCall
-	Turns               []claudeTurnUsage
+	Total                  claudeAssistantUsage
+	Messages               []map[string]interface{}
+	TranscriptTruncated    bool
+	MCPToolCalls           []claudeTranscriptToolCall
+	Turns                  []claudeTurnUsage
+	Invocations            []claudeInvocationUsage
+	AccountingSeedOnly     bool
+	AccountingFirstEventAt time.Time
+}
+
+type claudeInvocationUsage struct {
+	InvocationID string
+	ObservedAt   time.Time
+	Model        string
+	Usage        claudeAssistantUsage
 }
 
 type claudeTurnUsage struct {
-	TurnID    string
-	Status    string
-	StartedAt time.Time
-	EndedAt   time.Time
-	Model     string
-	Usage     claudeAssistantUsage
-	Evidence  []turnusage.Evidence
+	TurnID              string
+	Status              string
+	StartedAt           time.Time
+	EndedAt             time.Time
+	Model               string
+	Usage               claudeAssistantUsage
+	Evidence            []turnusage.Evidence
+	AccountingInherited bool
 }
 
 type claudeModelDayKey struct {
@@ -92,12 +103,13 @@ type claudeTranscriptCandidate struct {
 }
 
 type claudeTranscriptToolCall struct {
-	Name       string
-	CallID     string
-	Timestamp  string
-	MCPServer  string
-	MCPTool    string
-	BlockIndex int
+	Name                string
+	CallID              string
+	Timestamp           string
+	MCPServer           string
+	MCPTool             string
+	BlockIndex          int
+	AccountingInherited bool
 }
 
 func (s claudeSessionUsage) totalTokens() int64 { return s.Total.TotalTokens() }

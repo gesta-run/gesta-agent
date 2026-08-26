@@ -183,7 +183,35 @@ func (a *claudeTranscriptAccumulator) addAssistantUsage(record claudeTranscriptR
 	}
 	a.session.AssistantEvents++
 	a.modelsSeen[modelName] = struct{}{}
-	return a.addUsage(record, modelName, observedAt, hasTime)
+	usage, added := a.addUsage(record, modelName, observedAt, hasTime)
+	if added {
+		a.session.Invocations = append(a.session.Invocations, claudeInvocationUsage{
+			InvocationID: claudeInvocationID(record, usage),
+			ObservedAt:   observedAt,
+			Model:        modelName,
+			Usage:        usage,
+		})
+	}
+	return usage, added
+}
+
+func claudeInvocationID(record claudeTranscriptRecord, usage claudeAssistantUsage) string {
+	if messageID := strings.TrimSpace(record.Message.ID); messageID != "" {
+		return "message:" + messageID
+	}
+	if recordID := strings.TrimSpace(record.UUID); recordID != "" {
+		return "record:" + recordID
+	}
+	content, _ := json.Marshal(record.Message.Content)
+	return "fallback:" + util.HashString(strings.Join([]string{
+		record.Timestamp,
+		record.Message.Model,
+		strconv.FormatInt(usage.InputTokens, 10),
+		strconv.FormatInt(usage.OutputTokens, 10),
+		strconv.FormatInt(usage.CacheCreationTokens, 10),
+		strconv.FormatInt(usage.CacheReadTokens, 10),
+		string(content),
+	}, "\x00"))
 }
 
 func (a *claudeTranscriptAccumulator) addUsage(
@@ -223,7 +251,7 @@ func (a *claudeTranscriptAccumulator) startClaudeTurn(record claudeTranscriptRec
 	startedAt, _ := parseClaudeTimestamp(record.Timestamp)
 	turnID := strings.TrimSpace(record.UUID)
 	if turnID == "" {
-		turnID = util.HashString(strings.Join([]string{record.SessionID, record.Timestamp, text}, "\x00"))
+		turnID = util.HashString(strings.Join([]string{record.Timestamp, text}, "\x00"))
 	}
 	a.activeTurn = &claudeTurnAccumulator{
 		TurnID:    turnID,
@@ -260,15 +288,7 @@ func (a *claudeTranscriptAccumulator) addClaudeInternalTurnUsage(record claudeTr
 		identity = strings.TrimSpace(record.UUID)
 	}
 	if identity == "" {
-		identity = util.HashString(strings.Join([]string{
-			record.SessionID,
-			record.Timestamp,
-			record.Message.Model,
-			strconv.FormatInt(usage.InputTokens, 10),
-			strconv.FormatInt(usage.OutputTokens, 10),
-			strconv.FormatInt(usage.CacheCreationTokens, 10),
-			strconv.FormatInt(usage.CacheReadTokens, 10),
-		}, "\x00"))
+		identity = claudeInvocationID(record, usage)
 	}
 	a.session.Turns = append(a.session.Turns, claudeTurnUsage{
 		TurnID:    "internal:" + identity,
