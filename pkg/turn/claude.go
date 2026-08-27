@@ -47,7 +47,7 @@ func CollectClaude(cfg Config, sessions []ClaudeSession, observedAt time.Time) (
 		if cursor.SeenTurnHashes == nil {
 			cursor.SeenTurnHashes = map[string]bool{}
 		}
-		emit := !firstCollection && (exists || !session.FirstEventAt.Before(initializedAt))
+		emit := !session.SeedOnly && !firstCollection && (exists || !session.FirstEventAt.Before(initializedAt))
 		if !exists {
 			dirty = true
 		}
@@ -65,7 +65,7 @@ func CollectClaude(cfg Config, sessions []ClaudeSession, observedAt time.Time) (
 			if !claudeTurnAfterCursor(cursor, turn.EndedAt, turnIDHash) {
 				continue
 			}
-			if emit {
+			if emit && !turn.Inherited {
 				status := strings.ToLower(strings.TrimSpace(turn.Status))
 				if status != "aborted" {
 					status = "completed"

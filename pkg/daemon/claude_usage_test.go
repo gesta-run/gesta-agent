@@ -72,12 +72,21 @@ func collectClaudeUsageEvents(
 	projectsDir string,
 	observedAt time.Time,
 ) (usageEvents, sessionEvents []map[string]interface{}, meta map[string]interface{}, err error) {
-	collection, err := collectClaudeEventsFromSessions(cfg, mergedClaudeSessions(projectsDir), observedAt)
+	sessions, accountingCommit, err := prepareClaudeForkAccounting(cfg.DataDir, mergedClaudeSessions(projectsDir), observedAt)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	collection, err := collectClaudeEventsFromSessions(cfg, sessions, observedAt)
 	if err != nil {
 		return nil, nil, nil, err
 	}
 	if collection.Commit != nil {
 		if err := collection.Commit(); err != nil {
+			return nil, nil, nil, err
+		}
+	}
+	if accountingCommit != nil {
+		if err := accountingCommit(); err != nil {
 			return nil, nil, nil, err
 		}
 	}

@@ -18,6 +18,8 @@ const (
 	internalPreviousCacheWriteTokensKey  = "_gesta_internal_previous_cache_write_tokens"
 	internalPreviousObservedAtKey        = "_gesta_internal_previous_observed_at"
 	internalPreviousAccountingKey        = "_gesta_internal_previous_accounting"
+	internalAccountingCutoverPayloadKey  = "_gesta_internal_accounting_cutover"
+	internalForkInheritedPayloadKey      = "_gesta_internal_fork_inherited"
 	internalTranscriptFallbackPayloadKey = "_gesta_transcript_fallback"
 	codexSessionBackfillModeValue        = "disabled"
 )
@@ -242,6 +244,23 @@ func addBaselineSession(sessions map[string]baselineSession, payload map[string]
 	}
 	existing, exists := sessions[sessionID]
 	changed := !exists
+	if payloadBool(payload, internalAccountingCutoverPayloadKey) {
+		existing.TotalTokens = 0
+		existing.InputTokens = 0
+		existing.OutputTokens = 0
+		existing.CacheReadTokens = 0
+		existing.CacheWriteTokens = 0
+		existing.PreviousTotalTokens = 0
+		existing.PreviousInputTokens = 0
+		existing.PreviousOutputTokens = 0
+		existing.PreviousCacheReadTokens = 0
+		existing.PreviousCacheWriteTokens = 0
+		existing.TokensObserved = false
+		existing.CacheObserved = false
+		existing.PreviousCacheObserved = false
+		existing.TokenAccounting = ""
+		changed = true
+	}
 	// Snapshot the pre-mutation observed-at so a genuine advance below can record
 	// the cursor timestamp it is advancing FROM (UpdatedAt is overwritten next).
 	priorObservedAt := existing.UpdatedAt
