@@ -42,6 +42,9 @@ func claudeMCPToolCallEvents(cfg Config, session claudeSessionUsage) []model.Eve
 			"session_id_is_hashed": true,
 			"observed_at":          observedAt.Format(time.RFC3339Nano),
 		}
+		if session.AccountingSeedOnly || call.AccountingInherited {
+			payload[internalForkInheritedPayloadKey] = true
+		}
 		if serverName != "" {
 			payload["mcp_server_name"] = serverName
 		}

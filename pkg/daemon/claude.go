@@ -66,6 +66,14 @@ func claudeEventsFromSessions(
 ) ([]model.EventEnvelope, func() error) {
 	var events []model.EventEnvelope
 	var commits []func() error
+	accountedSessions, accountingCommit, accountingErr := prepareClaudeForkAccounting(cfg.DataDir, sessions, observedAt)
+	if accountingErr != nil {
+		events = append(events, snapshotEvent(cfg, "adapter.warning", claudeCodeUsageSource, claudeCodeAgentType, map[string]interface{}{
+			"scope": "fork_accounting", "error": privacy.RedactAndTruncate(accountingErr.Error(), 2048),
+		}))
+		return events, nil
+	}
+	sessions = accountedSessions
 	turnEvents, turnCommit, turnErr := turnusage.CollectClaude(turnusage.Config{
 		DataDir: cfg.DataDir, DaemonID: cfg.DaemonID, TotalEncoding: cfg.TurnUsageTotal,
 	}, claudeTurnSessions(sessions), observedAt)
@@ -107,6 +115,12 @@ func claudeEventsFromSessions(
 	if collection.Commit != nil {
 		commits = append(commits, collection.Commit)
 	}
+	if turnErr == nil && accountingCommit != nil {
+		// The accounting version is committed last. If cursor or baseline commits
+		// fail, the next collection repeats the safe cutover instead of replaying
+		// historical fork turns under an unseeded cursor.
+		commits = append(commits, accountingCommit)
+	}
 	return events, combineAdapterCommits(commits)
 }
 
@@ -115,7 +129,8 @@ func claudeTurnSessions(sessions []claudeSessionUsage) []turnusage.ClaudeSession
 	for _, session := range sessions {
 		converted := turnusage.ClaudeSession{
 			SessionIDHash: util.ShortHash(session.SessionID),
-			FirstEventAt:  session.FirstEventAt,
+			FirstEventAt:  session.AccountingFirstEventAt,
+			SeedOnly:      session.AccountingSeedOnly,
 			Turns:         make([]turnusage.ClaudeTurn, 0, len(session.Turns)),
 		}
 		for _, turn := range session.Turns {
@@ -126,7 +141,8 @@ func claudeTurnSessions(sessions []claudeSessionUsage) []turnusage.ClaudeSession
 					Input: turn.Usage.InputTokens, Output: turn.Usage.OutputTokens,
 					CacheRead: turn.Usage.CacheReadTokens, CacheWrite: turn.Usage.CacheCreationTokens,
 				},
-				Evidence: turn.Evidence,
+				Evidence:  turn.Evidence,
+				Inherited: turn.AccountingInherited,
 			})
 		}
 		out = append(out, converted)

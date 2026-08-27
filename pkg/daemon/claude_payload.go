@@ -49,7 +49,10 @@ func claudeUsageSummaryPayload(session claudeSessionUsage, key claudeModelDayKey
 		"output_tokens":         usage.OutputTokens,
 		"cached_input_tokens":   usage.CacheReadTokens,
 		"cache_creation_tokens": usage.CacheCreationTokens,
-		"token_accounting":      "claude_code_by_model_day",
+		"token_accounting":      claudeTokenAccounting,
+	}
+	if session.AccountingSeedOnly {
+		payload[internalAccountingCutoverPayloadKey] = true
 	}
 	if repoHash := claudeRepoHash(session.CWD); repoHash != "" {
 		payload["repo_path_hash"] = repoHash
