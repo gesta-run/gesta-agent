@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/gesta-run/gesta-agent/pkg/util"
 )
 
 func TestCollectClaudeEmitsOnlyNewTurnsAfterCommit(t *testing.T) {
@@ -67,5 +69,74 @@ func TestCollectClaudeEmitsOnlyNewTurnsAfterCommit(t *testing.T) {
 	}
 	if strings.Contains(string(cursor), "deploy") || strings.Contains(string(cursor), "kubectl") {
 		t.Fatalf("cursor leaked classifier evidence: %s", cursor)
+	}
+}
+
+func TestCollectClaudeSeedOnlyCutoverDoesNotReplayHistory(t *testing.T) {
+	dataDir := t.TempDir()
+	observedAt := time.Date(2026, 8, 26, 10, 0, 0, 0, time.UTC)
+	if err := saveClaudeCursorStore(dataDir, claudeCursorStore{
+		InitializedAt: observedAt.Add(-time.Hour).Format(time.RFC3339Nano),
+		Sessions:      map[string]claudeSessionCursor{},
+	}); err != nil {
+		t.Fatalf("save cursor: %v", err)
+	}
+	historical := ClaudeTurn{
+		TurnID: "historical", Status: "completed", StartedAt: observedAt.Add(-time.Minute),
+		EndedAt: observedAt, Tokens: TokenTotals{Input: 100},
+	}
+	events, commit, err := CollectClaude(Config{DataDir: dataDir, DaemonID: "daemon"}, []ClaudeSession{{
+		SessionIDHash: "child", FirstEventAt: historical.StartedAt, SeedOnly: true, Turns: []ClaudeTurn{historical},
+	}}, observedAt)
+	if err != nil || len(events) != 0 || commit == nil {
+		t.Fatalf("cutover events=%#v commit=%v err=%v", events, commit != nil, err)
+	}
+	if err := commit(); err != nil {
+		t.Fatalf("commit cutover: %v", err)
+	}
+	newTurn := ClaudeTurn{
+		TurnID: "new", Status: "completed", StartedAt: observedAt.Add(time.Minute),
+		EndedAt: observedAt.Add(2 * time.Minute), Tokens: TokenTotals{Input: 25},
+	}
+	events, _, err = CollectClaude(Config{DataDir: dataDir, DaemonID: "daemon"}, []ClaudeSession{{
+		SessionIDHash: "child", FirstEventAt: historical.StartedAt, Turns: []ClaudeTurn{historical, newTurn},
+	}}, observedAt.Add(3*time.Minute))
+	if err != nil || len(events) != 1 || events[0].TurnIDHash != util.HashString("new") {
+		t.Fatalf("post-cutover events=%#v err=%v", events, err)
+	}
+}
+
+func TestCollectClaudeInheritedTurnSeedsCursorWithoutEmission(t *testing.T) {
+	dataDir := t.TempDir()
+	observedAt := time.Date(2026, 8, 26, 10, 0, 0, 0, time.UTC)
+	if err := saveClaudeCursorStore(dataDir, claudeCursorStore{
+		InitializedAt: observedAt.Add(-time.Hour).Format(time.RFC3339Nano),
+		Sessions:      map[string]claudeSessionCursor{},
+	}); err != nil {
+		t.Fatalf("save cursor: %v", err)
+	}
+	inherited := ClaudeTurn{
+		TurnID: "inherited", Status: "completed", StartedAt: observedAt,
+		EndedAt: observedAt.Add(time.Minute), Tokens: TokenTotals{Input: 100}, Inherited: true,
+	}
+	unique := ClaudeTurn{
+		TurnID: "unique", Status: "completed", StartedAt: observedAt.Add(2 * time.Minute),
+		EndedAt: observedAt.Add(3 * time.Minute), Tokens: TokenTotals{Input: 25},
+	}
+	events, commit, err := CollectClaude(Config{DataDir: dataDir, DaemonID: "daemon"}, []ClaudeSession{{
+		SessionIDHash: "child", FirstEventAt: unique.StartedAt, Turns: []ClaudeTurn{inherited, unique},
+	}}, observedAt.Add(4*time.Minute))
+	if err != nil || len(events) != 1 || events[0].TurnIDHash != util.HashString("unique") || commit == nil {
+		t.Fatalf("fork events=%#v commit=%v err=%v", events, commit != nil, err)
+	}
+	if err := commit(); err != nil {
+		t.Fatalf("commit fork cursor: %v", err)
+	}
+	inherited.Inherited = false
+	events, _, err = CollectClaude(Config{DataDir: dataDir, DaemonID: "daemon"}, []ClaudeSession{{
+		SessionIDHash: "child", FirstEventAt: inherited.StartedAt, Turns: []ClaudeTurn{inherited, unique},
+	}}, observedAt.Add(5*time.Minute))
+	if err != nil || len(events) != 0 {
+		t.Fatalf("fork retry events=%#v err=%v", events, err)
 	}
 }

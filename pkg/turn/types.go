@@ -50,6 +50,7 @@ type Evidence struct {
 type ClaudeSession struct {
 	SessionIDHash string
 	FirstEventAt  time.Time
+	SeedOnly      bool
 	Turns         []ClaudeTurn
 }
 
@@ -63,6 +64,7 @@ type ClaudeTurn struct {
 	Tokens        TokenTotals
 	Evidence      []Evidence
 	ModelProvider string
+	Inherited     bool
 }
 
 type TokenTotals struct {

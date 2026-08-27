@@ -49,15 +49,12 @@ func mergeClaudeSessionsByID(sessions []claudeSessionUsage) []claudeSessionUsage
 				FirstEventAt:        file.FirstEventAt,
 				LastEventAt:         file.LastEventAt,
 				AssistantEvents:     file.AssistantEvents,
-				Total:               file.Total,
 				Messages:            cloneClaudeTranscriptMessages(file.Messages),
 				TranscriptTruncated: file.TranscriptTruncated,
 				MCPToolCalls:        mergeClaudeMCPToolCalls(nil, file.MCPToolCalls),
 				Turns:               mergeClaudeTurns(nil, file.Turns),
+				Invocations:         mergeClaudeInvocations(nil, file.Invocations),
 				ByModelDay:          map[claudeModelDayKey]claudeAssistantUsage{},
-			}
-			for key, usage := range file.ByModelDay {
-				combined.ByModelDay[key] = usage
 			}
 			modelsSeen := map[string]struct{}{}
 			for _, name := range file.Models {
@@ -89,13 +86,10 @@ func mergeClaudeSessionsByID(sessions []claudeSessionUsage) []claudeSessionUsage
 			existing.LastEventAt = file.LastEventAt
 		}
 		existing.AssistantEvents += file.AssistantEvents
-		existing.Total = existing.Total.add(file.Total)
 		existing.Messages, existing.TranscriptTruncated = mergeClaudeTranscriptMessages(existing.Messages, file.Messages, existing.TranscriptTruncated || file.TranscriptTruncated)
 		existing.MCPToolCalls = mergeClaudeMCPToolCalls(existing.MCPToolCalls, file.MCPToolCalls)
 		existing.Turns = mergeClaudeTurns(existing.Turns, file.Turns)
-		for key, usage := range file.ByModelDay {
-			existing.ByModelDay[key] = existing.ByModelDay[key].add(usage)
-		}
+		existing.Invocations = mergeClaudeInvocations(existing.Invocations, file.Invocations)
 		modelsSeen := map[string]struct{}{}
 		for _, name := range existing.Models {
 			modelsSeen[name] = struct{}{}
@@ -112,10 +106,59 @@ func mergeClaudeSessionsByID(sessions []claudeSessionUsage) []claudeSessionUsage
 
 	result := make([]claudeSessionUsage, 0, len(order))
 	for _, id := range order {
+		if len(merged[id].Invocations) > 0 {
+			rebuildClaudeInvocationTotals(merged[id])
+		}
 		result = append(result, *merged[id])
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].SessionID < result[j].SessionID })
 	return result
+}
+
+func mergeClaudeInvocations(existing, next []claudeInvocationUsage) []claudeInvocationUsage {
+	merged := make([]claudeInvocationUsage, 0, len(existing)+len(next))
+	indexes := map[string]int{}
+	add := func(invocation claudeInvocationUsage) {
+		key := strings.TrimSpace(invocation.InvocationID)
+		if key == "" {
+			return
+		}
+		if index, ok := indexes[key]; ok {
+			if invocation.Usage.TotalTokens() > merged[index].Usage.TotalTokens() {
+				merged[index] = invocation
+			}
+			return
+		}
+		indexes[key] = len(merged)
+		merged = append(merged, invocation)
+	}
+	for _, invocation := range existing {
+		add(invocation)
+	}
+	for _, invocation := range next {
+		add(invocation)
+	}
+	sort.SliceStable(merged, func(i, j int) bool {
+		if !merged[i].ObservedAt.Equal(merged[j].ObservedAt) {
+			return merged[i].ObservedAt.Before(merged[j].ObservedAt)
+		}
+		return merged[i].InvocationID < merged[j].InvocationID
+	})
+	return merged
+}
+
+func rebuildClaudeInvocationTotals(session *claudeSessionUsage) {
+	session.ByModelDay = map[claudeModelDayKey]claudeAssistantUsage{}
+	session.Total = claudeAssistantUsage{}
+	for _, invocation := range session.Invocations {
+		day := ""
+		if !invocation.ObservedAt.IsZero() {
+			day = invocation.ObservedAt.UTC().Format("2006-01-02")
+		}
+		key := claudeModelDayKey{Model: invocation.Model, Day: day}
+		session.ByModelDay[key] = session.ByModelDay[key].add(invocation.Usage)
+		session.Total = session.Total.add(invocation.Usage)
+	}
 }
 
 func mergeClaudeTurns(existing, next []claudeTurnUsage) []claudeTurnUsage {

@@ -105,6 +105,12 @@ func filterClaudeUsageBaseline(
 		}
 		total, hasTokens := payloadIntValue(payload, "total_tokens", "tokens_used")
 		existing, exists := baseline.Sessions[sessionID]
+		if payloadBool(payload, internalAccountingCutoverPayloadKey) || (exists && baselineTokenAccountingChanged(existing, payload)) {
+			payload[internalAccountingCutoverPayloadKey] = true
+			updates = append(updates, payload)
+			ignoredSessions[sessionID] = struct{}{}
+			continue
+		}
 		if exists && (!existing.TokensObserved || !hasTokens || total <= existing.TotalTokens) {
 			if existing.TokensObserved && hasTokens &&
 				total == existing.TotalTokens &&
@@ -202,7 +208,7 @@ func filterClaudeMCPBaseline(
 			continue
 		}
 		cursor := baseline.Sessions[sessionID]
-		if claudeMCPEventAfterCursor(event, cursor, cutoff) {
+		if !payloadBool(event.Payload, internalForkInheritedPayloadKey) && claudeMCPEventAfterCursor(event, cursor, cutoff) {
 			filtered = append(filtered, event)
 		}
 		if advanceClaudeMCPCursor(baseline.Sessions, event) {
