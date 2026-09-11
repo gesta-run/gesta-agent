@@ -2,7 +2,6 @@ package localactivity
 
 import (
 	"fmt"
-	"strconv"
 	"strings"
 
 	"github.com/gesta-run/gesta-agent/pkg/activitydetail"
@@ -14,9 +13,6 @@ type activityView struct {
 	ExpiresAt     string
 	RuleCount     int
 	Rules         []ruleView
-	MemoryLabel   string
-	MemoryEmpty   string
-	Memories      []string
 	Output        []metricView
 	HasOutput     bool
 	EquivalentLOC string
@@ -47,11 +43,6 @@ func newActivityView(detail activitydetail.Detail) activityView {
 			Content:    match.Content,
 		})
 	}
-	memories := make([]string, 0, len(detail.Memories))
-	for _, memory := range detail.Memories {
-		memories = append(memories, memory.Content)
-	}
-	memoryLabel, memoryEmpty := memoryRecallPresentation(detail.MemoryRecallStatus, detail.MemoryCount)
 	output := make([]metricView, 0, 5)
 	appendMetric := func(value int64, label string) {
 		if value > 0 {
@@ -69,26 +60,10 @@ func newActivityView(detail activitydetail.Detail) activityView {
 		ExpiresAt:     detail.ExpiresAt.Local().Format("Jan 2, 2006 · 15:04 MST"),
 		RuleCount:     len(rules),
 		Rules:         rules,
-		MemoryLabel:   memoryLabel,
-		MemoryEmpty:   memoryEmpty,
-		Memories:      memories,
 		Output:        output,
 		HasOutput:     len(output) > 0,
 		EquivalentLOC: formatEquivalentLOC(detail.Output.EquivalentLOC()),
 		ActivityID:    detail.ActivityID,
-	}
-}
-
-func memoryRecallPresentation(status activitydetail.MemoryRecallStatus, count int) (string, string) {
-	switch status {
-	case activitydetail.MemoryRecallTimeout:
-		return "Timed out", "Memory recall timed out before results were available."
-	case activitydetail.MemoryRecallError:
-		return "Error", "Memory recall failed before results were available."
-	case activitydetail.MemoryRecallDisabled:
-		return "Disabled", "Memory recall is disabled."
-	default:
-		return strconv.Itoa(count), "No memory was recalled."
 	}
 }
 

@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/gesta-run/gesta-agent/pkg/activitydetail"
-	"github.com/gesta-run/gesta-agent/pkg/model"
 	"github.com/gesta-run/gesta-agent/pkg/turnreceipt"
 )
 
@@ -70,12 +69,6 @@ func TestHandlerRendersEscapedActivityDetailWithoutRemoteResources(t *testing.T)
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if err := store.RecordMemories(detail.ActivityID, []model.Memory{
-		{FactID: "memory-a", Content: "First recalled fact."},
-		{FactID: "memory-b", Content: "Second recalled fact."},
-	}); err != nil {
-		t.Fatalf("RecordMemories: %v", err)
-	}
 	handler := newHandlerWithDaemonID(store, "")
 	request := httptest.NewRequest(http.MethodGet, ActivityURL(detail.ActivityID), nil)
 	request.Host = Address
@@ -94,9 +87,6 @@ func TestHandlerRendersEscapedActivityDetailWithoutRemoteResources(t *testing.T)
 		"Preserve this line.",
 		"Evidence ledger",
 		"Applied context",
-		"Recalled memory",
-		"First recalled fact.",
-		"Second recalled fact.",
 		`aria-label="Gesta"`,
 		"--background: oklch(0.145 0 0)",
 		"--card: oklch(0.205 0 0)",
@@ -111,9 +101,9 @@ func TestHandlerRendersEscapedActivityDetailWithoutRemoteResources(t *testing.T)
 		t.Fatalf("activity body did not escape rule name: %s", body)
 	}
 	if strings.Contains(body, `<details`) ||
-		strings.Count(body, `role="list"`) != 2 ||
-		strings.Count(body, `<li class="evidence-row`) != 4 ||
-		strings.Count(body, `tabindex="0"`) != 4 {
+		strings.Count(body, `role="list"`) != 1 ||
+		strings.Count(body, `<li class="evidence-row`) != 2 ||
+		strings.Count(body, `tabindex="0"`) != 2 {
 		t.Fatalf("activity evidence ledger is incorrect: %s", body)
 	}
 	for _, forbidden := range []string{

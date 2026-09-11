@@ -272,10 +272,6 @@ h1 {
   background: var(--info);
 }
 
-.rule-dot.memory {
-  background: var(--success);
-}
-
 .evidence-row pre {
   max-height: 320px;
   overflow: auto;
@@ -306,21 +302,6 @@ h1 {
   color: var(--muted-foreground);
   font-size: 11px;
   line-height: 1.4;
-}
-
-.memory-row {
-  display: grid;
-  grid-template-columns: 8px minmax(0, 1fr);
-  align-items: start;
-  gap: 13px;
-}
-
-.memory-row .rule-dot {
-  margin-top: 6px;
-}
-
-.memory-row pre {
-  margin: 0;
 }
 
 .evidence-empty {

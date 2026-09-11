@@ -13,6 +13,9 @@ var deprecatedStateFiles = []string{
 	"output-baselines.json.lock",
 	"queue-v2.db",
 	"queue-v2.db.drain.lock",
+	"memory-settings.json",
+	"memory-settings.json.tmp",
+	"memory-settings.json.lock",
 }
 
 func CleanupDeprecatedState(dataDir string) (int64, error) {

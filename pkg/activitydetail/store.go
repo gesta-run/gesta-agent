@@ -12,21 +12,16 @@ import (
 	"sort"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/gesta-run/gesta-agent/pkg/atomicfile"
-	"github.com/gesta-run/gesta-agent/pkg/model"
 	"github.com/gesta-run/gesta-agent/pkg/turnreceipt"
 	"github.com/gesta-run/gesta-agent/pkg/util"
 )
 
 const (
-	schemaVersion          = 3
+	schemaVersion          = 4
 	maxActivityDetails     = 256
 	maxActivityRecordBytes = 64 * 1024
-	maxMemoryKeys          = 256
-	maxMemorySamples       = 24
-	maxMemoryContentBytes  = 2048
 	maxCleanupVisits       = 128
 	maxCleanupRemovals     = 32
 	detailTTL              = 24 * time.Hour
@@ -41,30 +36,13 @@ var (
 )
 
 type Detail struct {
-	SchemaVersion      int                       `json:"schema_version"`
-	ActivityID         string                    `json:"activity_id"`
-	CreatedAt          time.Time                 `json:"created_at"`
-	ExpiresAt          time.Time                 `json:"expires_at"`
-	AgentType          string                    `json:"agent_type"`
-	ContextMatches     []ContextRuleMatch        `json:"context_matches"`
-	MemoryRecallStatus MemoryRecallStatus        `json:"memory_recall_status,omitempty"`
-	MemoryCount        int                       `json:"memory_count"`
-	MemoryKeys         []string                  `json:"memory_keys,omitempty"`
-	Memories           []RecalledMemory          `json:"memories,omitempty"`
-	Output             turnreceipt.OutputSummary `json:"output"`
-}
-
-type MemoryRecallStatus string
-
-const (
-	MemoryRecallSuccess  MemoryRecallStatus = "success"
-	MemoryRecallTimeout  MemoryRecallStatus = "timeout"
-	MemoryRecallError    MemoryRecallStatus = "error"
-	MemoryRecallDisabled MemoryRecallStatus = "disabled"
-)
-
-type RecalledMemory struct {
-	Content string `json:"content"`
+	SchemaVersion  int                       `json:"schema_version"`
+	ActivityID     string                    `json:"activity_id"`
+	CreatedAt      time.Time                 `json:"created_at"`
+	ExpiresAt      time.Time                 `json:"expires_at"`
+	AgentType      string                    `json:"agent_type"`
+	ContextMatches []ContextRuleMatch        `json:"context_matches"`
+	Output         turnreceipt.OutputSummary `json:"output"`
 }
 
 type Store struct {
@@ -140,58 +118,6 @@ func (s Store) RecordContext(activityID string, matches []ContextRuleMatch) erro
 	return s.update(activityID, func(detail *Detail) {
 		detail.ContextMatches = matches
 	})
-}
-
-func (s Store) RecordMemories(activityID string, memories []model.Memory) error {
-	if len(memories) == 0 {
-		return nil
-	}
-	return s.RecordMemoryRecall(activityID, MemoryRecallSuccess, memories)
-}
-
-func (s Store) RecordMemoryRecall(activityID string, status MemoryRecallStatus, memories []model.Memory) error {
-	if !validMemoryRecallStatus(status) {
-		return errors.New("invalid memory recall status")
-	}
-	return s.update(activityID, func(detail *Detail) {
-		detail.MemoryRecallStatus = status
-		seen := make(map[string]struct{}, len(detail.MemoryKeys))
-		for _, key := range detail.MemoryKeys {
-			seen[key] = struct{}{}
-		}
-		for _, memory := range memories {
-			content := truncateMemoryContent(memory.Content)
-			if content == "" {
-				continue
-			}
-			identity := strings.TrimSpace(memory.FactID)
-			if identity == "" {
-				identity = content
-			}
-			key := util.ShortHash(identity)
-			if _, exists := seen[key]; exists {
-				continue
-			}
-			if len(detail.MemoryKeys) >= maxMemoryKeys {
-				break
-			}
-			seen[key] = struct{}{}
-			detail.MemoryKeys = append(detail.MemoryKeys, key)
-			detail.MemoryCount++
-			if len(detail.Memories) < maxMemorySamples {
-				detail.Memories = append(detail.Memories, RecalledMemory{Content: content})
-			}
-		}
-	})
-}
-
-func validMemoryRecallStatus(status MemoryRecallStatus) bool {
-	switch status {
-	case MemoryRecallSuccess, MemoryRecallTimeout, MemoryRecallError, MemoryRecallDisabled:
-		return true
-	default:
-		return false
-	}
 }
 
 func (s Store) RecordOutput(activityID string, output turnreceipt.OutputSummary) error {
@@ -283,6 +209,64 @@ func (s Store) cleanupLegacyRootsLocked() error {
 		if err := os.RemoveAll(path); err != nil {
 			return fmt.Errorf("remove legacy activity details %s: %w", version, err)
 		}
+	}
+	return s.migrateVersionThreeLocked()
+}
+
+func (s Store) migrateVersionThreeLocked() error {
+	root := filepath.Join(s.dataDir, "activity-details", "v3")
+	entries, err := os.ReadDir(root)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read version 3 activity details: %w", err)
+	}
+	var migrationErr error
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
+		activityID := strings.TrimSuffix(entry.Name(), ".json")
+		if !validActivityID.MatchString(activityID) {
+			continue
+		}
+		path := filepath.Join(root, entry.Name())
+		file, openErr := os.Open(path)
+		if openErr != nil {
+			migrationErr = errors.Join(migrationErr, openErr)
+			continue
+		}
+		info, statErr := file.Stat()
+		if statErr != nil || info.Size() <= 0 || info.Size() > maxActivityRecordBytes {
+			_ = file.Close()
+			continue
+		}
+		var detail Detail
+		decodeErr := json.NewDecoder(io.LimitReader(file, maxActivityRecordBytes+1)).Decode(&detail)
+		_ = file.Close()
+		if decodeErr != nil || detail.SchemaVersion != 3 || detail.ActivityID != activityID ||
+			normalizeAgentType(detail.AgentType) == "" || !detail.ExpiresAt.After(s.now()) {
+			continue
+		}
+		detail.SchemaVersion = schemaVersion
+		detail.AgentType = normalizeAgentType(detail.AgentType)
+		detail.ContextMatches = normalizeContextMatches(detail.ContextMatches)
+		if _, statErr := os.Stat(filepath.Join(s.rootPath(), entry.Name())); statErr == nil {
+			continue
+		} else if !errors.Is(statErr, os.ErrNotExist) {
+			migrationErr = errors.Join(migrationErr, statErr)
+			continue
+		}
+		if writeErr := s.writeReplacing(detail); writeErr != nil {
+			migrationErr = errors.Join(migrationErr, writeErr)
+		}
+	}
+	if err := os.RemoveAll(root); err != nil {
+		return fmt.Errorf("remove version 3 activity details: %w", err)
+	}
+	if migrationErr != nil {
+		return fmt.Errorf("migrate version 3 activity details: %w", migrationErr)
 	}
 	return nil
 }
@@ -456,19 +440,7 @@ func (s Store) readEntries(limit int) ([]os.DirEntry, error) {
 }
 
 func (s Store) rootPath() string {
-	return filepath.Join(s.dataDir, "activity-details", "v3")
-}
-
-func truncateMemoryContent(value string) string {
-	value = strings.TrimSpace(strings.ToValidUTF8(value, ""))
-	if len(value) <= maxMemoryContentBytes {
-		return value
-	}
-	end := maxMemoryContentBytes
-	for end > 0 && !utf8.RuneStart(value[end]) {
-		end--
-	}
-	return strings.TrimSpace(value[:end])
+	return filepath.Join(s.dataDir, "activity-details", "v4")
 }
 
 func normalizeAgentType(agentType string) string {

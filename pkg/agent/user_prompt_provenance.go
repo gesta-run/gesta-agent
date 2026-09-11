@@ -9,8 +9,6 @@ import (
 	"fmt"
 	"os"
 	"strings"
-
-	"github.com/gesta-run/gesta-agent/pkg/promptscope"
 )
 
 const codexPromptProvenanceTailBytes int64 = 8 * 1024 * 1024
@@ -25,56 +23,39 @@ var (
 // so an active turn without a persisted prompt is valid. Once the canonical
 // user_message exists, it must match the hook payload.
 func verifyUserPromptSubmission(_ context.Context, event agentHookEvent, agentType, userPrompt string) error {
-	_, err := verifyUserPromptSubmissionWithHistory(event, agentType, userPrompt, 0)
-	return err
-}
-
-func verifyUserPromptSubmissionWithHistory(
-	event agentHookEvent,
-	agentType, userPrompt string,
-	historyLimit int,
-) ([]string, error) {
 	if !strings.EqualFold(strings.TrimSpace(agentType), "codex") {
-		return nil, nil
+		return nil
 	}
 	if strings.TrimSpace(event.TranscriptPath) == "" {
-		return nil, errors.New("codex UserPromptSubmit is missing transcript_path")
+		return errors.New("codex UserPromptSubmit is missing transcript_path")
 	}
 	if strings.TrimSpace(event.TurnID) == "" {
-		return nil, errors.New("codex UserPromptSubmit is missing turn_id")
+		return errors.New("codex UserPromptSubmit is missing turn_id")
 	}
 
-	state, err := codexTranscriptPromptStateWithHistory(
+	state, err := codexTranscriptPromptState(
 		event.TranscriptPath,
 		event.TurnID,
 		userPrompt,
-		historyLimit,
 	)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	if !state.turnFound || state.turnComplete || state.turnSuperseded {
-		return nil, errCodexTurnNotActive
+		return errCodexTurnNotActive
 	}
 	if state.canonicalPromptSeen && !state.canonicalPromptMatched {
-		return nil, errCodexPromptMismatch
+		return errCodexPromptMismatch
 	}
-	return state.recentUserPrompts, nil
+	return nil
 }
 
 func codexTranscriptPromptState(path, turnID, userPrompt string) (codexPromptState, error) {
-	return codexTranscriptPromptStateWithHistory(path, turnID, userPrompt, 0)
-}
-
-func codexTranscriptPromptStateWithHistory(
-	path, turnID, userPrompt string,
-	historyLimit int,
-) (codexPromptState, error) {
 	data, err := readRecentTranscript(path, codexPromptProvenanceTailBytes)
 	if err != nil {
 		return codexPromptState{}, fmt.Errorf("read Codex transcript: %w", err)
 	}
-	return scanCodexUserPromptWithHistory(data, turnID, userPrompt, historyLimit)
+	return scanCodexUserPrompt(data, turnID, userPrompt)
 }
 
 func readRecentTranscript(path string, limit int64) ([]byte, error) {
@@ -114,14 +95,9 @@ type codexPromptState struct {
 	turnSuperseded         bool
 	canonicalPromptSeen    bool
 	canonicalPromptMatched bool
-	recentUserPrompts      []string
 }
 
-func scanCodexUserPromptWithHistory(
-	data []byte,
-	turnID, userPrompt string,
-	historyLimit int,
-) (codexPromptState, error) {
+func scanCodexUserPrompt(data []byte, turnID, userPrompt string) (codexPromptState, error) {
 	wanted := normalizePromptForComparison(userPrompt)
 	state := codexPromptState{}
 
@@ -143,15 +119,6 @@ func scanCodexUserPromptWithHistory(
 			}
 		}
 		if !state.turnFound {
-			if historyLimit > 0 && record.Type == "event_msg" && record.Payload.Type == "user_message" {
-				prompt := strings.TrimSpace(promptscope.Extract("codex", record.Payload.Message))
-				if prompt != "" {
-					state.recentUserPrompts = append(state.recentUserPrompts, prompt)
-					if len(state.recentUserPrompts) > historyLimit {
-						state.recentUserPrompts = state.recentUserPrompts[1:]
-					}
-				}
-			}
 			continue
 		}
 		if state.turnSuperseded {

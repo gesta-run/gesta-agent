@@ -1,7 +1,9 @@
 package localactivity
 
 import (
+	"encoding/json"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -19,16 +21,16 @@ type noticeResponse struct {
 func (h handler) serveActivityNotice(writer http.ResponseWriter, request *http.Request) {
 	if request.Method != http.MethodPost {
 		writer.Header().Set("Allow", http.MethodPost)
-		writeMemoryError(writer, http.StatusMethodNotAllowed, "method_not_allowed")
+		writeAPIError(writer, http.StatusMethodNotAllowed, "method_not_allowed")
 		return
 	}
 	if !allowedBrowserSource(request) {
-		writeMemoryError(writer, http.StatusForbidden, "forbidden_origin")
+		writeAPIError(writer, http.StatusForbidden, "forbidden_origin")
 		return
 	}
 	detail, err := h.store.Get(request.Header.Get(ActivityHeaderName))
 	if err != nil {
-		writeMemoryError(writer, http.StatusNotFound, "activity_not_found")
+		writeAPIError(writer, http.StatusNotFound, "activity_not_found")
 		return
 	}
 	notice := formatActivityNotice(detail)
@@ -36,15 +38,13 @@ func (h handler) serveActivityNotice(writer http.ResponseWriter, request *http.R
 		Notice:     notice,
 		DetailsURL: ActivityURL(detail.ActivityID),
 	}
-	writeMemoryJSON(writer, http.StatusOK, response)
+	writeAPIJSON(writer, http.StatusOK, response)
 }
 
 func formatActivityNotice(detail activitydetail.Detail) string {
 	contextCount := len(detail.ContextMatches)
-	memoryValue := memoryNoticeValue(detail.MemoryRecallStatus, detail.MemoryCount)
 	equivalentLOC := detail.Output.EquivalentLOC()
 	message := "Gesta · Context " + strconv.Itoa(contextCount) +
-		" · Memory " + memoryValue +
 		" · Last output " + formatEquivalentLOC(equivalentLOC) + " eLOC" +
 		" · [Details](" + ActivityURL(detail.ActivityID) + ")"
 	if utf8.RuneCountInString(message) <= maxNoticeRunes {
@@ -54,19 +54,6 @@ func formatActivityNotice(detail activitydetail.Detail) string {
 	return string(runes[:maxNoticeRunes-1]) + "…"
 }
 
-func memoryNoticeValue(status activitydetail.MemoryRecallStatus, count int) string {
-	switch status {
-	case activitydetail.MemoryRecallTimeout:
-		return "timeout"
-	case activitydetail.MemoryRecallError:
-		return "error"
-	case activitydetail.MemoryRecallDisabled:
-		return "disabled"
-	default:
-		return strconv.Itoa(count)
-	}
-}
-
 func formatEquivalentLOC(value float64) string {
 	formatted := strconv.FormatFloat(value, 'f', 3, 64)
 	formatted = strings.TrimRight(strings.TrimRight(formatted, "0"), ".")
@@ -74,4 +61,27 @@ func formatEquivalentLOC(value float64) string {
 		return "0"
 	}
 	return formatted
+}
+
+func allowedBrowserSource(request *http.Request) bool {
+	for _, rawURL := range []string{request.Header.Get("Origin"), request.Header.Get("Referer")} {
+		if strings.TrimSpace(rawURL) == "" {
+			continue
+		}
+		parsed, err := url.Parse(rawURL)
+		if err != nil || !allowedHost(parsed.Host) {
+			return false
+		}
+	}
+	return true
+}
+
+func writeAPIError(writer http.ResponseWriter, status int, message string) {
+	writeAPIJSON(writer, status, map[string]string{"error": message})
+}
+
+func writeAPIJSON(writer http.ResponseWriter, status int, value interface{}) {
+	writer.Header().Set("Content-Type", "application/json")
+	writer.WriteHeader(status)
+	_ = json.NewEncoder(writer).Encode(value)
 }

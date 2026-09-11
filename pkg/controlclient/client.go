@@ -2,7 +2,6 @@ package controlclient
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -74,30 +73,6 @@ func (c *Client) Heartbeat(req model.HeartbeatRequest) (model.HeartbeatResponse,
 
 func (c *Client) Deregister(daemonID string) error {
 	return c.delete("/api/v1/daemon", c.token, map[string]string{"daemon_id": daemonID})
-}
-
-func (c *Client) MemoryContext(ctx context.Context, request model.MemoryContextRequest) (model.MemorySearchResponse, error) {
-	var response model.MemorySearchResponse
-	if err := c.postWithContext(ctx, "/api/v1/memory/context", request, &response); err != nil {
-		return model.MemorySearchResponse{}, err
-	}
-	return response, nil
-}
-
-func (c *Client) SearchMemory(ctx context.Context, request model.MemorySearchRequest) (model.MemorySearchResponse, error) {
-	var response model.MemorySearchResponse
-	if err := c.postWithContext(ctx, "/api/v1/memory/search", request, &response); err != nil {
-		return model.MemorySearchResponse{}, err
-	}
-	return response, nil
-}
-
-func (c *Client) RememberMemory(ctx context.Context, request model.MemoryRememberRequest) (model.MemoryRememberResponse, error) {
-	var response model.MemoryRememberResponse
-	if err := c.postWithContext(ctx, "/api/v1/memory/remember", request, &response); err != nil {
-		return model.MemoryRememberResponse{}, err
-	}
-	return response, nil
 }
 
 func (c *Client) SendEvents(events []model.EventEnvelope) error {
@@ -380,32 +355,6 @@ func (c *Client) postWithHeaders(path string, headers map[string]string, body in
 		return json.NewDecoder(resp.Body).Decode(out)
 	}
 	return nil
-}
-
-func (c *Client) postWithContext(ctx context.Context, path string, body interface{}, out interface{}) error {
-	data, err := json.Marshal(body)
-	if err != nil {
-		return err
-	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+path, bytes.NewReader(data))
-	if err != nil {
-		return err
-	}
-	request.Header.Set("Content-Type", "application/json")
-	if c.token != "" {
-		request.Header.Set("Authorization", "Bearer "+c.token)
-	}
-	client := *c.http
-	client.Timeout = 0
-	response, err := client.Do(request)
-	if err != nil {
-		return err
-	}
-	defer response.Body.Close()
-	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-		return decodeHTTPStatusError(response)
-	}
-	return json.NewDecoder(response.Body).Decode(out)
 }
 
 func decodeHTTPStatusError(resp *http.Response) error {

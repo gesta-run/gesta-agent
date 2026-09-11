@@ -143,17 +143,16 @@ locally; only counts and hashed correlation metadata are queued.
 Each allowed primary-agent prompt creates one bounded local activity record when
 the matching loopback daemon is healthy. Keyword and regex Organization Context
 matches are recorded immediately; every-prompt context remains active but does
-not count. Automatic recall and successful in-turn local memory searches add
-unique recalled facts to the same record. Immediately before the final response,
+not count. Immediately before the final response,
 the model calls the loopback activity notice endpoint and emits its single
-formatted line: current context count, current memory recall count, and equivalent
-LOC from the latest completed turn. The `Stop` hook computes that output for the
+formatted line: current context count and equivalent LOC from the latest completed
+turn. The `Stop` hook computes that output for the
 next prompt because current-turn output is not complete earlier.
 
 Equivalent LOC uses the same eligible-output formula as Control: code,
 configuration, and test lines count directly; documentation and other prose count
 one equivalent line per eight words. The local `Details` link shows current rule
-and memory snapshots plus the latest completed output. It never stores prompt
+snapshots plus the latest completed output. It never stores prompt
 text, keywords, regular expressions, file paths, file contents, or raw tool
 arguments. Local activity records are capped at 256 records with a 24-hour TTL.
 
