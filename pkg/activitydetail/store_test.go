@@ -1,6 +1,7 @@
 package activitydetail
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -10,7 +11,6 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/gesta-run/gesta-agent/pkg/model"
 	"github.com/gesta-run/gesta-agent/pkg/turnreceipt"
 )
 
@@ -100,12 +100,12 @@ func TestStoreDoesNotReadVersionOneActivityDetails(t *testing.T) {
 	if _, err := store.Get(activityID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("Get old detail error = %v, want ErrNotFound", err)
 	}
-	if filepath.Base(store.rootPath()) != "v3" {
-		t.Fatalf("activity detail root = %q, want v3", store.rootPath())
+	if filepath.Base(store.rootPath()) != "v4" {
+		t.Fatalf("activity detail root = %q, want v4", store.rootPath())
 	}
 }
 
-func TestCleanupRemovesLegacySchemaRoots(t *testing.T) {
+func TestCleanupMigratesVersionThreeWithoutMemory(t *testing.T) {
 	dataDir := t.TempDir()
 	for _, version := range []string{"v1", "v2"} {
 		root := filepath.Join(dataDir, "activity-details", version)
@@ -117,6 +117,32 @@ func TestCleanupRemovesLegacySchemaRoots(t *testing.T) {
 		}
 	}
 	store := NewStore(dataDir)
+	now := time.Date(2026, 7, 26, 12, 0, 0, 0, time.UTC)
+	store.now = func() time.Time { return now }
+	const legacyActivityID = "activity_11111111111111111111111111111111"
+	legacyRoot := filepath.Join(dataDir, "activity-details", "v3")
+	if err := os.MkdirAll(legacyRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	legacyData, err := json.Marshal(map[string]interface{}{
+		"schema_version":       3,
+		"activity_id":          legacyActivityID,
+		"created_at":           now.Add(-time.Hour),
+		"expires_at":           now.Add(time.Hour),
+		"agent_type":           "codex",
+		"context_matches":      testMatches(1),
+		"memory_recall_status": "success",
+		"memory_count":         1,
+		"memory_keys":          []string{"secret-memory-key"},
+		"memories":             []map[string]string{{"content": "retired memory content"}},
+		"output":               turnreceipt.OutputSummary{CodeLines: 10, DocWords: 8},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(legacyRoot, legacyActivityID+".json"), legacyData, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	current, err := store.Begin("codex")
 	if err != nil {
 		t.Fatal(err)
@@ -124,7 +150,7 @@ func TestCleanupRemovesLegacySchemaRoots(t *testing.T) {
 	if err := store.Cleanup(); err != nil {
 		t.Fatal(err)
 	}
-	for _, version := range []string{"v1", "v2"} {
+	for _, version := range []string{"v1", "v2", "v3"} {
 		if _, err := os.Stat(filepath.Join(dataDir, "activity-details", version)); !errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("legacy root %s remains: %v", version, err)
 		}
@@ -132,23 +158,29 @@ func TestCleanupRemovesLegacySchemaRoots(t *testing.T) {
 	if _, err := store.Get(current.ActivityID); err != nil {
 		t.Fatalf("current activity was removed: %v", err)
 	}
+	migrated, err := store.Get(legacyActivityID)
+	if err != nil {
+		t.Fatalf("migrated activity was not preserved: %v", err)
+	}
+	if len(migrated.ContextMatches) != 1 || migrated.Output.EquivalentLOC() != 11 {
+		t.Fatalf("migrated activity = %#v", migrated)
+	}
+	stored, err := os.ReadFile(filepath.Join(store.rootPath(), legacyActivityID+".json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(stored), "memory") {
+		t.Fatalf("migrated activity retained memory data: %s", stored)
+	}
 }
 
-func TestStoreTracksCurrentContextMemoryAndPreviousOutput(t *testing.T) {
+func TestStoreTracksCurrentContextAndPreviousOutput(t *testing.T) {
 	store := NewStore(t.TempDir())
 	detail, err := store.Begin("codex")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := store.RecordContext(detail.ActivityID, testMatches(1)); err != nil {
-		t.Fatal(err)
-	}
-	memories := []model.Memory{
-		{FactID: "fact-a", Content: "Use the release checklist."},
-		{FactID: "fact-a", Content: "Use the release checklist."},
-		{FactID: "fact-b", Content: "Run the health check."},
-	}
-	if err := store.RecordMemories(detail.ActivityID, memories); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.RecordOutput(detail.ActivityID, turnreceipt.OutputSummary{
@@ -160,30 +192,11 @@ func TestStoreTracksCurrentContextMemoryAndPreviousOutput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got.ContextMatches) != 1 || got.MemoryRecallStatus != MemoryRecallSuccess ||
-		got.MemoryCount != 2 || len(got.Memories) != 2 {
+	if len(got.ContextMatches) != 1 {
 		t.Fatalf("activity detail = %#v", got)
 	}
 	if got.Output.EquivalentLOC() != 11.5 {
 		t.Fatalf("equivalent LOC = %v, want 11.5", got.Output.EquivalentLOC())
-	}
-}
-
-func TestStoreTracksMemoryRecallFailureWithoutReportingAMatch(t *testing.T) {
-	store := NewStore(t.TempDir())
-	detail, err := store.Begin("codex")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := store.RecordMemoryRecall(detail.ActivityID, MemoryRecallTimeout, nil); err != nil {
-		t.Fatal(err)
-	}
-	got, err := store.Get(detail.ActivityID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.MemoryRecallStatus != MemoryRecallTimeout || got.MemoryCount != 0 || len(got.Memories) != 0 {
-		t.Fatalf("activity detail = %#v", got)
 	}
 }
 

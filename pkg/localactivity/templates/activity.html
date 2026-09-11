@@ -16,7 +16,7 @@
     <header class="page-header">
       <p class="eyebrow">Governance / Local activity</p>
       <h1>Activity detail</h1>
-      <p class="subtitle">Review current context and memory recall alongside output from the latest completed turn.</p>
+      <p class="subtitle">Review current context alongside output from the latest completed turn.</p>
       <div class="meta" aria-label="Activity metadata">
         <span>{{.AgentLabel}}</span>
         <span>Captured {{.CreatedAt}}</span>
@@ -29,16 +29,12 @@
         <div>
           <p class="ledger-eyebrow">Turn inputs</p>
           <h2 id="ledger-heading">Evidence ledger</h2>
-          <p>Context applied and memory recalled during this turn, followed by the latest output.</p>
+          <p>Context applied during this turn, followed by the latest output.</p>
         </div>
         <dl class="ledger-stats" aria-label="Activity summary">
           <div>
             <dt>Context</dt>
             <dd>{{.RuleCount}}</dd>
-          </div>
-          <div>
-            <dt>Memory</dt>
-            <dd>{{.MemoryLabel}}</dd>
           </div>
           <div>
             <dt>Last output</dt>
@@ -67,22 +63,6 @@
         </ul>
         {{else}}
         <div class="evidence-empty">No targeted organization context was applied.</div>
-        {{end}}
-      </section>
-
-      <section class="evidence-section" aria-labelledby="memory-heading">
-        <h3 id="memory-heading">Recalled memory</h3>
-        {{if .Memories}}
-        <ul class="evidence-list" role="list">
-          {{range .Memories}}
-          <li class="evidence-row memory-row">
-            <span class="rule-dot memory" aria-hidden="true"></span>
-            <pre tabindex="0" aria-label="Recalled memory">{{.}}</pre>
-          </li>
-          {{end}}
-        </ul>
-        {{else}}
-        <div class="evidence-empty">{{.MemoryEmpty}}</div>
         {{end}}
       </section>
 
